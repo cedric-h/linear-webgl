@@ -5942,14 +5942,21 @@ window.onload = () => {
   }
 
   let then = 0;
-  let cubeRotation = 0.0;
+  let cubeRotationX = 0;
+  let cubeRotationY = 0;
   let deltaTime = 0;
+
+  window.onmousemove = ev => {
+    if (ev.buttons > 0) {
+      cubeRotationX += ev.movementX*0.001;
+      cubeRotationY += ev.movementY*0.001;
+    }
+  }
+
   requestAnimationFrame(function render(now) {
     now *= 0.001;
     deltaTime = now - then;
     then = now;
-
-    cubeRotation += deltaTime;
 
     const u_proj = mat4_perspective(
       mat4_create(),
@@ -5965,11 +5972,11 @@ window.onload = () => {
       u_modelview,
       mat4_from_translation(_scratch, [0, -0.3, -4])
     );
-    // mat4_mul(
-    //   u_modelview,
-    //   u_modelview,
-    //   mat4_from_zyx_rotation(mat4_create(), cubeRotation, cubeRotation*0.7, cubeRotation*0.3)
-    // );
+    mat4_mul(
+      u_modelview,
+      u_modelview,
+      mat4_from_zyx_rotation(mat4_create(), cubeRotationY, cubeRotationX, 0)
+    );
 
     /* draw */
     {
