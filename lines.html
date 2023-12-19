@@ -506,33 +506,34 @@ window.onload = () => {
       const vbuf = new Float32Array(1024 / 4);
       const ibuf = new Uint16Array(1024 / 2);
 
-      function line(x, y, t) {
+      function line(x1,y1, x2,y2, t) {
+        const dx = x2 - x1;
+        const dy = y2 - y1;
+
+        /* perp */
+        const nx = -dy;
+        const ny = dx;
+
+        const tlen = Math.sqrt(nx*nx + ny*ny) / (t*0.5);
+        if (tlen <= 0) return;
+        const tx = nx / tlen;
+        const ty = ny / tlen;
+
         ibuf[ibuf_i++] = 0 + vbuf_i/3;
         ibuf[ibuf_i++] = 1 + vbuf_i/3;
         ibuf[ibuf_i++] = 2 + vbuf_i/3;
 
-        ibuf[ibuf_i++] = 0 + vbuf_i/3;
         ibuf[ibuf_i++] = 2 + vbuf_i/3;
+        ibuf[ibuf_i++] = 1 + vbuf_i/3;
         ibuf[ibuf_i++] = 3 + vbuf_i/3;
 
-        vbuf[vbuf_i++] = -t + x;
-        vbuf[vbuf_i++] = -t + y;
-        vbuf[vbuf_i++] =  0;
-
-        vbuf[vbuf_i++] =  t + x;
-        vbuf[vbuf_i++] = -t + y;
-        vbuf[vbuf_i++] =  0;
-
-        vbuf[vbuf_i++] =  t + x;
-        vbuf[vbuf_i++] =  t + y;
-        vbuf[vbuf_i++] =  0;
-
-        vbuf[vbuf_i++] = -t + x;
-        vbuf[vbuf_i++] =  t + y;
-        vbuf[vbuf_i++] =  0;
+        vbuf[vbuf_i++] = x1 + tx; vbuf[vbuf_i++] = y1 + ty; vbuf[vbuf_i++] = 0;
+        vbuf[vbuf_i++] = x1 - tx; vbuf[vbuf_i++] = y1 - ty; vbuf[vbuf_i++] = 0;
+        vbuf[vbuf_i++] = x2 + tx; vbuf[vbuf_i++] = y2 + ty; vbuf[vbuf_i++] = 0;
+        vbuf[vbuf_i++] = x2 - tx; vbuf[vbuf_i++] = y2 - ty; vbuf[vbuf_i++] = 0;
       }
-      line(0.1, 0.1, 0.01);
-      line(0.3, 0.3, 0.01);
+      line(0.1,0.1, 0.3,0.3, 0.01);
+      line(0.1,0.3, 0.3,0.1, 0.01);
 
       gl.bindBuffer(gl.ARRAY_BUFFER, buffers.pos);
       gl.bufferSubData(gl.ARRAY_BUFFER, 0, vbuf);
