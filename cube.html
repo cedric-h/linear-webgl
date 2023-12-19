@@ -396,13 +396,12 @@ window.onload = () => {
     attribute vec4 a_vpos;
     attribute vec4 a_vcol;
 
-    uniform mat4 u_modelview;
-    uniform mat4 u_proj;
+    uniform mat4 u_mvp;
 
     varying lowp vec4 v_vcol;
 
     void main(void) {
-      gl_Position = u_proj * u_modelview * a_vpos;
+      gl_Position = u_mvp * a_vpos;
       v_vcol = a_vcol;
     }
   `;
@@ -452,8 +451,7 @@ window.onload = () => {
     program: shaderProgram,
     a_vpos: gl.getAttribLocation(shaderProgram, "a_vpos"),
     a_vcol: gl.getAttribLocation(shaderProgram, "a_vcol"),
-    u_proj: gl.getUniformLocation(shaderProgram, "u_proj"),
-    u_modelview: gl.getUniformLocation(shaderProgram, "u_modelview"),
+    u_mvp: gl.getUniformLocation(shaderProgram, "u_mvp"),
   };
 
   const buffers = {
@@ -540,7 +538,7 @@ window.onload = () => {
 
     cubeRotation += deltaTime;
 
-    const u_proj = mat4_perspective(
+    const u_mvp = mat4_perspective(
       mat4_create(),
       (45 * Math.PI) / 180,                           /* fieldOfView */
       gl.canvas.clientWidth / gl.canvas.clientHeight, /* aspect      */
@@ -548,17 +546,17 @@ window.onload = () => {
       100.0,                                          /* zFar        */
     );
 
-    const u_modelview = mat4_create();
     mat4_mul(
-      u_modelview,
-      u_modelview,
-      mat4_from_translation(_scratch, [0, 0, -6])
+      u_mvp,
+      u_mvp,
+      mat4_from_translation(mat4_create(), [0, 0, -6])
     );
     mat4_mul(
-      u_modelview,
-      u_modelview,
+      u_mvp,
+      u_mvp,
       mat4_from_zyx_rotation(mat4_create(), cubeRotation, cubeRotation*0.7, cubeRotation*0.3)
     );
+
 
     /* draw */
     {
@@ -599,14 +597,9 @@ window.onload = () => {
       gl.useProgram(programInfo.program);
 
       gl.uniformMatrix4fv(
-        programInfo.u_proj,
+        programInfo.u_mvp,
         false,
-        u_proj
-      );
-      gl.uniformMatrix4fv(
-        programInfo.u_modelview,
-        false,
-        u_modelview
+        u_mvp
       );
 
       gl.drawElements(

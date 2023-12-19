@@ -395,10 +395,8 @@ window.onload = () => {
   const vsSource = `
     attribute vec4 a_vpos;
 
-    uniform mat4 u_mvp;
-
     void main(void) {
-      gl_Position = u_mvp * a_vpos;
+      gl_Position = a_vpos;
     }
   `;
 
@@ -444,7 +442,6 @@ window.onload = () => {
   const programInfo = {
     program: shaderProgram,
     a_vpos: gl.getAttribLocation(shaderProgram, "a_vpos"),
-    u_mvp: gl.getUniformLocation(shaderProgram, "u_mvp"),
   };
 
   const buffers = {
@@ -472,13 +469,6 @@ window.onload = () => {
 
     cubeRotation += deltaTime;
 
-    const u_mvp = mat4_ortho(
-      mat4_create(),
-      0, 1,
-      0, window.innerHeight/window.innerWidth,
-      0, 1
-    );
-
     /* draw */
     {
       gl.clearColor(1.0, 1.0, 1.0, 1.0);
@@ -492,7 +482,7 @@ window.onload = () => {
         gl.bindBuffer(gl.ARRAY_BUFFER, buffers.pos);
         gl.vertexAttribPointer(
           programInfo.a_vpos,
-          3,        /* numComponents, */
+          4,        /* numComponents, */
           gl.FLOAT, /* type,          */
           false,    /* normalize,     */
           0,        /* stride,        */
@@ -501,39 +491,94 @@ window.onload = () => {
         gl.enableVertexAttribArray(programInfo.a_vpos);
       }
 
-      let vbuf_i = 0;
-      let ibuf_i = 0;
-      const vbuf = new Float32Array(1024 / 4);
-      const ibuf = new Uint16Array(1024 / 2);
+      let vbuf, ibuf, ibuf_i;
+      {
 
-      function line(x1,y1, x2,y2, t) {
-        const dx = x2 - x1;
-        const dy = y2 - y1;
+        const aspect_ratio = gl.canvas.clientWidth / gl.canvas.clientHeight;
+        const u_mvp = mat4_perspective(
+          mat4_create(),
+          (45 * Math.PI) / 180,                           /* fieldOfView */
+          aspect_ratio,                                   /* aspect      */
+          0.1,                                            /* zNear       */
+          100.0,                                          /* zFar        */
+        );
 
-        /* perp */
-        const nx = -dy;
-        const ny = dx;
+        mat4_mul(
+          u_mvp,
+          u_mvp,
+          mat4_from_translation(mat4_create(), [0.0, 0.0, -6.0])
+        );
+        mat4_mul(
+          u_mvp,
+          u_mvp,
+          mat4_from_zyx_rotation(mat4_create(), cubeRotation*0.1, cubeRotation*0.2, cubeRotation*0.6)
+        );
 
-        const tlen = Math.sqrt(nx*nx + ny*ny) / (t*0.5);
-        if (tlen <= 0) return;
-        const tx = nx / tlen;
-        const ty = ny / tlen;
+        let vbuf_i = 0;
+        ibuf_i = 0;
+        vbuf = new Float32Array(1024 / 4);
+        ibuf = new Uint16Array(1024 / 2);
 
-        ibuf[ibuf_i++] = 0 + vbuf_i/3;
-        ibuf[ibuf_i++] = 1 + vbuf_i/3;
-        ibuf[ibuf_i++] = 2 + vbuf_i/3;
+        function line(a, b, t) {
+          mat4_transform_vec4(a, a, u_mvp);
+          mat4_transform_vec4(b, b, u_mvp);
+          
+          const dx = b[0] - a[0];
+          const dy = b[1] - a[1];
+          const nx = -dy; /* perp */
+          const ny = dx*aspect_ratio;
+          const tlen = Math.sqrt(nx*nx + ny*ny) / (t * 0.5);
+          if (tlen <= 0) return;
+          const tx = nx/tlen;
+          const ty = ny/tlen * aspect_ratio;
 
-        ibuf[ibuf_i++] = 2 + vbuf_i/3;
-        ibuf[ibuf_i++] = 1 + vbuf_i/3;
-        ibuf[ibuf_i++] = 3 + vbuf_i/3;
+          ibuf[ibuf_i++] = 0 + vbuf_i/4;
+          ibuf[ibuf_i++] = 1 + vbuf_i/4;
+          ibuf[ibuf_i++] = 2 + vbuf_i/4;
 
-        vbuf[vbuf_i++] = x1 + tx; vbuf[vbuf_i++] = y1 + ty; vbuf[vbuf_i++] = 0;
-        vbuf[vbuf_i++] = x1 - tx; vbuf[vbuf_i++] = y1 - ty; vbuf[vbuf_i++] = 0;
-        vbuf[vbuf_i++] = x2 + tx; vbuf[vbuf_i++] = y2 + ty; vbuf[vbuf_i++] = 0;
-        vbuf[vbuf_i++] = x2 - tx; vbuf[vbuf_i++] = y2 - ty; vbuf[vbuf_i++] = 0;
+          ibuf[ibuf_i++] = 2 + vbuf_i/4;
+          ibuf[ibuf_i++] = 1 + vbuf_i/4;
+          ibuf[ibuf_i++] = 3 + vbuf_i/4;
+
+          vbuf[vbuf_i++] = a[0] + tx; vbuf[vbuf_i++] = a[1] + ty; vbuf[vbuf_i++] = a[2]; vbuf[vbuf_i++] = a[3];
+          vbuf[vbuf_i++] = a[0] - tx; vbuf[vbuf_i++] = a[1] - ty; vbuf[vbuf_i++] = a[2]; vbuf[vbuf_i++] = a[3];
+          vbuf[vbuf_i++] = b[0] + tx; vbuf[vbuf_i++] = b[1] + ty; vbuf[vbuf_i++] = b[2]; vbuf[vbuf_i++] = b[3];
+          vbuf[vbuf_i++] = b[0] - tx; vbuf[vbuf_i++] = b[1] - ty; vbuf[vbuf_i++] = b[2]; vbuf[vbuf_i++] = b[3];
+        }
+
+        function dot(x, y, t) {
+          ibuf[ibuf_i++] = 0 + vbuf_i/4;
+          ibuf[ibuf_i++] = 1 + vbuf_i/4;
+          ibuf[ibuf_i++] = 2 + vbuf_i/4;
+
+          ibuf[ibuf_i++] = 0 + vbuf_i/4;
+          ibuf[ibuf_i++] = 2 + vbuf_i/4;
+          ibuf[ibuf_i++] = 3 + vbuf_i/4;
+
+          const ar = aspect_ratio;
+          vbuf[vbuf_i++] = -t/ar + x;
+          vbuf[vbuf_i++] = -t    + y;
+          vbuf[vbuf_i++] =  0;
+
+          vbuf[vbuf_i++] =  t/ar + x;
+          vbuf[vbuf_i++] = -t    + y;
+          vbuf[vbuf_i++] =  0;
+
+          vbuf[vbuf_i++] =  t/ar + x;
+          vbuf[vbuf_i++] =  t    + y;
+          vbuf[vbuf_i++] =  0;
+
+          vbuf[vbuf_i++] = -t/ar + x;
+          vbuf[vbuf_i++] =  t    + y;
+          vbuf[vbuf_i++] =  0;
+        }
+
+        line([0,0,0,1], [1.0,  0,  0,1], 0.05);
+        line([0,0,0,1], [  0,1.0,  0,1], 0.05);
+        line([0,0,0,1], [  0,  0,1.0,1], 0.05);
+
+        // dot(0.3, 0.3, 0.01);
       }
-      line(0.1,0.1, 0.3,0.3, 0.01);
-      line(0.1,0.3, 0.3,0.1, 0.01);
 
       gl.bindBuffer(gl.ARRAY_BUFFER, buffers.pos);
       gl.bufferSubData(gl.ARRAY_BUFFER, 0, vbuf);
@@ -543,15 +588,9 @@ window.onload = () => {
       gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, buffers.idx);
       gl.useProgram(programInfo.program);
 
-      gl.uniformMatrix4fv(
-        programInfo.u_mvp,
-        false,
-        u_mvp
-      );
-
       gl.drawElements(
         gl.TRIANGLES,
-        36,                /* vertexCount */
+        ibuf_i,            /* vertexCount */
         gl.UNSIGNED_SHORT, /* type        */
         0                  /* offset      */
       );
