@@ -5950,6 +5950,8 @@ window.onload = () => {
   }
 
   requestAnimationFrame(function render(now) {
+    requestAnimationFrame(render);
+
     now *= 0.001;
     deltaTime = now - then;
     then = now;
@@ -6033,8 +6035,6 @@ window.onload = () => {
         0                  /* offset      */
       );
     }
-
-    requestAnimationFrame(render);
   })
 }
     </script>

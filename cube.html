@@ -411,7 +411,7 @@ window.onload = () => {
     varying lowp vec4 v_vcol;
 
     void main(void) {
-      gl_FragColor = v_vcol;
+      gl_FragColor = 0.8 + 0.2*v_vcol;
     }
   `;
 
@@ -532,6 +532,8 @@ window.onload = () => {
 
   let then = 0;
   requestAnimationFrame(function render(now) {
+    requestAnimationFrame(render);
+
     now *= 0.001;
     deltaTime = now - then;
     then = now;
@@ -614,8 +616,6 @@ window.onload = () => {
         0                  /* offset      */
       );
     }
-
-    requestAnimationFrame(render);
   })
 }
     </script>
