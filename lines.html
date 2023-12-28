@@ -391,15 +391,25 @@ window.onload = () => {
 
   const vsSource = `
     attribute vec4 a_vpos;
+    attribute float a_palette_index;
+
+    varying float v_palette_index;
 
     void main(void) {
+      v_palette_index = a_palette_index;
       gl_Position = a_vpos;
     }
   `;
 
   const fsSource = `
+    varying lowp float v_palette_index;
+
     void main(void) {
-      gl_FragColor = vec4(0.0, 0.0, 0.0, 1.0);
+      gl_FragColor = vec4(1.0, 0.0, 1.0, 1.0);
+      if (0.0 == v_palette_index) gl_FragColor = vec4(1.0, 0.0, 0.0, 1.0);
+      if (1.0 == v_palette_index) gl_FragColor = vec4(0.0, 1.0, 0.0, 1.0);
+      if (2.0 == v_palette_index) gl_FragColor = vec4(0.0, 0.0, 1.0, 1.0);
+      if (3.0 == v_palette_index) gl_FragColor = vec4(0.0, 0.0, 0.0, 1.0);
     }
   `;
 
@@ -429,27 +439,28 @@ window.onload = () => {
     gl.linkProgram(shaderProgram);
 
     if (!gl.getProgramParameter(shaderProgram, gl.LINK_STATUS)) {
-      console.error(`Link failed: ${gl.getProgramInfoLog(prog)}`);
-      console.error(`vs info-log: ${gl.getShaderInfoLog(vs)}`);
-      console.error(`fs info-log: ${gl.getShaderInfoLog(fs)}`);
+      console.error(`Link failed: ${gl.getProgramInfoLog(shaderProgram)}`);
+      console.error(`vs info-log: ${gl.getShaderInfoLog(vsShader)}`);
+      console.error(`fs info-log: ${gl.getShaderInfoLog(fsShader)}`);
       return;
     }
   }
 
   const programInfo = {
     program: shaderProgram,
-    a_vpos: gl.getAttribLocation(shaderProgram, "a_vpos"),
+    a_vpos:          gl.getAttribLocation(shaderProgram,          "a_vpos"),
+    a_palette_index: gl.getAttribLocation(shaderProgram, "a_palette_index"),
   };
 
   const buffers = {
-    pos: gl.createBuffer(),
+    vrt: gl.createBuffer(),
     col: gl.createBuffer(),
     idx: gl.createBuffer(),
   };
 
   /* fill buffers */
   {
-    gl.bindBuffer(gl.ARRAY_BUFFER, buffers.pos);
+    gl.bindBuffer(gl.ARRAY_BUFFER, buffers.vrt);
     gl.bufferData(gl.ARRAY_BUFFER, 1024, gl.DYNAMIC_DRAW);
 
     gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, buffers.idx);
@@ -484,16 +495,27 @@ window.onload = () => {
       gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
 
       {
-        gl.bindBuffer(gl.ARRAY_BUFFER, buffers.pos);
+        gl.bindBuffer(gl.ARRAY_BUFFER, buffers.vrt);
+
         gl.vertexAttribPointer(
           programInfo.a_vpos,
           4,        /* numComponents, */
           gl.FLOAT, /* type,          */
           false,    /* normalize,     */
-          0,        /* stride,        */
+          4*5,      /* stride,        */
           0         /* offset         */
         );
         gl.enableVertexAttribArray(programInfo.a_vpos);
+
+        gl.vertexAttribPointer(
+          programInfo.a_palette_index,
+          1,        /* numComponents, */
+          gl.FLOAT, /* type,          */
+          false,    /* normalize,     */
+          4*5,      /* stride,        */
+          4*4       /* offset         */
+        );
+        gl.enableVertexAttribArray(programInfo.a_palette_index);
       }
 
       let vbuf, ibuf, ibuf_i;
@@ -525,7 +547,7 @@ window.onload = () => {
         vbuf = new Float32Array(1024 / 4);
         ibuf = new Uint16Array(1024 / 2);
 
-        function line(a, b, t) {
+        function line(a, b, t, c) {
           mat4_transform_vec4(a, a, u_mvp);
           mat4_transform_vec4(b, b, u_mvp);
           
@@ -538,55 +560,27 @@ window.onload = () => {
           const tx = nx/tlen;
           const ty = ny/tlen * aspect_ratio;
 
-          ibuf[ibuf_i++] = 0 + vbuf_i/4;
-          ibuf[ibuf_i++] = 1 + vbuf_i/4;
-          ibuf[ibuf_i++] = 2 + vbuf_i/4;
+          ibuf[ibuf_i++] = 0 + vbuf_i/5;
+          ibuf[ibuf_i++] = 1 + vbuf_i/5;
+          ibuf[ibuf_i++] = 2 + vbuf_i/5;
 
-          ibuf[ibuf_i++] = 2 + vbuf_i/4;
-          ibuf[ibuf_i++] = 1 + vbuf_i/4;
-          ibuf[ibuf_i++] = 3 + vbuf_i/4;
+          ibuf[ibuf_i++] = 2 + vbuf_i/5;
+          ibuf[ibuf_i++] = 1 + vbuf_i/5;
+          ibuf[ibuf_i++] = 3 + vbuf_i/5;
 
-          vbuf[vbuf_i++] = a[0] + tx; vbuf[vbuf_i++] = a[1] + ty; vbuf[vbuf_i++] = a[2]; vbuf[vbuf_i++] = a[3];
-          vbuf[vbuf_i++] = a[0] - tx; vbuf[vbuf_i++] = a[1] - ty; vbuf[vbuf_i++] = a[2]; vbuf[vbuf_i++] = a[3];
-          vbuf[vbuf_i++] = b[0] + tx; vbuf[vbuf_i++] = b[1] + ty; vbuf[vbuf_i++] = b[2]; vbuf[vbuf_i++] = b[3];
-          vbuf[vbuf_i++] = b[0] - tx; vbuf[vbuf_i++] = b[1] - ty; vbuf[vbuf_i++] = b[2]; vbuf[vbuf_i++] = b[3];
+          vbuf[vbuf_i++] = a[0] + tx; vbuf[vbuf_i++] = a[1] + ty; vbuf[vbuf_i++] = a[2]; vbuf[vbuf_i++] = a[3]; vbuf[vbuf_i++] = c;
+          vbuf[vbuf_i++] = a[0] - tx; vbuf[vbuf_i++] = a[1] - ty; vbuf[vbuf_i++] = a[2]; vbuf[vbuf_i++] = a[3]; vbuf[vbuf_i++] = c;
+          vbuf[vbuf_i++] = b[0] + tx; vbuf[vbuf_i++] = b[1] + ty; vbuf[vbuf_i++] = b[2]; vbuf[vbuf_i++] = b[3]; vbuf[vbuf_i++] = c;
+          vbuf[vbuf_i++] = b[0] - tx; vbuf[vbuf_i++] = b[1] - ty; vbuf[vbuf_i++] = b[2]; vbuf[vbuf_i++] = b[3]; vbuf[vbuf_i++] = c;
         }
 
-        function dot(x, y, t) {
-          ibuf[ibuf_i++] = 0 + vbuf_i/4;
-          ibuf[ibuf_i++] = 1 + vbuf_i/4;
-          ibuf[ibuf_i++] = 2 + vbuf_i/4;
-
-          ibuf[ibuf_i++] = 0 + vbuf_i/4;
-          ibuf[ibuf_i++] = 2 + vbuf_i/4;
-          ibuf[ibuf_i++] = 3 + vbuf_i/4;
-
-          const ar = aspect_ratio;
-          vbuf[vbuf_i++] = -t/ar + x;
-          vbuf[vbuf_i++] = -t    + y;
-          vbuf[vbuf_i++] =  0;
-
-          vbuf[vbuf_i++] =  t/ar + x;
-          vbuf[vbuf_i++] = -t    + y;
-          vbuf[vbuf_i++] =  0;
-
-          vbuf[vbuf_i++] =  t/ar + x;
-          vbuf[vbuf_i++] =  t    + y;
-          vbuf[vbuf_i++] =  0;
-
-          vbuf[vbuf_i++] = -t/ar + x;
-          vbuf[vbuf_i++] =  t    + y;
-          vbuf[vbuf_i++] =  0;
-        }
-
-        line([0,0,0,1], [1.0,  0,  0,1], 0.05);
-        line([0,0,0,1], [  0,1.0,  0,1], 0.05);
-        line([0,0,0,1], [  0,  0,1.0,1], 0.05);
-
-        // dot(0.3, 0.3, 0.01);
+        const e = -0.02;
+        line([e,0,0,1], [1.0,  0,  0,1], 0.05, 0);
+        line([0,e,0,1], [  0,1.0,  0,1], 0.05, 1);
+        line([0,0,e,1], [  0,  0,1.0,1], 0.05, 2);
       }
 
-      gl.bindBuffer(gl.ARRAY_BUFFER, buffers.pos);
+      gl.bindBuffer(gl.ARRAY_BUFFER, buffers.vrt);
       gl.bufferSubData(gl.ARRAY_BUFFER, 0, vbuf);
       gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, buffers.idx);
       gl.bufferSubData(gl.ELEMENT_ARRAY_BUFFER, 0, ibuf);
