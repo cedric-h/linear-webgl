@@ -11,6 +11,10 @@
   <body>
     <canvas id="inspectorGraphCanvas"></canvas>
     <script>
+/*
+ * [ ] reuse buffer 'cross frames
+ * [ ] don't invert mat4 in drawText
+ */
 
 /* maps character to location in spritesheet */
 const sdfs = {};
@@ -215,12 +219,30 @@ const updateSDF = (() => {
 })()
 
 function mat4_create() {
-      let out = new Float32Array(16);
-      out[0] = 1;
-      out[5] = 1;
-      out[10] = 1;
-      out[15] = 1;
-      return out;
+    let out = new Float32Array(16);
+    out[0] = 1;
+    out[5] = 1;
+    out[10] = 1;
+    out[15] = 1;
+    return out;
+}
+function mat4_create_scale(s) {
+    let out = new Float32Array(16);
+    out[0] = s;
+    out[5] = s;
+    out[10] = s;
+    out[15] = 1;
+    return out;
+}
+function mat4_create_translate(x, y) {
+    let out = new Float32Array(16);
+    out[0] = 1;
+    out[5] = 1;
+    out[10] = 1;
+    out[12] = x;
+    out[13] = y;
+    out[15] = 1;
+    return out;
 }
 function mat4_ortho(out, left, right, bottom, top, near, far) {
     let lr = 1 / (left - right);
@@ -244,20 +266,166 @@ function mat4_ortho(out, left, right, bottom, top, near, far) {
     out[15] = 1;
     return out;
 }
-
-const canvas2 = document.getElementById('inspectorGraphCanvas');
-canvas2.width = window.innerWidth;
-canvas2.height = window.innerHeight;
-
-if (window.devicePixelRatio > 1) {
-    canvas2.style.width = `${canvas2.width}px`;
-    canvas2.style.height = `${canvas2.height}px`;
-    canvas2.width *= 2;
-    canvas2.height *= 2;
+function mat4_mul(out, a, b) {
+    let a00 = a[0], a01 = a[1], a02 = a[2], a03 = a[3];
+    let a10 = a[4], a11 = a[5], a12 = a[6], a13 = a[7];
+    let a20 = a[8], a21 = a[9], a22 = a[10], a23 = a[11];
+    let a30 = a[12], a31 = a[13], a32 = a[14], a33 = a[15];
+    /* Cache only the current line of the second matrix */
+    let b0 = b[0],
+    b1 = b[1],
+    b2 = b[2],
+    b3 = b[3];
+    out[0] = b0 * a00 + b1 * a10 + b2 * a20 + b3 * a30;
+    out[1] = b0 * a01 + b1 * a11 + b2 * a21 + b3 * a31;
+    out[2] = b0 * a02 + b1 * a12 + b2 * a22 + b3 * a32;
+    out[3] = b0 * a03 + b1 * a13 + b2 * a23 + b3 * a33;
+    b0 = b[4];
+    b1 = b[5];
+    b2 = b[6];
+    b3 = b[7];
+    out[4] = b0 * a00 + b1 * a10 + b2 * a20 + b3 * a30;
+    out[5] = b0 * a01 + b1 * a11 + b2 * a21 + b3 * a31;
+    out[6] = b0 * a02 + b1 * a12 + b2 * a22 + b3 * a32;
+    out[7] = b0 * a03 + b1 * a13 + b2 * a23 + b3 * a33;
+    b0 = b[8];
+    b1 = b[9];
+    b2 = b[10];
+    b3 = b[11];
+    out[8] = b0 * a00 + b1 * a10 + b2 * a20 + b3 * a30;
+    out[9] = b0 * a01 + b1 * a11 + b2 * a21 + b3 * a31;
+    out[10] = b0 * a02 + b1 * a12 + b2 * a22 + b3 * a32;
+    out[11] = b0 * a03 + b1 * a13 + b2 * a23 + b3 * a33;
+    b0 = b[12];
+    b1 = b[13];
+    b2 = b[14];
+    b3 = b[15];
+    out[12] = b0 * a00 + b1 * a10 + b2 * a20 + b3 * a30;
+    out[13] = b0 * a01 + b1 * a11 + b2 * a21 + b3 * a31;
+    out[14] = b0 * a02 + b1 * a12 + b2 * a22 + b3 * a32;
+    out[15] = b0 * a03 + b1 * a13 + b2 * a23 + b3 * a33;
+    return out;
+}
+function mat4_transform_vec4(out, a, m) {
+    let x = a[0], y = a[1], z = a[2], w = a[3];
+    out[0] = m[0] * x + m[4] * y + m[8] * z + m[12] * w;
+    out[1] = m[1] * x + m[5] * y + m[9] * z + m[13] * w;
+    out[2] = m[2] * x + m[6] * y + m[10] * z + m[14] * w;
+    out[3] = m[3] * x + m[7] * y + m[11] * z + m[15] * w;
+    return out;
+}
+function mat4_invert(out, a) {
+  let a00 = a[0],
+    a01 = a[1],
+    a02 = a[2],
+    a03 = a[3];
+  let a10 = a[4],
+    a11 = a[5],
+    a12 = a[6],
+    a13 = a[7];
+  let a20 = a[8],
+    a21 = a[9],
+    a22 = a[10],
+    a23 = a[11];
+  let a30 = a[12],
+    a31 = a[13],
+    a32 = a[14],
+    a33 = a[15];
+  let b00 = a00 * a11 - a01 * a10;
+  let b01 = a00 * a12 - a02 * a10;
+  let b02 = a00 * a13 - a03 * a10;
+  let b03 = a01 * a12 - a02 * a11;
+  let b04 = a01 * a13 - a03 * a11;
+  let b05 = a02 * a13 - a03 * a12;
+  let b06 = a20 * a31 - a21 * a30;
+  let b07 = a20 * a32 - a22 * a30;
+  let b08 = a20 * a33 - a23 * a30;
+  let b09 = a21 * a32 - a22 * a31;
+  let b10 = a21 * a33 - a23 * a31;
+  let b11 = a22 * a33 - a23 * a32;
+  /* Calculate the determinant */
+  let det =
+    b00 * b11 - b01 * b10 + b02 * b09 + b03 * b08 - b04 * b07 + b05 * b06;
+  if (!det) {
+    return null;
+  }
+  det = 1.0 / det;
+  out[0] = (a11 * b11 - a12 * b10 + a13 * b09) * det;
+  out[1] = (a02 * b10 - a01 * b11 - a03 * b09) * det;
+  out[2] = (a31 * b05 - a32 * b04 + a33 * b03) * det;
+  out[3] = (a22 * b04 - a21 * b05 - a23 * b03) * det;
+  out[4] = (a12 * b08 - a10 * b11 - a13 * b07) * det;
+  out[5] = (a00 * b11 - a02 * b08 + a03 * b07) * det;
+  out[6] = (a32 * b02 - a30 * b05 - a33 * b01) * det;
+  out[7] = (a20 * b05 - a22 * b02 + a23 * b01) * det;
+  out[8] = (a10 * b10 - a11 * b08 + a13 * b06) * det;
+  out[9] = (a01 * b08 - a00 * b10 - a03 * b06) * det;
+  out[10] = (a30 * b04 - a31 * b02 + a33 * b00) * det;
+  out[11] = (a21 * b02 - a20 * b04 - a23 * b00) * det;
+  out[12] = (a11 * b07 - a10 * b09 - a12 * b06) * det;
+  out[13] = (a00 * b09 - a01 * b07 + a02 * b06) * det;
+  out[14] = (a31 * b01 - a30 * b03 - a32 * b00) * det;
+  out[15] = (a20 * b03 - a21 * b01 + a22 * b00) * det;
+  return out;
 }
 
-const gl = canvas2.getContext('webgl', {antialias: false});
+const graphCanvas = document.getElementById('inspectorGraphCanvas');
+const gl = graphCanvas.getContext('webgl', {antialias: false});
 if (!gl) { alert('Failed to initialize WebGL'); }
+
+let pMatrix = mat4_ortho(mat4_create(), 0, gl.canvas.width, gl.canvas.height, 0, 0, -1);
+let viewMatrix = mat4_create();
+(window.onresize = () => {
+    graphCanvas.width = window.innerWidth;
+    graphCanvas.height = window.innerHeight;
+
+    if (window.devicePixelRatio > 1) {
+        graphCanvas.style.width = `${graphCanvas.width}px`;
+        graphCanvas.style.height = `${graphCanvas.height}px`;
+        graphCanvas.width *= window.devicePixelRatio;
+        graphCanvas.height *= window.devicePixelRatio;
+    }
+
+    pMatrix = mat4_ortho(mat4_create(), 0, gl.canvas.width, gl.canvas.height, 0, 0, -1);
+    gl.viewport(
+        0,
+        0,
+        graphCanvas.width,
+        graphCanvas.height
+    );
+})();
+
+let scroll = 0, 
+    mouseX = 0, mouseY = 0,
+    mouseDownX = 0, mouseDownY = 0,
+    mouseDown = false, mouseReleased = false;
+let wheelTimeout;
+window.onwheel = e => {
+    scroll = Math.sign(e.deltaY);
+    clearTimeout(wheelTimeout)
+    wheelTimeout = setTimeout(() => scroll = 0, 100)
+}
+window.onmousedown = e => {
+    mouseDown = true;
+    mouseDownX = e.clientX*window.devicePixelRatio;
+    mouseDownY = e.clientY*window.devicePixelRatio;
+}
+window.onmousemove = e => {
+    mouseX = e.clientX*window.devicePixelRatio;
+    mouseY = e.clientY*window.devicePixelRatio;
+}
+window.onmouseup = e => {
+    mouseReleased = true;
+    mouseX = e.clientX*window.devicePixelRatio;
+    mouseY = e.clientY*window.devicePixelRatio;
+}
+
+const texture = gl.createTexture();
+
+const vertexBuffer = gl.createBuffer();
+const textureBuffer = gl.createBuffer();
+
+
 
 let shader;
 /* compile shaders */
@@ -340,13 +508,6 @@ gl.useProgram(shader.program);
 gl.enableVertexAttribArray(shader.a_pos);
 gl.enableVertexAttribArray(shader.a_texcoord);
 
-const pMatrix = mat4_ortho(mat4_create(), 0, gl.canvas.width, gl.canvas.height, 0, 0, -1);
-
-const texture = gl.createTexture();
-
-const vertexBuffer = gl.createBuffer();
-const textureBuffer = gl.createBuffer();
-
 /* upload new SDF to texture */
 {
     const sdfImage = updateSDF();
@@ -366,11 +527,14 @@ const textureBuffer = gl.createBuffer();
 (function frame() {
     requestAnimationFrame(frame);
 
-    const str = 'newspaper quality';
+    const vertexElements = [];
+    const textureElements = [];
 
-    function drawText(size) {
-        const vertexElements = [];
-        const textureElements = [];
+    function drawText(str, worldX, worldY, view, size) {
+        const pos = [worldX, worldY, 0, 1]
+        mat4_transform_vec4(pos, pos, view);
+        const x = Math.round(pos[0]);
+        const y = Math.round(pos[1]);
 
         const fontsize = SDF_FONT_SIZE;
         const buf = fontsize / 8;
@@ -381,7 +545,7 @@ const textureBuffer = gl.createBuffer();
         const scale = size / fontsize;
         const lineWidth = str.length * fontsize * scale;
 
-        const pen = {x: canvas2.width / 2 - lineWidth / 2, y: canvas2.height / 2};
+        const pen = { x, y};
         for (let i = 0; i < str.length; i++) {
             const posX = sdfs[str[i]].x; // pos in sprite x
             const posY = sdfs[str[i]].y; // pos in sprite y
@@ -409,14 +573,6 @@ const textureBuffer = gl.createBuffer();
 
             pen.x = pen.x + advance * scale;
         }
-
-        gl.bindBuffer(gl.ARRAY_BUFFER, vertexBuffer);
-        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(vertexElements), gl.STATIC_DRAW);
-        vertexBuffer.numItems = vertexElements.length / 2;
-
-        gl.bindBuffer(gl.ARRAY_BUFFER, textureBuffer);
-        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(textureElements), gl.STATIC_DRAW);
-        textureBuffer.numItems = textureElements.length / 2;
     }
 
     /* set up premultiplied alpha */
@@ -428,11 +584,57 @@ const textureBuffer = gl.createBuffer();
     gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
 
     {
-        const scale = 128;
-        const gamma = 2;
+        if (scroll) {
+            // mat4_mul(viewMatrix, viewMatrix, mat4_create_translate( mouseX,  mouseY))
+            const zoom = mat4_create_scale(1.0 + 0.02*scroll);
 
-        drawText(scale);
+            mat4_mul(viewMatrix, viewMatrix, mat4_create_translate(-gl.canvas.width*0.5, -gl.canvas.height*0.5));
+            mat4_mul(viewMatrix, zoom, viewMatrix)
+            mat4_mul(viewMatrix, viewMatrix, mat4_create_translate( gl.canvas.width*0.5,  gl.canvas.height*0.5));
+        }
 
+        let dragX = 0, dragY = 0;
+        if (mouseDown) {
+            dragX += (mouseX - mouseDownX)
+            dragY += (mouseY - mouseDownY)
+
+            if (mouseReleased) {
+                mouseReleased = mouseDown = false;
+
+                viewMatrix = mat4_mul(viewMatrix, mat4_create_translate(dragX, dragY), viewMatrix);
+
+                dragX = dragY = 0;
+            }
+        }
+
+        /* text rendering wants the pen pixel-aligned, so scale here */
+        /* our pMatrix puts things in 0..1, but everything before that is in pixels */ 
+        const view = mat4_create_translate(dragX, dragY)
+        mat4_mul(view, view, viewMatrix);
+
+        // mat4_transform_vec4(pos, pos, vpMatrix)
+        const fontscale = 128 * Math.sqrt(view[0]*view[0] + view[1]*view[1]);
+
+        for (let i = 0; i < 10; i++) {
+            const circleX = Math.cos(i/10 * Math.PI*2) * 1200;
+            const circleY = Math.sin(i/10 * Math.PI*2) * 1200;
+
+            drawText('x', circleX, circleY, view, fontscale);
+        }
+        drawText('newspaper quality', 0, 0, view, fontscale);
+
+
+        gl.bindBuffer(gl.ARRAY_BUFFER, vertexBuffer);
+        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(vertexElements), gl.STATIC_DRAW);
+        vertexBuffer.numItems = vertexElements.length / 2;
+
+        gl.bindBuffer(gl.ARRAY_BUFFER, textureBuffer);
+        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(textureElements), gl.STATIC_DRAW);
+        textureBuffer.numItems = textureElements.length / 2;
+
+
+        // const mvpMatrix = mat4_mul(vpMatrix, vpMatrix, pMatrix);
+        // gl.uniformMatrix4fv(shader.u_matrix, false, mvpMatrix);
         gl.uniformMatrix4fv(shader.u_matrix, false, pMatrix);
 
         gl.activeTexture(gl.TEXTURE0);
@@ -451,7 +653,8 @@ const textureBuffer = gl.createBuffer();
 
         gl.uniform4fv(shader.u_color, [0, 0, 0, 1]);
         gl.uniform1f(shader.u_buffer, 0.75);
-        gl.uniform1f(shader.u_gamma, gamma * 1.4142 / scale);
+        const gamma = 2;
+        gl.uniform1f(shader.u_gamma, gamma * 1.4142 / fontscale);
         gl.drawArrays(gl.TRIANGLES, 0, vertexBuffer.numItems);
     }
 
