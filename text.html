@@ -12,8 +12,9 @@
     <canvas id="inspectorGraphCanvas"></canvas>
     <script>
 /*
- * [ ] reuse buffer 'cross frames
+ * [ ] reuse gpu buffers 'cross frames
  * [ ] don't invert mat4 in drawText
+ * [ ] have frame ring buffer for scratch mats
  */
 
 /* maps character to location in spritesheet */
@@ -218,12 +219,19 @@ const updateSDF = (() => {
     }
 })()
 
+function lerp(v0, v1, t) { return (1 - t) * v0 + t * v1; }
+function inv_lerp(min, max, p) { return (p - min) / (max - min); }
 function mat4_create() {
     let out = new Float32Array(16);
     out[0] = 1;
     out[5] = 1;
     out[10] = 1;
     out[15] = 1;
+    return out;
+}
+function mat4_clone(m) {
+    let out = new Float32Array(16);
+    out.set(m, 0)
     return out;
 }
 function mat4_create_scale(s) {
@@ -373,12 +381,13 @@ const graphCanvas = document.getElementById('inspectorGraphCanvas');
 const gl = graphCanvas.getContext('webgl', {antialias: false});
 if (!gl) { alert('Failed to initialize WebGL'); }
 
-let pMatrix = mat4_ortho(mat4_create(), 0, gl.canvas.width, gl.canvas.height, 0, 0, -1);
+let pMatrix = mat4_create();
 let viewMatrix = mat4_create();
 (window.onresize = () => {
     graphCanvas.width = window.innerWidth;
     graphCanvas.height = window.innerHeight;
 
+    /* account for e.g. high-retina macbook screens */
     if (window.devicePixelRatio > 1) {
         graphCanvas.style.width = `${graphCanvas.width}px`;
         graphCanvas.style.height = `${graphCanvas.height}px`;
@@ -386,7 +395,7 @@ let viewMatrix = mat4_create();
         graphCanvas.height *= window.devicePixelRatio;
     }
 
-    pMatrix = mat4_ortho(mat4_create(), 0, gl.canvas.width, gl.canvas.height, 0, 0, -1);
+    pMatrix = mat4_ortho(pMatrix, 0, gl.canvas.width, gl.canvas.height, 0, 1, -1);
     gl.viewport(
         0,
         0,
@@ -394,6 +403,13 @@ let viewMatrix = mat4_create();
         graphCanvas.height
     );
 })();
+{
+    /* scale viewMatrix to fit 5000 logical pixels */
+    const aspect_ratio = window.innerHeight/window.innerWidth;
+    const width = 5000;
+    mat4_ortho(viewMatrix, -width, width, width*aspect_ratio, -width*aspect_ratio, 1, -1)
+    mat4_mul(viewMatrix, mat4_invert(mat4_create(), pMatrix), viewMatrix);
+}
 
 let scroll = 0, 
     mouseX = 0, mouseY = 0,
@@ -524,13 +540,15 @@ gl.enableVertexAttribArray(shader.a_texcoord);
     gl.uniform2f(shader.u_texsize, sdfImage.width, sdfImage.height);
 }
 
-(function frame() {
+requestAnimationFrame(function frame(timestamp) {
     requestAnimationFrame(frame);
 
     const vertexElements = [];
     const textureElements = [];
 
-    function drawText(str, worldX, worldY, view, size) {
+    const ALIGN_LEFT = 0;
+    const ALIGN_CENTER = 1;
+    function drawText(str, worldX, worldY, view, size, align = ALIGN_LEFT) {
         const pos = [worldX, worldY, 0, 1]
         mat4_transform_vec4(pos, pos, view);
         const x = Math.round(pos[0]);
@@ -545,7 +563,10 @@ gl.enableVertexAttribArray(shader.a_texcoord);
         const scale = size / fontsize;
         const lineWidth = str.length * fontsize * scale;
 
-        const pen = { x, y};
+        const pen = { x, y };
+        if (align == ALIGN_CENTER) {
+            pen.x -= (str.split('').reduce((a, c) => a + sdfs[c].glyph.glyphAdvance, 0) / 2) * scale;
+        }
         for (let i = 0; i < str.length; i++) {
             const posX = sdfs[str[i]].x; // pos in sprite x
             const posY = sdfs[str[i]].y; // pos in sprite y
@@ -584,15 +605,30 @@ gl.enableVertexAttribArray(shader.a_texcoord);
     gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
 
     {
+        /* zoom toward mouse */
         if (scroll) {
-            // mat4_mul(viewMatrix, viewMatrix, mat4_create_translate( mouseX,  mouseY))
-            const zoom = mat4_create_scale(1.0 + 0.02*scroll);
+            const zoom = 1.0 + 0.03*scroll;
 
-            mat4_mul(viewMatrix, viewMatrix, mat4_create_translate(-gl.canvas.width*0.5, -gl.canvas.height*0.5));
-            mat4_mul(viewMatrix, zoom, viewMatrix)
-            mat4_mul(viewMatrix, viewMatrix, mat4_create_translate( gl.canvas.width*0.5,  gl.canvas.height*0.5));
+            const focal = [mouseX, mouseY, 0, 1];
+            const tl = [-1, -1, -1,  1]
+            const br = [ 1,  1,  1,  1]
+            const inv = mat4_invert(mat4_create(), viewMatrix);
+            mat4_transform_vec4(tl, tl, inv);
+            mat4_transform_vec4(br, br, inv);
+            mat4_transform_vec4(focal, focal, inv);
+
+            mat4_ortho(
+                viewMatrix,
+                (tl[0] - focal[0])*zoom + focal[0],
+                (br[0] - focal[0])*zoom + focal[0],
+                (tl[1] - focal[1])*zoom + focal[1],
+                (br[1] - focal[1])*zoom + focal[1],
+                br[2],
+                tl[2]
+            )
         }
 
+        /* mouse drag */
         let dragX = 0, dragY = 0;
         if (mouseDown) {
             dragX += (mouseX - mouseDownX)
@@ -601,7 +637,7 @@ gl.enableVertexAttribArray(shader.a_texcoord);
             if (mouseReleased) {
                 mouseReleased = mouseDown = false;
 
-                viewMatrix = mat4_mul(viewMatrix, mat4_create_translate(dragX, dragY), viewMatrix);
+                mat4_mul(viewMatrix, mat4_create_translate(dragX, dragY), viewMatrix);
 
                 dragX = dragY = 0;
             }
@@ -609,19 +645,22 @@ gl.enableVertexAttribArray(shader.a_texcoord);
 
         /* text rendering wants the pen pixel-aligned, so scale here */
         /* our pMatrix puts things in 0..1, but everything before that is in pixels */ 
+        // const view = mat4_create_translate(dragX + mouseX, dragY + mouseY)
         const view = mat4_create_translate(dragX, dragY)
         mat4_mul(view, view, viewMatrix);
 
-        // mat4_transform_vec4(pos, pos, vpMatrix)
         const fontscale = 128 * Math.sqrt(view[0]*view[0] + view[1]*view[1]);
 
         for (let i = 0; i < 10; i++) {
-            const circleX = Math.cos(i/10 * Math.PI*2) * 1200;
-            const circleY = Math.sin(i/10 * Math.PI*2) * 1200;
+            const swoop = 0.5*Math.sin(timestamp*0.005);
+            const theta = i/10 * Math.PI*2 + timestamp*0.0005 + swoop;
+            const radius = (2000 + swoop*400);
+            const circleX = Math.cos(theta) * radius;
+            const circleY = Math.sin(theta) * radius;
 
-            drawText('x', circleX, circleY, view, fontscale);
+            drawText('x', circleX, circleY, view, fontscale, ALIGN_CENTER);
         }
-        drawText('newspaper quality', 0, 0, view, fontscale);
+        drawText('accelerated instance graph', 0, 0, view, fontscale, ALIGN_CENTER);
 
 
         gl.bindBuffer(gl.ARRAY_BUFFER, vertexBuffer);
@@ -658,7 +697,7 @@ gl.enableVertexAttribArray(shader.a_texcoord);
         gl.drawArrays(gl.TRIANGLES, 0, vertexBuffer.numItems);
     }
 
-})()
+})
 
 
     </script>
