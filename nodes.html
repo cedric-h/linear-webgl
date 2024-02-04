@@ -1,0 +1,704 @@
+<!-- vim: sw=4 ts=4 expandtab smartindent ft=javascript
+-->
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>WebGL Demo</title>
+    <style> document, body { margin: 0px; padding: 0px; overflow: hidden; } </style>
+  </head>
+
+  <body>
+    <canvas id="inspectorGraphCanvas"></canvas>
+    <script>
+/*
+ * [ ] reuse gpu buffers 'cross frames
+ * [ ] don't invert mat4 in drawText
+ * [ ] have frame ring buffer for scratch mats
+ */
+
+/* maps character to location in spritesheet */
+const sdfs = {};
+let buffer;
+/* higher number = prettier text using more VRAM */
+const SDF_FONT_SIZE = 48;
+
+const updateSDF = (() => {
+
+    const chars = ' abcdefghijklmnopqrstuvwxyzZABCDEFGHIJKLMNOPQRSTUVWXYZ!@#$%^&*()1234567890<,>./?;:\'"\\|{}[]';
+    const fontCanvas = document.createElement('canvas');
+    fontCanvas.width = fontCanvas.height = 512
+    const ctx = fontCanvas.getContext('2d');
+
+    const TinySDF = (() => {
+        const INF = 1e20;
+
+        class TinySDF {
+            constructor({
+                fontSize = 24,
+                buffer = 3,
+                radius = 8,
+                cutoff = 0.25,
+                fontFamily = 'sans-serif',
+                fontWeight = 'normal',
+                fontStyle = 'normal'
+            } = {}) {
+                this.buffer = buffer;
+                this.cutoff = cutoff;
+                this.radius = radius;
+
+                // make the canvas size big enough to both have the specified buffer around the glyph
+                // for "halo", and account for some glyphs possibly being larger than their font size
+                const size = this.size = fontSize + buffer * 4;
+
+                const canvas = this._createCanvas(size);
+                const ctx = this.ctx = canvas.getContext('2d', {willReadFrequently: true});
+                ctx.font = `${fontStyle} ${fontWeight} ${fontSize}px ${fontFamily}`;
+
+                ctx.textBaseline = 'alphabetic';
+                ctx.textAlign = 'left'; // Necessary so that RTL text doesn't have different alignment
+                ctx.fillStyle = 'black';
+
+                // temporary arrays for the distance transform
+                this.gridOuter = new Float64Array(size * size);
+                this.gridInner = new Float64Array(size * size);
+                this.f = new Float64Array(size);
+                this.z = new Float64Array(size + 1);
+                this.v = new Uint16Array(size);
+            }
+
+            _createCanvas(size) {
+                const canvas = document.createElement('canvas');
+                canvas.width = canvas.height = size;
+                return canvas;
+            }
+
+            draw(char) {
+                const {
+                    width: glyphAdvance,
+                    actualBoundingBoxAscent,
+                    actualBoundingBoxDescent,
+                    actualBoundingBoxLeft,
+                    actualBoundingBoxRight
+                } = this.ctx.measureText(char);
+
+                // The integer/pixel part of the top alignment is encoded in metrics.glyphTop
+                // The remainder is implicitly encoded in the rasterization
+                const glyphTop = Math.ceil(actualBoundingBoxAscent);
+                const glyphLeft = 0;
+
+                // If the glyph overflows the canvas size, it will be clipped at the bottom/right
+                const glyphWidth = Math.max(0, Math.min(this.size - this.buffer, Math.ceil(actualBoundingBoxRight - actualBoundingBoxLeft)));
+                const glyphHeight = Math.min(this.size - this.buffer, glyphTop + Math.ceil(actualBoundingBoxDescent));
+
+                const width = glyphWidth + 2 * this.buffer;
+                const height = glyphHeight + 2 * this.buffer;
+
+                const len = Math.max(width * height, 0);
+                const data = new Uint8ClampedArray(len);
+                const glyph = {data, width, height, glyphWidth, glyphHeight, glyphTop, glyphLeft, glyphAdvance};
+                if (glyphWidth === 0 || glyphHeight === 0) return glyph;
+
+                const {ctx, buffer, gridInner, gridOuter} = this;
+                ctx.clearRect(buffer, buffer, glyphWidth, glyphHeight);
+                ctx.fillText(char, buffer, buffer + glyphTop);
+                const imgData = ctx.getImageData(buffer, buffer, glyphWidth, glyphHeight);
+
+                // Initialize grids outside the glyph range to alpha 0
+                gridOuter.fill(INF, 0, len);
+                gridInner.fill(0, 0, len);
+
+                for (let y = 0; y < glyphHeight; y++) {
+                    for (let x = 0; x < glyphWidth; x++) {
+                        const a = imgData.data[4 * (y * glyphWidth + x) + 3] / 255; // alpha value
+                        if (a === 0) continue; // empty pixels
+
+                        const j = (y + buffer) * width + x + buffer;
+
+                        if (a === 1) { // fully drawn pixels
+                            gridOuter[j] = 0;
+                            gridInner[j] = INF;
+
+                        } else { // aliased pixels
+                            const d = 0.5 - a;
+                            gridOuter[j] = d > 0 ? d * d : 0;
+                            gridInner[j] = d < 0 ? d * d : 0;
+                        }
+                    }
+                }
+
+                edt(gridOuter, 0, 0, width, height, width, this.f, this.v, this.z);
+                edt(gridInner, buffer, buffer, glyphWidth, glyphHeight, width, this.f, this.v, this.z);
+
+                for (let i = 0; i < len; i++) {
+                    const d = Math.sqrt(gridOuter[i]) - Math.sqrt(gridInner[i]);
+                    data[i] = Math.round(255 - 255 * (d / this.radius + this.cutoff));
+                }
+
+                return glyph;
+            }
+        }
+
+        // 2D Euclidean squared distance transform by Felzenszwalb & Huttenlocher https://cs.brown.edu/~pff/papers/dt-final.pdf
+        function edt(data, x0, y0, width, height, gridSize, f, v, z) {
+            for (let x = x0; x < x0 + width; x++) edt1d(data, y0 * gridSize + x, gridSize, height, f, v, z);
+            for (let y = y0; y < y0 + height; y++) edt1d(data, y * gridSize + x0, 1, width, f, v, z);
+        }
+
+        // 1D squared distance transform
+        function edt1d(grid, offset, stride, length, f, v, z) {
+            v[0] = 0;
+            z[0] = -INF;
+            z[1] = INF;
+            f[0] = grid[offset];
+
+            for (let q = 1, k = 0, s = 0; q < length; q++) {
+                f[q] = grid[offset + q * stride];
+                const q2 = q * q;
+                do {
+                    const r = v[k];
+                    s = (f[q] - f[r] + q2 - r * r) / (q - r) / 2;
+                } while (s <= z[k] && --k > -1);
+
+                k++;
+                v[k] = q;
+                z[k] = s;
+                z[k + 1] = INF;
+            }
+
+            for (let q = 0, k = 0; q < length; q++) {
+                while (z[k + 1] < q) k++;
+                const r = v[k];
+                const qr = q - r;
+                grid[offset + q * stride] = f[r] + qr * qr;
+            }
+        }
+
+        return TinySDF
+    })()
+
+    return function updateSDF() {
+        // Convert alpha-only to RGBA so we can use `putImageData` for building the composite bitmap
+        function makeRGBAImageData(alphaChannel, width, height) {
+            const imageData = ctx.createImageData(width, height);
+            for (let i = 0; i < alphaChannel.length; i++) {
+                imageData.data[4 * i + 0] = alphaChannel[i];
+                imageData.data[4 * i + 1] = alphaChannel[i];
+                imageData.data[4 * i + 2] = alphaChannel[i];
+                imageData.data[4 * i + 3] = 255;
+            }
+            return imageData;
+        }
+
+        const charWidths = Array.from({ length: chars.length }, _ => 0);
+
+        ctx.clearRect(0, 0, fontCanvas.width, fontCanvas.height);
+        const fontSize = +SDF_FONT_SIZE;
+        const fontWeight = +SDF_FONT_SIZE;
+        const fontStyle = 'normal';
+        buffer = Math.ceil(fontSize / 8);
+        const radius = Math.ceil(fontSize / 3);
+        const sdf = new TinySDF({fontSize, buffer, radius, fontWeight, fontStyle});
+        const size = fontSize + buffer * 2;
+
+        const now = performance.now();
+        let i = 0;
+        for (let y = 0; y + size <= fontCanvas.height && i < chars.length; y += size) {
+            for (let x = 0; x + size <= fontCanvas.width && i < chars.length; x += size) {
+                const glyph = sdf.draw(chars[i]);
+                const {data, width, height} = glyph;
+                delete glyph.data;
+                sdfs[chars[i]] = { x, y, glyph };
+                ctx.putImageData(makeRGBAImageData(data, width, height), x, y);
+                i++;
+            }
+        }
+        console.log(`${i} characters (${fontSize}px, font-weight: ${fontWeight} with ${buffer}px buffer) rendered in ${Math.round(performance.now() - now)}ms.`)
+
+        return ctx.getImageData(0, 0, fontCanvas.width, fontCanvas.height)
+    }
+})()
+
+function lerp(v0, v1, t) { return (1 - t) * v0 + t * v1; }
+function inv_lerp(min, max, p) { return (p - min) / (max - min); }
+function mat4_create() {
+    let out = new Float32Array(16);
+    out[0] = 1;
+    out[5] = 1;
+    out[10] = 1;
+    out[15] = 1;
+    return out;
+}
+function mat4_clone(m) {
+    let out = new Float32Array(16);
+    out.set(m, 0)
+    return out;
+}
+function mat4_create_scale(s) {
+    let out = new Float32Array(16);
+    out[0] = s;
+    out[5] = s;
+    out[10] = s;
+    out[15] = 1;
+    return out;
+}
+function mat4_create_translate(x, y) {
+    let out = new Float32Array(16);
+    out[0] = 1;
+    out[5] = 1;
+    out[10] = 1;
+    out[12] = x;
+    out[13] = y;
+    out[15] = 1;
+    return out;
+}
+function mat4_ortho(out, left, right, bottom, top, near, far) {
+    let lr = 1 / (left - right);
+    let bt = 1 / (bottom - top);
+    let nf = 1 / (near - far);
+    out[0] = -2 * lr;
+    out[1] = 0;
+    out[2] = 0;
+    out[3] = 0;
+    out[4] = 0;
+    out[5] = -2 * bt;
+    out[6] = 0;
+    out[7] = 0;
+    out[8] = 0;
+    out[9] = 0;
+    out[10] = 2 * nf;
+    out[11] = 0;
+    out[12] = (left + right) * lr;
+    out[13] = (top + bottom) * bt;
+    out[14] = (far + near) * nf;
+    out[15] = 1;
+    return out;
+}
+function mat4_mul(out, a, b) {
+    let a00 = a[0], a01 = a[1], a02 = a[2], a03 = a[3];
+    let a10 = a[4], a11 = a[5], a12 = a[6], a13 = a[7];
+    let a20 = a[8], a21 = a[9], a22 = a[10], a23 = a[11];
+    let a30 = a[12], a31 = a[13], a32 = a[14], a33 = a[15];
+    /* Cache only the current line of the second matrix */
+    let b0 = b[0],
+    b1 = b[1],
+    b2 = b[2],
+    b3 = b[3];
+    out[0] = b0 * a00 + b1 * a10 + b2 * a20 + b3 * a30;
+    out[1] = b0 * a01 + b1 * a11 + b2 * a21 + b3 * a31;
+    out[2] = b0 * a02 + b1 * a12 + b2 * a22 + b3 * a32;
+    out[3] = b0 * a03 + b1 * a13 + b2 * a23 + b3 * a33;
+    b0 = b[4];
+    b1 = b[5];
+    b2 = b[6];
+    b3 = b[7];
+    out[4] = b0 * a00 + b1 * a10 + b2 * a20 + b3 * a30;
+    out[5] = b0 * a01 + b1 * a11 + b2 * a21 + b3 * a31;
+    out[6] = b0 * a02 + b1 * a12 + b2 * a22 + b3 * a32;
+    out[7] = b0 * a03 + b1 * a13 + b2 * a23 + b3 * a33;
+    b0 = b[8];
+    b1 = b[9];
+    b2 = b[10];
+    b3 = b[11];
+    out[8] = b0 * a00 + b1 * a10 + b2 * a20 + b3 * a30;
+    out[9] = b0 * a01 + b1 * a11 + b2 * a21 + b3 * a31;
+    out[10] = b0 * a02 + b1 * a12 + b2 * a22 + b3 * a32;
+    out[11] = b0 * a03 + b1 * a13 + b2 * a23 + b3 * a33;
+    b0 = b[12];
+    b1 = b[13];
+    b2 = b[14];
+    b3 = b[15];
+    out[12] = b0 * a00 + b1 * a10 + b2 * a20 + b3 * a30;
+    out[13] = b0 * a01 + b1 * a11 + b2 * a21 + b3 * a31;
+    out[14] = b0 * a02 + b1 * a12 + b2 * a22 + b3 * a32;
+    out[15] = b0 * a03 + b1 * a13 + b2 * a23 + b3 * a33;
+    return out;
+}
+function mat4_transform_vec4(out, a, m) {
+    let x = a[0], y = a[1], z = a[2], w = a[3];
+    out[0] = m[0] * x + m[4] * y + m[8] * z + m[12] * w;
+    out[1] = m[1] * x + m[5] * y + m[9] * z + m[13] * w;
+    out[2] = m[2] * x + m[6] * y + m[10] * z + m[14] * w;
+    out[3] = m[3] * x + m[7] * y + m[11] * z + m[15] * w;
+    return out;
+}
+function mat4_invert(out, a) {
+  let a00 = a[0],
+    a01 = a[1],
+    a02 = a[2],
+    a03 = a[3];
+  let a10 = a[4],
+    a11 = a[5],
+    a12 = a[6],
+    a13 = a[7];
+  let a20 = a[8],
+    a21 = a[9],
+    a22 = a[10],
+    a23 = a[11];
+  let a30 = a[12],
+    a31 = a[13],
+    a32 = a[14],
+    a33 = a[15];
+  let b00 = a00 * a11 - a01 * a10;
+  let b01 = a00 * a12 - a02 * a10;
+  let b02 = a00 * a13 - a03 * a10;
+  let b03 = a01 * a12 - a02 * a11;
+  let b04 = a01 * a13 - a03 * a11;
+  let b05 = a02 * a13 - a03 * a12;
+  let b06 = a20 * a31 - a21 * a30;
+  let b07 = a20 * a32 - a22 * a30;
+  let b08 = a20 * a33 - a23 * a30;
+  let b09 = a21 * a32 - a22 * a31;
+  let b10 = a21 * a33 - a23 * a31;
+  let b11 = a22 * a33 - a23 * a32;
+  /* Calculate the determinant */
+  let det =
+    b00 * b11 - b01 * b10 + b02 * b09 + b03 * b08 - b04 * b07 + b05 * b06;
+  if (!det) {
+    return null;
+  }
+  det = 1.0 / det;
+  out[0] = (a11 * b11 - a12 * b10 + a13 * b09) * det;
+  out[1] = (a02 * b10 - a01 * b11 - a03 * b09) * det;
+  out[2] = (a31 * b05 - a32 * b04 + a33 * b03) * det;
+  out[3] = (a22 * b04 - a21 * b05 - a23 * b03) * det;
+  out[4] = (a12 * b08 - a10 * b11 - a13 * b07) * det;
+  out[5] = (a00 * b11 - a02 * b08 + a03 * b07) * det;
+  out[6] = (a32 * b02 - a30 * b05 - a33 * b01) * det;
+  out[7] = (a20 * b05 - a22 * b02 + a23 * b01) * det;
+  out[8] = (a10 * b10 - a11 * b08 + a13 * b06) * det;
+  out[9] = (a01 * b08 - a00 * b10 - a03 * b06) * det;
+  out[10] = (a30 * b04 - a31 * b02 + a33 * b00) * det;
+  out[11] = (a21 * b02 - a20 * b04 - a23 * b00) * det;
+  out[12] = (a11 * b07 - a10 * b09 - a12 * b06) * det;
+  out[13] = (a00 * b09 - a01 * b07 + a02 * b06) * det;
+  out[14] = (a31 * b01 - a30 * b03 - a32 * b00) * det;
+  out[15] = (a20 * b03 - a21 * b01 + a22 * b00) * det;
+  return out;
+}
+
+const graphCanvas = document.getElementById('inspectorGraphCanvas');
+const gl = graphCanvas.getContext('webgl', {antialias: false});
+if (!gl) { alert('Failed to initialize WebGL'); }
+
+let pMatrix = mat4_create();
+let viewMatrix = mat4_create();
+(window.onresize = () => {
+    graphCanvas.width = window.innerWidth;
+    graphCanvas.height = window.innerHeight;
+
+    /* account for e.g. high-retina macbook screens */
+    if (window.devicePixelRatio > 1) {
+        graphCanvas.style.width = `${graphCanvas.width}px`;
+        graphCanvas.style.height = `${graphCanvas.height}px`;
+        graphCanvas.width *= window.devicePixelRatio;
+        graphCanvas.height *= window.devicePixelRatio;
+    }
+
+    pMatrix = mat4_ortho(pMatrix, 0, gl.canvas.width, gl.canvas.height, 0, 1, -1);
+    gl.viewport(
+        0,
+        0,
+        graphCanvas.width,
+        graphCanvas.height
+    );
+})();
+{
+    /* scale viewMatrix to fit 5000 logical pixels */
+    const aspect_ratio = window.innerHeight/window.innerWidth;
+    const width = 5000;
+    mat4_ortho(viewMatrix, -width, width, width*aspect_ratio, -width*aspect_ratio, 1, -1)
+    mat4_mul(viewMatrix, mat4_invert(mat4_create(), pMatrix), viewMatrix);
+}
+
+let scroll = 0, 
+    mouseX = 0, mouseY = 0,
+    mouseDownX = 0, mouseDownY = 0,
+    mouseDown = false, mouseReleased = false;
+let wheelTimeout;
+window.onwheel = e => {
+    scroll = Math.sign(e.deltaY);
+    clearTimeout(wheelTimeout)
+    wheelTimeout = setTimeout(() => scroll = 0, 100)
+}
+window.onmousedown = e => {
+    mouseDown = true;
+    mouseDownX = e.clientX*window.devicePixelRatio;
+    mouseDownY = e.clientY*window.devicePixelRatio;
+}
+window.onmousemove = e => {
+    mouseX = e.clientX*window.devicePixelRatio;
+    mouseY = e.clientY*window.devicePixelRatio;
+}
+window.onmouseup = e => {
+    mouseReleased = true;
+    mouseX = e.clientX*window.devicePixelRatio;
+    mouseY = e.clientY*window.devicePixelRatio;
+}
+
+const texture = gl.createTexture();
+
+const vertexBuffer = gl.createBuffer();
+const textureBuffer = gl.createBuffer();
+
+
+
+let shader;
+/* compile shaders */
+{
+    const vertexSource = `
+        attribute vec2 a_pos;
+        attribute vec2 a_texcoord;
+
+        uniform mat4 u_matrix;
+        uniform vec2 u_texsize;
+
+        varying vec2 v_texcoord;
+
+        void main() {
+            gl_Position = u_matrix * vec4(a_pos.xy, 0, 1);
+            v_texcoord = a_texcoord / u_texsize;
+        }`;
+
+    const fragmentSource = `
+        precision mediump float;
+
+        uniform sampler2D u_texture;
+        uniform vec4 u_color;
+        uniform float u_buffer;
+        uniform float u_gamma;
+
+        varying vec2 v_texcoord;
+
+        void main() {
+            float dist = texture2D(u_texture, v_texcoord).r;
+            float alpha = smoothstep(u_buffer - u_gamma, u_buffer + u_gamma, dist);
+            gl_FragColor = vec4(u_color.rgb, alpha * u_color.a);
+        }`;
+
+    function createProgram(gl, vertexSource, fragmentSource) {
+        function createShader(gl, type, source) {
+            const shader = gl.createShader(type);
+            gl.shaderSource(shader, source);
+            gl.compileShader(shader);
+            if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+                throw new Error(gl.getShaderInfoLog(shader));
+            }
+            return shader;
+        }
+
+        const program = gl.createProgram();
+
+        const vertexShader = createShader(gl, gl.VERTEX_SHADER, vertexSource);
+        const fragmentShader = createShader(gl, gl.FRAGMENT_SHADER, fragmentSource);
+
+        gl.attachShader(program, vertexShader);
+        gl.attachShader(program, fragmentShader);
+
+        gl.linkProgram(program);
+        if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+            throw new Error(gl.getProgramInfoLog(program));
+        }
+
+        const wrapper = {program};
+
+        const numAttributes = gl.getProgramParameter(program, gl.ACTIVE_ATTRIBUTES);
+        for (let i = 0; i < numAttributes; i++) {
+            const attribute = gl.getActiveAttrib(program, i);
+            wrapper[attribute.name] = gl.getAttribLocation(program, attribute.name);
+        }
+        const numUniforms = gl.getProgramParameter(program, gl.ACTIVE_UNIFORMS);
+        for (let i = 0; i < numUniforms; i++) {
+            const uniform = gl.getActiveUniform(program, i);
+            wrapper[uniform.name] = gl.getUniformLocation(program, uniform.name);
+        }
+
+        return wrapper;
+    }
+
+
+    shader = createProgram(gl, vertexSource, fragmentSource);
+}
+
+gl.useProgram(shader.program);
+gl.enableVertexAttribArray(shader.a_pos);
+gl.enableVertexAttribArray(shader.a_texcoord);
+
+/* upload new SDF to texture */
+{
+    const sdfImage = updateSDF();
+    // sdfs[' '].width = sdfs['w'].width;
+    const sdfBytes = new Uint8Array(sdfImage.data)
+
+    gl.bindTexture(gl.TEXTURE_2D, texture);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, sdfImage.width, sdfImage.height, 0, gl.RGBA, gl.UNSIGNED_BYTE, sdfBytes);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+
+    gl.uniform2f(shader.u_texsize, sdfImage.width, sdfImage.height);
+}
+
+requestAnimationFrame(function frame(timestamp) {
+    requestAnimationFrame(frame);
+
+    const vertexElements = [];
+    const textureElements = [];
+
+    const ALIGN_LEFT = 0;
+    const ALIGN_CENTER = 1;
+    function drawText(str, worldX, worldY, view, size, align = ALIGN_LEFT) {
+        const pos = [worldX, worldY, 0, 1]
+        mat4_transform_vec4(pos, pos, view);
+        const x = Math.round(pos[0]);
+        const y = Math.round(pos[1]);
+
+        const fontsize = SDF_FONT_SIZE;
+        const buf = fontsize / 8;
+        const width = fontsize + buf * 2; // glyph width
+        const height = fontsize + buf * 2; // glyph height
+        const bx = 0; // bearing x
+
+        const scale = size / fontsize;
+        const lineWidth = str.length * fontsize * scale;
+
+        const pen = { x, y };
+        if (align == ALIGN_CENTER) {
+            pen.x -= (str.split('').reduce((a, c) => a + sdfs[c].glyph.glyphAdvance, 0) / 2) * scale;
+        }
+        for (let i = 0; i < str.length; i++) {
+            const posX = sdfs[str[i]].x; // pos in sprite x
+            const posY = sdfs[str[i]].y; // pos in sprite y
+            const advance = sdfs[str[i]].glyph.glyphAdvance;
+            const by = sdfs[str[i]].glyph.glyphTop - (fontsize / 2 + buf); // bearing y
+
+            vertexElements.push(
+                pen.x + ((bx - buf) * scale), pen.y - by * scale,
+                pen.x + ((bx - buf + width) * scale), pen.y - by * scale,
+                pen.x + ((bx - buf) * scale), pen.y + (height - by) * scale,
+
+                pen.x + ((bx - buf + width) * scale), pen.y - by * scale,
+                pen.x + ((bx - buf) * scale), pen.y + (height - by) * scale,
+                pen.x + ((bx - buf + width) * scale), pen.y + (height - by) * scale
+            );
+
+            textureElements.push(
+                posX, posY,
+                posX + width, posY,
+                posX, posY + height,
+                posX + width, posY,
+                posX, posY + height,
+                posX + width, posY + height
+            );
+
+            pen.x = pen.x + advance * scale;
+        }
+    }
+
+    /* set up premultiplied alpha */
+    gl.blendFuncSeparate(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA, gl.ONE, gl.ONE);
+    gl.enable(gl.BLEND);
+
+    /* clear all */
+    gl.clearColor(0.93, 0.9, 0.89, 1);
+    gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+
+    {
+        /* zoom toward mouse */
+        if (scroll) {
+            const zoom = 1.0 + 0.03*scroll;
+
+            const focal = [mouseX, mouseY, 0, 1];
+            const tl = [-1, -1, -1,  1]
+            const br = [ 1,  1,  1,  1]
+            const inv = mat4_invert(mat4_create(), viewMatrix);
+            mat4_transform_vec4(tl, tl, inv);
+            mat4_transform_vec4(br, br, inv);
+            mat4_transform_vec4(focal, focal, inv);
+
+            mat4_ortho(
+                viewMatrix,
+                (tl[0] - focal[0])*zoom + focal[0],
+                (br[0] - focal[0])*zoom + focal[0],
+                (tl[1] - focal[1])*zoom + focal[1],
+                (br[1] - focal[1])*zoom + focal[1],
+                br[2],
+                tl[2]
+            )
+        }
+
+        /* mouse drag */
+        let dragX = 0, dragY = 0;
+        if (mouseDown) {
+            dragX += (mouseX - mouseDownX)
+            dragY += (mouseY - mouseDownY)
+
+            if (mouseReleased) {
+                mouseReleased = mouseDown = false;
+
+                mat4_mul(viewMatrix, mat4_create_translate(dragX, dragY), viewMatrix);
+
+                dragX = dragY = 0;
+            }
+        }
+
+        /* text rendering wants the pen pixel-aligned, so scale here */
+        /* our pMatrix puts things in 0..1, but everything before that is in pixels */ 
+        // const view = mat4_create_translate(dragX + mouseX, dragY + mouseY)
+        const view = mat4_create_translate(dragX, dragY)
+        mat4_mul(view, view, viewMatrix);
+
+        const fontscale = 128 * Math.sqrt(view[0]*view[0] + view[1]*view[1]);
+
+        for (let i = 0; i < 10; i++) {
+            const theta = i/10 * Math.PI*2;
+            const radius = 1600;
+            const circleX = Math.cos(theta) * radius;
+            const circleY = Math.sin(theta) * radius;
+
+            drawText('x', circleX, circleY, view, fontscale, ALIGN_CENTER);
+        }
+        drawText('accelerated instance graph', 0, 0, view, fontscale, ALIGN_CENTER);
+
+
+        gl.bindBuffer(gl.ARRAY_BUFFER, vertexBuffer);
+        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(vertexElements), gl.STATIC_DRAW);
+        vertexBuffer.numItems = vertexElements.length / 2;
+
+        gl.bindBuffer(gl.ARRAY_BUFFER, textureBuffer);
+        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(textureElements), gl.STATIC_DRAW);
+        textureBuffer.numItems = textureElements.length / 2;
+
+
+        // const mvpMatrix = mat4_mul(vpMatrix, vpMatrix, pMatrix);
+        // gl.uniformMatrix4fv(shader.u_matrix, false, mvpMatrix);
+        gl.uniformMatrix4fv(shader.u_matrix, false, pMatrix);
+
+        gl.activeTexture(gl.TEXTURE0);
+        gl.bindTexture(gl.TEXTURE_2D, texture);
+        gl.uniform1i(shader.u_texture, 0);
+
+        gl.bindBuffer(gl.ARRAY_BUFFER, vertexBuffer);
+        gl.vertexAttribPointer(shader.a_pos, 2, gl.FLOAT, false, 0, 0);
+
+        gl.bindBuffer(gl.ARRAY_BUFFER, textureBuffer);
+        gl.vertexAttribPointer(shader.a_texcoord, 2, gl.FLOAT, false, 0, 0);
+
+        gl.uniform4fv(shader.u_color, [1, 1, 1, 1]);
+        gl.uniform1f(shader.u_buffer, buffer);
+        gl.drawArrays(gl.TRIANGLES, 0, vertexBuffer.numItems);
+
+        gl.uniform4fv(shader.u_color, [0, 0, 0, 1]);
+        gl.uniform1f(shader.u_buffer, 0.75);
+        const gamma = 2;
+        gl.uniform1f(shader.u_gamma, gamma * 1.4142 / fontscale);
+        gl.drawArrays(gl.TRIANGLES, 0, vertexBuffer.numItems);
+    }
+
+})
+
+
+    </script>
+  </body>
+</html>
