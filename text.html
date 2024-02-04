@@ -19,7 +19,6 @@
 
 /* maps character to location in spritesheet */
 const sdfs = {};
-let buffer;
 /* higher number = prettier text using more VRAM */
 const SDF_FONT_SIZE = 48;
 
@@ -196,7 +195,7 @@ const updateSDF = (() => {
         const fontSize = +SDF_FONT_SIZE;
         const fontWeight = +SDF_FONT_SIZE;
         const fontStyle = 'normal';
-        buffer = Math.ceil(fontSize / 8);
+        const buffer = Math.ceil(fontSize / 8);
         const radius = Math.ceil(fontSize / 3);
         const sdf = new TinySDF({fontSize, buffer, radius, fontWeight, fontStyle});
         const size = fontSize + buffer * 2;
@@ -652,9 +651,8 @@ requestAnimationFrame(function frame(timestamp) {
         const fontscale = 128 * Math.sqrt(view[0]*view[0] + view[1]*view[1]);
 
         for (let i = 0; i < 10; i++) {
-            const swoop = 0.5*Math.sin(timestamp*0.005);
-            const theta = i/10 * Math.PI*2 + timestamp*0.0005 + swoop;
-            const radius = (2000 + swoop*400);
+            const theta = i/10 * Math.PI*2;
+            const radius = 1600;
             const circleX = Math.cos(theta) * radius;
             const circleY = Math.sin(theta) * radius;
 
@@ -687,7 +685,7 @@ requestAnimationFrame(function frame(timestamp) {
         gl.vertexAttribPointer(shader.a_texcoord, 2, gl.FLOAT, false, 0, 0);
 
         gl.uniform4fv(shader.u_color, [1, 1, 1, 1]);
-        gl.uniform1f(shader.u_buffer, buffer);
+        gl.uniform1f(shader.u_buffer, 0.55);
         gl.drawArrays(gl.TRIANGLES, 0, vertexBuffer.numItems);
 
         gl.uniform4fv(shader.u_color, [0, 0, 0, 1]);

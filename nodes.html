@@ -15,13 +15,13 @@
  * [ ] reuse gpu buffers 'cross frames
  * [ ] don't invert mat4 in drawText
  * [ ] have frame ring buffer for scratch mats
+ * [ ] index-ify text renderer
  */
 
 /* maps character to location in spritesheet */
 const sdfs = {};
-let buffer;
 /* higher number = prettier text using more VRAM */
-const SDF_FONT_SIZE = 48;
+const SDF_FONT_SIZE = 64;
 
 const updateSDF = (() => {
 
@@ -196,7 +196,7 @@ const updateSDF = (() => {
         const fontSize = +SDF_FONT_SIZE;
         const fontWeight = +SDF_FONT_SIZE;
         const fontStyle = 'normal';
-        buffer = Math.ceil(fontSize / 8);
+        const buffer = Math.ceil(fontSize / 8);
         const radius = Math.ceil(fontSize / 3);
         const sdf = new TinySDF({fontSize, buffer, radius, fontWeight, fontStyle});
         const size = fontSize + buffer * 2;
@@ -438,15 +438,14 @@ window.onmouseup = e => {
 
 const texture = gl.createTexture();
 
-const vertexBuffer = gl.createBuffer();
-const textureBuffer = gl.createBuffer();
+const text_vbuf = gl.createBuffer();
 
 
 
-let shader;
+let textShader;// , geoShader;
 /* compile shaders */
 {
-    const vertexSource = `
+    const vsText = `
         attribute vec2 a_pos;
         attribute vec2 a_texcoord;
 
@@ -460,7 +459,7 @@ let shader;
             v_texcoord = a_texcoord / u_texsize;
         }`;
 
-    const fragmentSource = `
+    const fsText = `
         precision mediump float;
 
         uniform sampler2D u_texture;
@@ -475,6 +474,28 @@ let shader;
             float alpha = smoothstep(u_buffer - u_gamma, u_buffer + u_gamma, dist);
             gl_FragColor = vec4(u_color.rgb, alpha * u_color.a);
         }`;
+
+    // const vsGeo = `
+    //     attribute vec2 a_pos;
+    //     attribute vec4 a_color;
+
+    //     uniform mat4 u_matrix;
+
+    //     varying vec4 v_color;
+
+    //     void main() {
+    //         gl_Position = u_matrix * vec4(a_pos.xy, 0, 1);
+    //         v_color = a_color;
+    //     }`;
+
+    // const fsGeo = `
+    //     precision mediump float;
+
+    //     varying vec4 v_color;
+
+    //     void main() {
+    //         gl_FragColor = v_color;
+    //     }`;
 
     function createProgram(gl, vertexSource, fragmentSource) {
         function createShader(gl, type, source) {
@@ -517,12 +538,12 @@ let shader;
     }
 
 
-    shader = createProgram(gl, vertexSource, fragmentSource);
+    textShader = createProgram(gl, vsText, fsText);
 }
 
-gl.useProgram(shader.program);
-gl.enableVertexAttribArray(shader.a_pos);
-gl.enableVertexAttribArray(shader.a_texcoord);
+gl.useProgram(textShader.program);
+gl.enableVertexAttribArray(textShader.a_pos);
+gl.enableVertexAttribArray(textShader.a_texcoord);
 
 /* upload new SDF to texture */
 {
@@ -537,7 +558,7 @@ gl.enableVertexAttribArray(shader.a_texcoord);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
 
-    gl.uniform2f(shader.u_texsize, sdfImage.width, sdfImage.height);
+    gl.uniform2f(textShader.u_texsize, sdfImage.width, sdfImage.height);
 }
 
 requestAnimationFrame(function frame(timestamp) {
@@ -574,22 +595,24 @@ requestAnimationFrame(function frame(timestamp) {
             const by = sdfs[str[i]].glyph.glyphTop - (fontsize / 2 + buf); // bearing y
 
             vertexElements.push(
-                pen.x + ((bx - buf) * scale), pen.y - by * scale,
-                pen.x + ((bx - buf + width) * scale), pen.y - by * scale,
-                pen.x + ((bx - buf) * scale), pen.y + (height - by) * scale,
+                /* pos */ pen.x + ((bx - buf) * scale), pen.y - by * scale,
+                /* uv  */ posX, posY,
 
-                pen.x + ((bx - buf + width) * scale), pen.y - by * scale,
-                pen.x + ((bx - buf) * scale), pen.y + (height - by) * scale,
-                pen.x + ((bx - buf + width) * scale), pen.y + (height - by) * scale
-            );
+                /* pos */ pen.x + ((bx - buf + width) * scale), pen.y - by * scale,
+                /* uv  */ posX + width, posY,
 
-            textureElements.push(
-                posX, posY,
-                posX + width, posY,
-                posX, posY + height,
-                posX + width, posY,
-                posX, posY + height,
-                posX + width, posY + height
+                /* pos */ pen.x + ((bx - buf) * scale), pen.y + (height - by) * scale,
+                /* uv  */ posX, posY + height,
+
+
+                /* pos */ pen.x + ((bx - buf + width) * scale), pen.y - by * scale,
+                /* uv  */ posX + width, posY,
+
+                /* pos */ pen.x + ((bx - buf) * scale), pen.y + (height - by) * scale,
+                /* uv  */ posX, posY + height,
+
+                /* pos */ pen.x + ((bx - buf + width) * scale), pen.y + (height - by) * scale,
+                /* uv  */ posX + width, posY + height
             );
 
             pen.x = pen.x + advance * scale;
@@ -601,7 +624,7 @@ requestAnimationFrame(function frame(timestamp) {
     gl.enable(gl.BLEND);
 
     /* clear all */
-    gl.clearColor(0.93, 0.9, 0.89, 1);
+    gl.clearColor(0.43, 0.9, 0.89, 1);
     gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
 
     {
@@ -662,38 +685,41 @@ requestAnimationFrame(function frame(timestamp) {
         drawText('accelerated instance graph', 0, 0, view, fontscale, ALIGN_CENTER);
 
 
-        gl.bindBuffer(gl.ARRAY_BUFFER, vertexBuffer);
+        gl.bindBuffer(gl.ARRAY_BUFFER, text_vbuf);
         gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(vertexElements), gl.STATIC_DRAW);
-        vertexBuffer.numItems = vertexElements.length / 2;
-
-        gl.bindBuffer(gl.ARRAY_BUFFER, textureBuffer);
-        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(textureElements), gl.STATIC_DRAW);
-        textureBuffer.numItems = textureElements.length / 2;
-
+        const vbuf_count = vertexElements.length / 4;
 
         // const mvpMatrix = mat4_mul(vpMatrix, vpMatrix, pMatrix);
-        // gl.uniformMatrix4fv(shader.u_matrix, false, mvpMatrix);
-        gl.uniformMatrix4fv(shader.u_matrix, false, pMatrix);
+        // gl.uniformMatrix4fv(textShader.u_matrix, false, mvpMatrix);
+        gl.uniformMatrix4fv(textShader.u_matrix, false, pMatrix);
 
         gl.activeTexture(gl.TEXTURE0);
         gl.bindTexture(gl.TEXTURE_2D, texture);
-        gl.uniform1i(shader.u_texture, 0);
+        gl.uniform1i(textShader.u_texture, 0);
 
-        gl.bindBuffer(gl.ARRAY_BUFFER, vertexBuffer);
-        gl.vertexAttribPointer(shader.a_pos, 2, gl.FLOAT, false, 0, 0);
+        gl.bindBuffer(gl.ARRAY_BUFFER, text_vbuf);
+        gl.vertexAttribPointer(
+            textShader.a_pos,
+            /* numComponents, */ 2,
+            /* type,          */ gl.FLOAT,
+            /* normalize,     */ false,
+            /* stride,        */ 4*4,
+            /* offset         */ 0
+        );
+        gl.vertexAttribPointer(
+            textShader.a_texcoord,
+            /* numComponents, */ 2,
+            /* type,          */ gl.FLOAT,
+            /* normalize,     */ false,
+            /* stride,        */ 4*4,
+            /* offset         */ 2*4
+        );
 
-        gl.bindBuffer(gl.ARRAY_BUFFER, textureBuffer);
-        gl.vertexAttribPointer(shader.a_texcoord, 2, gl.FLOAT, false, 0, 0);
-
-        gl.uniform4fv(shader.u_color, [1, 1, 1, 1]);
-        gl.uniform1f(shader.u_buffer, buffer);
-        gl.drawArrays(gl.TRIANGLES, 0, vertexBuffer.numItems);
-
-        gl.uniform4fv(shader.u_color, [0, 0, 0, 1]);
-        gl.uniform1f(shader.u_buffer, 0.75);
+        gl.uniform4fv(textShader.u_color, [0, 0, 0, 1]);
+        gl.uniform1f(textShader.u_buffer, 0.75);
         const gamma = 2;
-        gl.uniform1f(shader.u_gamma, gamma * 1.4142 / fontscale);
-        gl.drawArrays(gl.TRIANGLES, 0, vertexBuffer.numItems);
+        gl.uniform1f(textShader.u_gamma, gamma * 1.4142 / fontscale);
+        gl.drawArrays(gl.TRIANGLES, 0, vbuf_count);
     }
 
 })
