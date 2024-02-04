@@ -12,10 +12,12 @@
     <canvas id="inspectorGraphCanvas"></canvas>
     <script>
 /*
- * [ ] reuse gpu buffers 'cross frames
+ * [ ] reuse gpu buffers 'cross frames (geo abstraction)
  * [ ] don't invert mat4 in drawText
- * [ ] have frame ring buffer for scratch mats
+ * [ ] have frame ring buffer for scratch mats (avoid heap alloc/frame)
  * [ ] index-ify text renderer
+ * [ ] re-work shader loading so compilation can be parallelized
+ * [ ] use VAOs
  */
 
 /* maps character to location in spritesheet */
@@ -378,7 +380,7 @@ function mat4_invert(out, a) {
 }
 
 const graphCanvas = document.getElementById('inspectorGraphCanvas');
-const gl = graphCanvas.getContext('webgl', {antialias: false});
+const gl = graphCanvas.getContext('webgl', {antialias: true});
 if (!gl) { alert('Failed to initialize WebGL'); }
 
 let pMatrix = mat4_create();
@@ -439,15 +441,16 @@ window.onmouseup = e => {
 const texture = gl.createTexture();
 
 const text_vbuf = gl.createBuffer();
+const geo_vbuf = gl.createBuffer();
+const geo_vbuf_color = gl.createBuffer();
 
 
-
-let textShader;// , geoShader;
+let textShader, geoShader;
 /* compile shaders */
 {
     const vsText = `
         attribute vec2 a_pos;
-        attribute vec2 a_texcoord;
+        attribute vec2 a_uv;
 
         uniform mat4 u_matrix;
         uniform vec2 u_texsize;
@@ -456,7 +459,7 @@ let textShader;// , geoShader;
 
         void main() {
             gl_Position = u_matrix * vec4(a_pos.xy, 0, 1);
-            v_texcoord = a_texcoord / u_texsize;
+            v_texcoord = a_uv / u_texsize;
         }`;
 
     const fsText = `
@@ -475,27 +478,27 @@ let textShader;// , geoShader;
             gl_FragColor = vec4(u_color.rgb, alpha * u_color.a);
         }`;
 
-    // const vsGeo = `
-    //     attribute vec2 a_pos;
-    //     attribute vec4 a_color;
+    const vsGeo = `
+        attribute vec3 a_pos;
+        attribute vec4 a_color;
 
-    //     uniform mat4 u_matrix;
+        uniform mat4 u_matrix;
 
-    //     varying vec4 v_color;
+        varying vec4 v_color;
 
-    //     void main() {
-    //         gl_Position = u_matrix * vec4(a_pos.xy, 0, 1);
-    //         v_color = a_color;
-    //     }`;
+        void main() {
+            gl_Position = u_matrix * vec4(a_pos.xyz, 1);
+            v_color = a_color;
+        }`;
 
-    // const fsGeo = `
-    //     precision mediump float;
+    const fsGeo = `
+        precision mediump float;
 
-    //     varying vec4 v_color;
+        varying vec4 v_color;
 
-    //     void main() {
-    //         gl_FragColor = v_color;
-    //     }`;
+        void main() {
+            gl_FragColor = v_color;
+        }`;
 
     function createProgram(gl, vertexSource, fragmentSource) {
         function createShader(gl, type, source) {
@@ -539,14 +542,12 @@ let textShader;// , geoShader;
 
 
     textShader = createProgram(gl, vsText, fsText);
+    geoShader = createProgram(gl, vsGeo, fsGeo);
 }
-
-gl.useProgram(textShader.program);
-gl.enableVertexAttribArray(textShader.a_pos);
-gl.enableVertexAttribArray(textShader.a_texcoord);
 
 /* upload new SDF to texture */
 {
+    gl.useProgram(textShader.program);
     const sdfImage = updateSDF();
     // sdfs[' '].width = sdfs['w'].width;
     const sdfBytes = new Uint8Array(sdfImage.data)
@@ -564,8 +565,9 @@ gl.enableVertexAttribArray(textShader.a_texcoord);
 requestAnimationFrame(function frame(timestamp) {
     requestAnimationFrame(frame);
 
-    const vertexElements = [];
-    const textureElements = [];
+    const geo_pos = [];
+    const geo_color = [];
+    const text_verts = [];
 
     const ALIGN_LEFT = 0;
     const ALIGN_CENTER = 1;
@@ -594,7 +596,7 @@ requestAnimationFrame(function frame(timestamp) {
             const advance = sdfs[str[i]].glyph.glyphAdvance;
             const by = sdfs[str[i]].glyph.glyphTop - (fontsize / 2 + buf); // bearing y
 
-            vertexElements.push(
+            text_verts.push(
                 /* pos */ pen.x + ((bx - buf) * scale), pen.y - by * scale,
                 /* uv  */ posX, posY,
 
@@ -622,6 +624,9 @@ requestAnimationFrame(function frame(timestamp) {
     /* set up premultiplied alpha */
     gl.blendFuncSeparate(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA, gl.ONE, gl.ONE);
     gl.enable(gl.BLEND);
+
+    gl.enable(gl.DEPTH_TEST);
+    gl.depthFunc(gl.LEQUAL);
 
     /* clear all */
     gl.clearColor(0.43, 0.9, 0.89, 1);
@@ -684,42 +689,87 @@ requestAnimationFrame(function frame(timestamp) {
         }
         drawText('accelerated instance graph', 0, 0, view, fontscale, ALIGN_CENTER);
 
+        const p = [0, 0, 0, 1];
+        for (let i = 0; i < 3; i++) {
+            p[0] = Math.cos(i/3 * Math.PI * 2 + timestamp * 0.001) * 300;
+            p[1] = Math.sin(i/3 * Math.PI * 2 + timestamp * 0.001) * 300;
+            mat4_transform_vec4(p, p, view);
+            geo_pos.push(p[0], p[1], 0.1);
+            geo_color.push(255, 0, 255, 255);
+        }
 
-        gl.bindBuffer(gl.ARRAY_BUFFER, text_vbuf);
-        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(vertexElements), gl.STATIC_DRAW);
-        const vbuf_count = vertexElements.length / 4;
 
-        // const mvpMatrix = mat4_mul(vpMatrix, vpMatrix, pMatrix);
-        // gl.uniformMatrix4fv(textShader.u_matrix, false, mvpMatrix);
-        gl.uniformMatrix4fv(textShader.u_matrix, false, pMatrix);
+        /* geo pass */
+        {
+            gl.useProgram(geoShader.program);
+            gl.enableVertexAttribArray(geoShader.a_pos);
+            gl.enableVertexAttribArray(geoShader.a_color);
 
-        gl.activeTexture(gl.TEXTURE0);
-        gl.bindTexture(gl.TEXTURE_2D, texture);
-        gl.uniform1i(textShader.u_texture, 0);
+            gl.uniformMatrix4fv(geoShader.u_matrix, false, pMatrix);
 
-        gl.bindBuffer(gl.ARRAY_BUFFER, text_vbuf);
-        gl.vertexAttribPointer(
-            textShader.a_pos,
-            /* numComponents, */ 2,
-            /* type,          */ gl.FLOAT,
-            /* normalize,     */ false,
-            /* stride,        */ 4*4,
-            /* offset         */ 0
-        );
-        gl.vertexAttribPointer(
-            textShader.a_texcoord,
-            /* numComponents, */ 2,
-            /* type,          */ gl.FLOAT,
-            /* normalize,     */ false,
-            /* stride,        */ 4*4,
-            /* offset         */ 2*4
-        );
+            /* upload/bind geometry */
 
-        gl.uniform4fv(textShader.u_color, [0, 0, 0, 1]);
-        gl.uniform1f(textShader.u_buffer, 0.75);
-        const gamma = 2;
-        gl.uniform1f(textShader.u_gamma, gamma * 1.4142 / fontscale);
-        gl.drawArrays(gl.TRIANGLES, 0, vbuf_count);
+            let vbuf_count = 3;
+            {
+                gl.bindBuffer(gl.ARRAY_BUFFER, geo_vbuf);
+                gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(geo_pos), gl.STATIC_DRAW);
+                gl.vertexAttribPointer(geoShader.a_pos, 3, gl.FLOAT, false, 0, 0);
+
+                gl.bindBuffer(gl.ARRAY_BUFFER, geo_vbuf_color);
+                gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(geo_color), gl.STATIC_DRAW);
+                gl.vertexAttribPointer(geoShader.a_color, 4, gl.BYTE, false, 0, 0);
+            }
+
+            gl.drawArrays(gl.TRIANGLES, 0, vbuf_count);
+        }
+
+        /* text pass */
+        {
+            gl.useProgram(textShader.program);
+            gl.enableVertexAttribArray(textShader.a_pos);
+            gl.enableVertexAttribArray(textShader.a_uv);
+
+            const gamma = 2;
+            gl.uniformMatrix4fv(textShader.u_matrix, false, pMatrix);
+            gl.uniform4fv(textShader.u_color, [0, 0, 0, 1]);
+            gl.uniform1f(textShader.u_buffer, 0.75);
+            gl.uniform1f(textShader.u_gamma, gamma * 1.4142 / fontscale);
+
+            /* bind tex */
+            {
+                gl.activeTexture(gl.TEXTURE0);
+                gl.bindTexture(gl.TEXTURE_2D, texture);
+                gl.uniform1i(textShader.u_texture, 0);
+            }
+
+            /* upload/bind geometry */
+            const vbuf_count = text_verts.length / 4;
+            {
+                gl.bindBuffer(gl.ARRAY_BUFFER, text_vbuf);
+                gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(text_verts), gl.STATIC_DRAW);
+
+                gl.bindBuffer(gl.ARRAY_BUFFER, text_vbuf);
+                gl.vertexAttribPointer(
+                    textShader.a_pos,
+                    /* numComponents, */ 2,
+                    /* type,          */ gl.FLOAT,
+                    /* normalize,     */ false,
+                    /* stride,        */ 4*4,
+                    /* offset         */ 0
+                );
+                gl.vertexAttribPointer(
+                    textShader.a_uv,
+                    /* numComponents, */ 2,
+                    /* type,          */ gl.FLOAT,
+                    /* normalize,     */ false,
+                    /* stride,        */ 4*4,
+                    /* offset         */ 2*4
+                );
+            }
+
+            gl.drawArrays(gl.TRIANGLES, 0, vbuf_count);
+        }
+
     }
 
 })
