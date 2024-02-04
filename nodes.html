@@ -219,77 +219,6 @@ function getZoomedHexagonPositions(domain) {
 }
 
 
-/*
- * blows my mind that this is in the codebase ...
- *
- * i very heavily suspect this can be replaced by simple linear algebra but see how it's used first ...
- */
-function getPrimaryLinePositionsBySourceAndTarget(sourceName: string, targetName: string): WeightAndPositions {
-    /**
-     * helper method used to populate the lookup table below
-     * @param weight
-     * @param startPosition
-     * @param endPosition
-     * @returns {WeightAndPositions}
-     */
-    const weightAndPositions = (weight: number, startPosition: ClockfacePosition, endPosition: ClockfacePosition): WeightAndPositions => {
-        return { weight, startPosition, endPosition };
-    };
-
-    const lookup = {
-        ASSET: {
-            // PEOPLE: -100,
-            // PROPERTY: 100,
-        },
-        BINDING: {},
-        BUILDING: {
-            PEOPLE: weightAndPositions(-50, ClockfacePosition.TEN_OCLOCK, ClockfacePosition.SIX_OCLOCK),
-            GEOMETRY: weightAndPositions(-75, ClockfacePosition.ONE_OCLOCK, ClockfacePosition.ELEVEN_OCLOCK),
-            EQUIPMENT: weightAndPositions(-100, ClockfacePosition.SIX_OCLOCK, ClockfacePosition.TEN_OCLOCK),
-        },
-        ENVIRONMENT: {
-            PROPERTY: weightAndPositions(100, ClockfacePosition.THREE_OCLOCK, ClockfacePosition.EIGHT_OCLOCK),
-            BINDING: weightAndPositions(-100, ClockfacePosition.FIVE_OCLOCK, ClockfacePosition.EIGHT_OCLOCK),
-        },
-        EQUIPMENT: {
-            GEOMETRY: weightAndPositions(75, ClockfacePosition.TWO_OCLOCK, ClockfacePosition.SIX_OCLOCK),
-            BINDING: weightAndPositions(-50, ClockfacePosition.SEVEN_OCLOCK, ClockfacePosition.ELEVEN_OCLOCK),
-            QUANTA: weightAndPositions(-75, ClockfacePosition.FIVE_OCLOCK, ClockfacePosition.NINE_OCLOCK),
-        },
-        EVENT: {
-            PEOPLE: weightAndPositions(-30, ClockfacePosition.NINE_OCLOCK, ClockfacePosition.TWO_OCLOCK),
-        },
-        GEOMETRY: {
-            PROPERTY: weightAndPositions(100, ClockfacePosition.THREE_OCLOCK, ClockfacePosition.ELEVEN_OCLOCK),
-        },
-        PROPERTY: {
-            BINDING: weightAndPositions(400, ClockfacePosition.FIVE_OCLOCK, ClockfacePosition.FOUR_OCLOCK),
-            // NOTE: TimeSeries domain has been removed temporarily
-            // TIMESERIES: weightAndPositions(100, ClockfacePosition.ONE_OCLOCK, ClockfacePosition.FOUR_OCLOCK),
-        },
-        PEOPLE: {
-            SITE: weightAndPositions(-80, ClockfacePosition.EIGHT_OCLOCK, ClockfacePosition.TWELVE_OCLOCK),
-        },
-        QUANTA: {
-            PROPERTY: weightAndPositions(50, ClockfacePosition.TWO_OCLOCK, ClockfacePosition.SIX_OCLOCK),
-        },
-        SITE: {
-            ENVIRONMENT: weightAndPositions(-100, ClockfacePosition.SIX_OCLOCK, ClockfacePosition.NINE_OCLOCK),
-            BUILDING: weightAndPositions(-50, ClockfacePosition.THREE_OCLOCK, ClockfacePosition.EIGHT_OCLOCK),
-            SYSTEM: weightAndPositions(-50, ClockfacePosition.FIVE_OCLOCK, ClockfacePosition.NINE_OCLOCK),
-        },
-        SYSTEM: {
-            EQUIPMENT: weightAndPositions(75, ClockfacePosition.FIVE_OCLOCK, ClockfacePosition.EIGHT_OCLOCK),
-        },
-        // NOTE: TimeSeries domain has been removed temporarily
-        // TIMESERIES: {
-        //     EVENT: weightAndPositions(50, ClockfacePosition.TEN_OCLOCK, 2),
-        // },
-    };
-
-    return lookup[sourceName][targetName];
-}
-
 /* == GENERATED FROM ==
  *
  *   const enyoChild = kid => kid.models ? [...kid.models].map(x => x.get("ID")) : kid.get("ID");
@@ -12528,6 +12457,20 @@ const updateSDF = (() => {
 
 function lerp(v0, v1, t) { return (1 - t) * v0 + t * v1; }
 function inv_lerp(min, max, p) { return (p - min) / (max - min); }
+function bezier3_sample(out, a, control, b, t) {
+    out[0] = lerp(lerp(a[0], control[0], t), lerp(control[0], b[0], t), t);
+    out[1] = lerp(lerp(a[1], control[1], t), lerp(control[1], b[1], t), t);
+}
+function bezier4_sample(out, p0, p1, p2, p3, t) {
+    out[0] = Math.pow(1 - t, 3) * p0[0] + 
+               Math.pow(1 - t, 2) * 3 * t * p1[0] + 
+               (1 - t) * 3 * t * t * p2[0] + 
+               t * t * t * p3[0];
+    out[1] = Math.pow(1 - t, 3) * p0[1] + 
+               Math.pow(1 - t, 2) * 3 * t * p1[1] + 
+               (1 - t) * 3 * t * t * p2[1] + 
+               t * t * t * p3[1];
+}
 function mat4_create() {
     let out = new Float32Array(16);
     out[0] = 1;
@@ -12972,6 +12915,43 @@ requestAnimationFrame(function frame(timestamp) {
 
         geo_idx.push(vbuf_i + 0, vbuf_i + 1, vbuf_i + 2, vbuf_i + 2, vbuf_i + 1, vbuf_i + 3);
     }
+    function drawBezier3( a_x, a_y,   control_x, control_y,   b_x, b_y,  thickness,  color ) {
+        const out  = [0, 0];
+        const last = [0, 0];
+
+        const a       = [      a_x,       a_y];
+        const b       = [      b_x,       b_y];
+        const control = [control_x, control_y];
+
+        bezier3_sample(last, a, control, b, 0);
+        for (let i = 1; i <= 10; i++) {
+            const t = i/10;
+            bezier3_sample(out, a, control, b, t);
+            drawLine(out[0], out[1], last[0], last[1], thickness, color);
+
+            last[0] = out[0];
+            last[1] = out[1];
+        }
+    }
+    function drawBezier4( a_x, a_y,   control0_x, control0_y,   control1_x, control1_y,   b_x, b_y,  thickness,  color ) {
+        const out  = [0, 0];
+        const last = [0, 0];
+
+        const a        = [       a_x,        a_y];
+        const b        = [       b_x,        b_y];
+        const control0 = [control0_x, control0_y];
+        const control1 = [control1_x, control1_y];
+
+        bezier4_sample(last, a, control0, control1, b, 0);
+        for (let i = 1; i <= 20; i++) {
+            const t = i/20;
+            bezier4_sample(out, a, control0, control1, b, t);
+            drawLine(out[0], out[1], last[0], last[1], thickness, color);
+
+            last[0] = out[0];
+            last[1] = out[1];
+        }
+    }
 
     /* set up premultiplied alpha */
     gl.blendFuncSeparate(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA, gl.ONE, gl.ONE);
@@ -13062,10 +13042,37 @@ requestAnimationFrame(function frame(timestamp) {
                     if (edge[0] != key) continue;
                     if (!(edge[1] in tables)) continue;
 
+                    if (edge[0] == edge[1]) continue;
+
                     const to_x = tables[edge[1]].x * 800;
                     const to_y = tables[edge[1]].y * 800;
 
-                    drawLine(from_x,from_y, to_x,to_y, 25, [150, 140, 180, 255])
+                    /* TO GENERATE AESTHETICALLY PLEASING CONTROL POINTS:
+                     * - find the face of the hexagon we're coming out of
+                     * - create a vector tangent to that hexagon face[0]
+                     * - multiply it by some constant, add to point where we leave hex */
+
+                    /* TO GET VECTOR TANGENT TO OUR HEXAGON FACE[0] 
+                     * - get vector delta pointing from US to THEM
+                     * - get angle from (1, 0) to delta (atan2)
+                     * - round to nearest multiple of (Math.PI*2)/6 */
+
+                    const dx = to_x - from_x;
+                    const dy = to_y - from_y;
+                    const hex = (Math.PI*2)/8; /* a sixth of a revolution in radians */
+                    let angle = Math.atan2(dy, dx) - hex/2;
+                    angle = Math.round(angle / hex) * hex + hex/2;
+                    if (Math.abs(dy) < 1) angle = (dx > 0) ? 0 : Math.PI;
+                    const out_x = Math.cos(angle);
+                    const out_y = Math.sin(angle);
+
+                    drawBezier4(
+                        from_x+out_x*215, from_y+out_y*215,
+                        from_x+out_x*300, from_y+out_y*300,
+                          to_x-out_x*200,   to_y-out_y*600,
+                          to_x-out_x*215,   to_y-out_y*215,
+                        25, [150, 140, 180, 255]
+                    )
                 }
             }
 
