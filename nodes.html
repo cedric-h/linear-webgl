@@ -12661,6 +12661,14 @@ let viewMatrix = mat4_create();
     mat4_mul(viewMatrix, mat4_invert(mat4_create(), pMatrix), viewMatrix);
 }
 
+let activeDomain = "Equipment";
+window.onkeydown = e => {
+    if (e.key == " ") {
+        const categories = ["Asset", "Binding", "Building", "Event", "Environment", "Equipment", "Geometry", "People", "Property", "Quanta", "Site", "System"];
+        activeDomain = categories[(categories.indexOf(activeDomain) + 1) % categories.length];
+    }
+}
+
 let scroll = 0, 
     mouseX = 0, mouseY = 0,
     mouseDownX = 0, mouseDownY = 0,
@@ -12943,10 +12951,15 @@ requestAnimationFrame(function frame(timestamp) {
         const control1 = [control1_x, control1_y];
 
         bezier4_sample(last, a, control0, control1, b, 0);
-        for (let i = 1; i <= 20; i++) {
-            const t = i/20;
+        for (let i = 1; i <= 30; i++) {
+            const t = i/30;
             bezier4_sample(out, a, control0, control1, b, t);
-            drawLine(out[0], out[1], last[0], last[1], thickness, color);
+            drawLine(last[0], last[1], out[0], out[1], thickness, color);
+
+            if (i > 1) {
+                const vbuf_i = geo_pos.length / 3 - 6;
+                geo_idx.push(vbuf_i + 0, vbuf_i + 1, vbuf_i + 2, vbuf_i + 2, vbuf_i + 1, vbuf_i + 3);
+            }
 
             last[0] = out[0];
             last[1] = out[1];
@@ -13029,10 +13042,8 @@ requestAnimationFrame(function frame(timestamp) {
                     .join('')
                     .trim();
 
-            const domain = "Equipment";
-
-            const tables = getZoomedHexagonPositions(domain).internal;
-            const edges = domainEdges.find(x => x.domain == "Equipment").internal.map(x => [x.from.table, x.to.table])
+            const tables = getZoomedHexagonPositions(activeDomain).internal;
+            const edges = domainEdges.find(x => x.domain == activeDomain).internal.map(x => [x.from.table, x.to.table])
 
             for (const key in tables) {
                 const from_x = tables[key].x * 800;
@@ -13057,20 +13068,24 @@ requestAnimationFrame(function frame(timestamp) {
                      * - get angle from (1, 0) to delta (atan2)
                      * - round to nearest multiple of (Math.PI*2)/6 */
 
+                    /* NOTE: to match existing SVG-based renderer, I actually "round to nearest face"
+                     * as if it were a square ... */
+
                     const dx = to_x - from_x;
                     const dy = to_y - from_y;
-                    const hex = (Math.PI*2)/8; /* a sixth of a revolution in radians */
+                    const hex = (Math.PI*2)/4; /* would be a sixth of a revolution in radians, but see note */
                     let angle = Math.atan2(dy, dx) - hex/2;
                     angle = Math.round(angle / hex) * hex + hex/2;
-                    if (Math.abs(dy) < 1) angle = (dx > 0) ? 0 : Math.PI;
+                    if (Math.abs(dy) < 1) /* make straight lines straight */
+                        angle = (dx > 0) ? 0 : Math.PI;
                     const out_x = Math.cos(angle);
                     const out_y = Math.sin(angle);
 
                     drawBezier4(
-                        from_x+out_x*215, from_y+out_y*215,
-                        from_x+out_x*300, from_y+out_y*300,
-                          to_x-out_x*200,   to_y-out_y*600,
-                          to_x-out_x*215,   to_y-out_y*215,
+                        from_x+out_x*175, from_y+out_y*175,
+                        from_x+out_x*300, from_y+out_y*500,
+                          to_x-out_x*200,   to_y-out_y*800,
+                          to_x-out_x*175,   to_y-out_y*175,
                         25, [150, 140, 180, 255]
                     )
                 }
