@@ -12261,7 +12261,7 @@ const SDF_FONT_SIZE = 32;
 
 const updateSDF = (() => {
 
-    const chars = ' abcdefghijklmnopqrstuvwxyzZABCDEFGHIJKLMNOPQRSTUVWXYZ!@#$%^&*()1234567890<,>./?;:\'"\\|{}[]';
+    const chars = ' abcdefghijklmnopqrstuvwxyzZABCDEFGHIJKLMNOPQRSTUVWXYZ!@#$%^&*()1234567890<,>./?;:\'"\\|{}[]-=_+';
     const fontCanvas = document.createElement('canvas');
     fontCanvas.width = fontCanvas.height = 512
     const ctx = fontCanvas.getContext('2d');
@@ -12656,13 +12656,15 @@ let viewMatrix = mat4_create();
 {
     /* scale viewMatrix to fit 5000 logical pixels */
     const aspect_ratio = window.innerHeight/window.innerWidth;
-    const width = 5000;
-    mat4_ortho(viewMatrix, -width, width, width*aspect_ratio, -width*aspect_ratio, 1, -1)
+    const width = 3000;
+    const x = 2000;
+    const y = 1500;
+    mat4_ortho(viewMatrix, x-width, x+width, y+width*aspect_ratio, y-width*aspect_ratio, 1, -1)
     mat4_mul(viewMatrix, mat4_invert(mat4_create(), pMatrix), viewMatrix);
 }
 
 let active_domain = "Equipment";
-let expanded_tables = new Set();
+let expanded_tables = new Set(["Model"]);
 window.onkeydown = e => {
     if (e.key == " ") {
         const categories = ["Asset", "Binding", "Building", "Event", "Environment", "Equipment", "Geometry", "People", "Property", "Quanta", "Site", "System"];
@@ -12676,6 +12678,7 @@ let scroll = 0,
     mouse_down = false, mouse_released = false;
 let wheelTimeout;
 window.onwheel = e => {
+    if (mouse_down) return;
     scroll = Math.sign(e.deltaY);
     clearTimeout(wheelTimeout)
     wheelTimeout = setTimeout(() => scroll = 0, 100)
@@ -12984,6 +12987,11 @@ requestAnimationFrame(function frame(timestamp) {
     gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
 
     {
+        /* curate input state for frame */
+        const mouse_moved = Math.sqrt((mouse_x - mouse_down_x)*(mouse_x - mouse_down_x) +
+                                      (mouse_y - mouse_down_y)*(mouse_y - mouse_down_y)) > 2;
+        const mouse_clicked = mouse_released && !mouse_moved;
+
         /* zoom toward mouse */
         if (scroll) {
             const zoom = 1.0 + 0.03*scroll;
@@ -13089,8 +13097,11 @@ requestAnimationFrame(function frame(timestamp) {
             const adjustedX = layoutMapAxis('x', 400,  800); //1200);
             const adjustedY = layoutMapAxis('y', 500, 1600); //2000);
             const HEX_SIZE = 400;
-            const EXPANDED_SIZE_X = 1000;
+            const EXPANDED_SIZE_X = 1350;
             const EXPANDED_SIZE_Y = 3000;
+            /* palette */
+            const highlight       = [140, 110, 160, 255];
+            const highlight_hover = [130, 100, 150, 255];
 
             /* draw lines connecting tables/hexes */
             for (const key in tables) {
@@ -13130,9 +13141,6 @@ requestAnimationFrame(function frame(timestamp) {
                     const out_x = Math.cos(angle);
                     const out_y = Math.sin(angle);
 
-                        // from_x+out_x*300, from_y+out_y*500,
-                        //   to_x-out_x*200,   to_y-out_y*800, 
-
                     /* TODO: use actual shape size */
                     const HEX_RADIUS = 175;
                     drawBezier4(
@@ -13160,10 +13168,8 @@ requestAnimationFrame(function frame(timestamp) {
                 const max_y = y + size_y/2;
                 const hover = (mouse_world_x > min_x && mouse_world_x < max_x) &&
                               (mouse_world_y > min_y && mouse_world_y < max_y);
-                const color = hover ? [158, 158, 158, 255] : [188, 188, 188, 255];
-                drawSquare(min_x, min_y, max_x, max_y, color);
 
-                if (mouse_released && hover) {
+                if (mouse_clicked && hover) {
                     if (expanded_tables.has(key)) {
                         expanded_tables.delete(key);
                     } else {
@@ -13172,11 +13178,99 @@ requestAnimationFrame(function frame(timestamp) {
                 }
 
                 let i = 0;
-                const words = spaceCamel(key).split(' ');
-                const word_height = words.length * fontsize;
-                const center = ((max_y - min_y) - word_height) * 0.5;
-                for (const word of words) {
-                    drawText(word, x, min_y + center + fontsize*i++, fontscale, ALIGN_CENTER);
+                if (expanded) {
+                    /* draw base outine */
+                    const color = hover ? [188, 188, 188, 255] : [195, 195, 195, 255];
+                    drawSquare(min_x, min_y, max_x, max_y, color);
+
+                    let pen_x = x - size_x/2;
+                    let pen_y = min_y;
+
+                    {
+                        pen_y += 40;
+                        const pad_x = 40;
+                        const bar_size_y = fontsize*0.6;
+                        const bar_x = pen_x + pad_x;
+                        const bar_y = pen_y;
+                        drawSquare(
+                            bar_x,
+                            bar_y,
+                            bar_x + (EXPANDED_SIZE_X - pad_x*3),
+                            bar_y + bar_size_y,
+                            highlight
+                        )
+                        pen_y += bar_size_y * 2;
+                    }
+
+                    /* title */
+                    {
+                        const pad_x = 45;
+                        const text_x = pen_x + pad_x;
+                        const text_y = pen_y + fontsize*i++;
+                        drawText(spaceCamel(key), text_x, text_y, fontscale, ALIGN_LEFT);
+                        pen_y = text_y + fontsize*2.5;
+                        pen_x = text_x;
+                    }
+
+                    /* instances */
+                    const instance_width = 370;
+                    const instance_pad_x = 45;
+                    const instances_all_max_x = pen_x + 3*(instance_width + instance_pad_x) - instance_pad_x;
+                    let instances_all_max_y = 0;
+                    for (let row = 0; row < 3; row++) {
+                        for (let i = 0; i < 22; i++) {
+                            const rect_size_y = fontsize*1.55;
+                            const rect_size_x = instance_width;
+                            const rect_x = pen_x + row*(rect_size_x + instance_pad_x);
+                            const rect_y = pen_y + i*rect_size_y*1.3;
+                            instances_all_max_y = Math.max(instances_all_max_y, rect_y + rect_size_y);
+                            drawSquare(
+                                rect_x, rect_y,
+                                rect_x + rect_size_x, rect_y + rect_size_y,
+                                highlight
+                            );
+                            drawText(
+                                "Instance",
+                                rect_x + rect_size_x/2, rect_y + (rect_size_y - fontsize)*0.7,
+                                fontscale,
+                                ALIGN_CENTER
+                            );
+                        }
+                    }
+
+                    /* scrollbar */
+                    {
+                        drawSquare(
+                            instances_all_max_x + 30,
+                            pen_y               + 20,
+                            instances_all_max_x + 30 + 40,
+                            pen_y + 700         + 20,
+                            [140, 140, 140, 255]
+                        )
+                    }
+
+                    if (0) {
+                        const scrollbox_bottom_pad = 45;
+                        drawSquare(
+                            pen_x,
+                            pen_y,
+                            instances_all_max_x,
+                            max_y - scrollbox_bottom_pad,
+                            [140, 140, 140, 255]
+                        );
+                    }
+                } else {
+
+                    /* draw "hex" */
+                    const color = hover ? highlight_hover : highlight;
+                    drawSquare(min_x, min_y, max_x, max_y, color);
+
+                    const words = spaceCamel(key).split(' ');
+                    const word_height = words.length * fontsize;
+                    for (const word of words) {
+                        const center = ((max_y - min_y) - word_height) * 0.5;
+                        drawText(word, x, min_y + center + fontsize*i++, fontscale, ALIGN_CENTER);
+                    }
                 }
             }
         }
