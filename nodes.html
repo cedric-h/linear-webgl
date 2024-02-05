@@ -9862,7 +9862,7 @@ const DOMAIN_INFO = {
     }
 }
 
-const domainEdges = [
+const domain_edges = [
     {
         "domain": "Asset",
         "contains": [
@@ -12661,18 +12661,19 @@ let viewMatrix = mat4_create();
     mat4_mul(viewMatrix, mat4_invert(mat4_create(), pMatrix), viewMatrix);
 }
 
-let activeDomain = "Equipment";
+let active_domain = "Equipment";
+let expanded_tables = new Set();
 window.onkeydown = e => {
     if (e.key == " ") {
         const categories = ["Asset", "Binding", "Building", "Event", "Environment", "Equipment", "Geometry", "People", "Property", "Quanta", "Site", "System"];
-        activeDomain = categories[(categories.indexOf(activeDomain) + 1) % categories.length];
+        active_domain = categories[(categories.indexOf(active_domain) + 1) % categories.length];
     }
 }
 
 let scroll = 0, 
-    mouseX = 0, mouseY = 0,
-    mouseDownX = 0, mouseDownY = 0,
-    mouseDown = false, mouseReleased = false;
+    mouse_x = 0, mouse_y = 0,
+    mouse_down_x = 0, mouse_down_y = 0,
+    mouse_down = false, mouse_released = false;
 let wheelTimeout;
 window.onwheel = e => {
     scroll = Math.sign(e.deltaY);
@@ -12680,18 +12681,18 @@ window.onwheel = e => {
     wheelTimeout = setTimeout(() => scroll = 0, 100)
 }
 window.onmousedown = e => {
-    mouseDown = true;
-    mouseDownX = e.clientX*window.devicePixelRatio;
-    mouseDownY = e.clientY*window.devicePixelRatio;
+    mouse_down = true;
+    mouse_down_x = e.clientX*window.devicePixelRatio;
+    mouse_down_y = e.clientY*window.devicePixelRatio;
 }
 window.onmousemove = e => {
-    mouseX = e.clientX*window.devicePixelRatio;
-    mouseY = e.clientY*window.devicePixelRatio;
+    mouse_x = e.clientX*window.devicePixelRatio;
+    mouse_y = e.clientY*window.devicePixelRatio;
 }
 window.onmouseup = e => {
-    mouseReleased = true;
-    mouseX = e.clientX*window.devicePixelRatio;
-    mouseY = e.clientY*window.devicePixelRatio;
+    mouse_released = true;
+    mouse_x = e.clientX*window.devicePixelRatio;
+    mouse_y = e.clientY*window.devicePixelRatio;
 }
 
 const texture = gl.createTexture();
@@ -12702,10 +12703,10 @@ const geo_vbuf_color = gl.createBuffer();
 const geo_ibuf = gl.createBuffer();
 
 
-let textShader, geoShader;
+let text_shader, geo_shader;
 /* compile shaders */
 {
-    const vsText = `
+    const vs_text = `
         attribute vec2 a_pos;
         attribute vec2 a_uv;
 
@@ -12719,7 +12720,7 @@ let textShader, geoShader;
             v_texcoord = a_uv / u_texsize;
         }`;
 
-    const fsText = `
+    const fs_text = `
         precision mediump float;
 
         uniform sampler2D u_texture;
@@ -12735,7 +12736,7 @@ let textShader, geoShader;
             gl_FragColor = vec4(u_color.rgb, alpha * u_color.a);
         }`;
 
-    const vsGeo = `
+    const vs_geo = `
         attribute vec3 a_pos;
         attribute vec4 a_color;
 
@@ -12748,7 +12749,7 @@ let textShader, geoShader;
             v_color = a_color;
         }`;
 
-    const fsGeo = `
+    const fs_geo = `
         precision mediump float;
 
         varying vec4 v_color;
@@ -12770,11 +12771,11 @@ let textShader, geoShader;
 
         const program = gl.createProgram();
 
-        const vertexShader = createShader(gl, gl.VERTEX_SHADER, vertexSource);
-        const fragmentShader = createShader(gl, gl.FRAGMENT_SHADER, fragmentSource);
+        const vertex_shader = createShader(gl, gl.VERTEX_SHADER, vertexSource);
+        const fragment_shader = createShader(gl, gl.FRAGMENT_SHADER, fragmentSource);
 
-        gl.attachShader(program, vertexShader);
-        gl.attachShader(program, fragmentShader);
+        gl.attachShader(program, vertex_shader);
+        gl.attachShader(program, fragment_shader);
 
         gl.linkProgram(program);
         if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
@@ -12798,25 +12799,25 @@ let textShader, geoShader;
     }
 
 
-    textShader = createProgram(gl, vsText, fsText);
-    geoShader = createProgram(gl, vsGeo, fsGeo);
+    text_shader = createProgram(gl, vs_text, fs_text);
+    geo_shader = createProgram(gl, vs_geo, fs_geo);
 }
 
 /* upload new SDF to texture */
 {
-    gl.useProgram(textShader.program);
-    const sdfImage = updateSDF();
+    gl.useProgram(text_shader.program);
+    const sdf_image = updateSDF();
     // sdfs[' '].width = sdfs['w'].width;
-    const sdfBytes = new Uint8Array(sdfImage.data)
+    const sdf_bytes = new Uint8Array(sdf_image.data)
 
     gl.bindTexture(gl.TEXTURE_2D, texture);
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, sdfImage.width, sdfImage.height, 0, gl.RGBA, gl.UNSIGNED_BYTE, sdfBytes);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, sdf_image.width, sdf_image.height, 0, gl.RGBA, gl.UNSIGNED_BYTE, sdf_bytes);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
 
-    gl.uniform2f(textShader.u_texsize, sdfImage.width, sdfImage.height);
+    gl.uniform2f(text_shader.u_texsize, sdf_image.width, sdf_image.height);
 }
 
 requestAnimationFrame(function frame(timestamp) {
@@ -12851,30 +12852,30 @@ requestAnimationFrame(function frame(timestamp) {
             pen.x -= (str.split('').reduce((a, c) => a + sdfs[c].glyph.glyphAdvance, 0) / 2) * scale;
         }
         for (let i = 0; i < str.length; i++) {
-            const posX = sdfs[str[i]].x; // pos in sprite x
-            const posY = sdfs[str[i]].y; // pos in sprite y
+            const pos_x = sdfs[str[i]].x; // pos in sprite x
+            const pos_y = sdfs[str[i]].y; // pos in sprite y
             const advance = sdfs[str[i]].glyph.glyphAdvance;
             const by = sdfs[str[i]].glyph.glyphTop - (fontsize / 2 + buf); // bearing y
 
             text_verts.push(
                 /* pos */ pen.x + ((bx - buf) * scale), pen.y - by * scale,
-                /* uv  */ posX, posY,
+                /* uv  */ pos_x, pos_y,
 
                 /* pos */ pen.x + ((bx - buf + width) * scale), pen.y - by * scale,
-                /* uv  */ posX + width, posY,
+                /* uv  */ pos_x + width, pos_y,
 
                 /* pos */ pen.x + ((bx - buf) * scale), pen.y + (height - by) * scale,
-                /* uv  */ posX, posY + height,
+                /* uv  */ pos_x, pos_y + height,
 
 
                 /* pos */ pen.x + ((bx - buf + width) * scale), pen.y - by * scale,
-                /* uv  */ posX + width, posY,
+                /* uv  */ pos_x + width, pos_y,
 
                 /* pos */ pen.x + ((bx - buf) * scale), pen.y + (height - by) * scale,
-                /* uv  */ posX, posY + height,
+                /* uv  */ pos_x, pos_y + height,
 
                 /* pos */ pen.x + ((bx - buf + width) * scale), pen.y + (height - by) * scale,
-                /* uv  */ posX + width, posY + height
+                /* uv  */ pos_x + width, pos_y + height
             );
 
             pen.x = pen.x + advance * scale;
@@ -12935,7 +12936,12 @@ requestAnimationFrame(function frame(timestamp) {
         for (let i = 1; i <= 10; i++) {
             const t = i/10;
             bezier3_sample(out, a, control, b, t);
-            drawLine(out[0], out[1], last[0], last[1], thickness, color);
+            drawLine(last[0], last[1], out[0], out[1], thickness, color);
+
+            if (i > 1) {
+                const vbuf_i = geo_pos.length / 3 - 6;
+                geo_idx.push(vbuf_i + 0, vbuf_i + 1, vbuf_i + 2, vbuf_i + 2, vbuf_i + 1, vbuf_i + 3);
+            }
 
             last[0] = out[0];
             last[1] = out[1];
@@ -12982,7 +12988,7 @@ requestAnimationFrame(function frame(timestamp) {
         if (scroll) {
             const zoom = 1.0 + 0.03*scroll;
 
-            const focal = [mouseX, mouseY, 0, 1];
+            const focal = [mouse_x, mouse_y, 0, 1];
             const tl = [-1, -1, -1,  1]
             const br = [ 1,  1,  1,  1]
             const inv = mat4_invert(mat4_create(), viewMatrix);
@@ -13003,12 +13009,12 @@ requestAnimationFrame(function frame(timestamp) {
 
         /* mouse drag */
         let dragX = 0, dragY = 0;
-        if (mouseDown) {
-            dragX += (mouseX - mouseDownX)
-            dragY += (mouseY - mouseDownY)
+        if (mouse_down) {
+            dragX += (mouse_x - mouse_down_x)
+            dragY += (mouse_y - mouse_down_y)
 
-            if (mouseReleased) {
-                mouseReleased = mouseDown = false;
+            if (mouse_released) {
+                mouse_down = false;
 
                 mat4_mul(viewMatrix, mat4_create_translate(dragX, dragY), viewMatrix);
 
@@ -13018,9 +13024,18 @@ requestAnimationFrame(function frame(timestamp) {
 
         /* text rendering wants the pen pixel-aligned, so scale here */
         /* our pMatrix puts things in 0..1, but everything before that is in pixels */ 
-        // const view = mat4_create_translate(dragX + mouseX, dragY + mouseY)
+        // const view = mat4_create_translate(dragX + mouse_x, dragY + mouse_y)
         view = mat4_create_translate(dragX, dragY)
         mat4_mul(view, view, viewMatrix);
+
+        let mouse_world_x, mouse_world_y;
+        {
+            const inv = mat4_invert(mat4_create(), view);
+            const p = [mouse_x, mouse_y, 0, 1];
+            mat4_transform_vec4(p, p, inv);
+            mouse_world_x = p[0];
+            mouse_world_y = p[1];
+        }
 
         const fontsize = 64;
         const fontscale = fontsize * Math.sqrt(view[0]*view[0] + view[1]*view[1]);
@@ -13042,12 +13057,45 @@ requestAnimationFrame(function frame(timestamp) {
                     .join('')
                     .trim();
 
-            const tables = getZoomedHexagonPositions(activeDomain).internal;
-            const edges = domainEdges.find(x => x.domain == activeDomain).internal.map(x => [x.from.table, x.to.table])
+            const tables = getZoomedHexagonPositions(active_domain).internal;
+            const edges = domain_edges.find(x => x.domain == active_domain).internal.map(x => [x.from.table, x.to.table])
 
+            const layoutMapAxis = (axis, hex_space, expanded_space) => {
+                let space_map_x_min = 0;
+                let space_map_x_max = 0;
+                const space_map_x = {};
+                for (const key in tables) {
+                    const idx_x = Math.floor(tables[key][axis]*4);
+
+                    space_map_x_min = Math.min(space_map_x_min, idx_x);
+                    space_map_x_max = Math.max(space_map_x_max, idx_x);
+
+                    const space_needed = 2*(expanded_tables.has(key) ? expanded_space : hex_space);
+                    space_map_x[idx_x] = Math.max(space_map_x[idx_x] ?? 0, space_needed);
+                }
+
+                return _x => {
+                    const x = _x*4 + 0.5;
+                    const x_int = Math.floor(x);
+                    const x_frac = x - x_int;
+
+                    let ret = 0;
+                    for (let i = space_map_x_min; i <= x_int; i++) {
+                        ret += (space_map_x[i] ?? 0) * ((i == x_int) ? x_frac : 1);
+                    }
+                    return ret;
+                }
+            }
+            const adjustedX = layoutMapAxis('x', 400,  800); //1200);
+            const adjustedY = layoutMapAxis('y', 500, 1600); //2000);
+            const HEX_SIZE = 400;
+            const EXPANDED_SIZE_X = 1000;
+            const EXPANDED_SIZE_Y = 3000;
+
+            /* draw lines connecting tables/hexes */
             for (const key in tables) {
-                const from_x = tables[key].x * 800;
-                const from_y = tables[key].y * 800;
+                const from_x = adjustedX(tables[key].x);
+                const from_y = adjustedY(tables[key].y);
 
                 for (const edge of edges) {
                     if (edge[0] != key) continue;
@@ -13055,8 +13103,8 @@ requestAnimationFrame(function frame(timestamp) {
 
                     if (edge[0] == edge[1]) continue;
 
-                    const to_x = tables[edge[1]].x * 800;
-                    const to_y = tables[edge[1]].y * 800;
+                    const to_x = adjustedX(tables[edge[1]].x);
+                    const to_y = adjustedY(tables[edge[1]].y);
 
                     /* TO GENERATE AESTHETICALLY PLEASING CONTROL POINTS:
                      * - find the face of the hexagon we're coming out of
@@ -13073,32 +13121,55 @@ requestAnimationFrame(function frame(timestamp) {
 
                     const dx = to_x - from_x;
                     const dy = to_y - from_y;
+                    const dlen = Math.sqrt(dx*dx + dy*dy); /* used to weight control point spacing */
                     const hex = (Math.PI*2)/4; /* would be a sixth of a revolution in radians, but see note */
                     let angle = Math.atan2(dy, dx) - hex/2;
                     angle = Math.round(angle / hex) * hex + hex/2;
-                    if (Math.abs(dy) < 1) /* make straight lines straight */
+                    if (Math.abs(dy) < 1) /* make horizontal lines straight */
                         angle = (dx > 0) ? 0 : Math.PI;
                     const out_x = Math.cos(angle);
                     const out_y = Math.sin(angle);
 
+                        // from_x+out_x*300, from_y+out_y*500,
+                        //   to_x-out_x*200,   to_y-out_y*800, 
+
+                    /* TODO: use actual shape size */
+                    const HEX_RADIUS = 175;
                     drawBezier4(
-                        from_x+out_x*175, from_y+out_y*175,
-                        from_x+out_x*300, from_y+out_y*500,
-                          to_x-out_x*200,   to_y-out_y*800,
-                          to_x-out_x*175,   to_y-out_y*175,
+                        from_x+out_x*HEX_RADIUS, from_y+out_y*HEX_RADIUS, /* assumes hex is 175 radius */
+                        from_x+out_x*dlen*0.04 , from_y+out_y*dlen*0.20 ,
+                          to_x-out_x*dlen*0.08 ,   to_y-out_y*dlen*0.40 , /* control point hits harder going in */
+                          to_x-out_x*HEX_RADIUS,   to_y-out_y*HEX_RADIUS, /* assumes hex is 175 radius */
                         25, [150, 140, 180, 255]
                     )
                 }
             }
 
+            /* draw tables/hexes */
             for (const key in tables) {
-                const x = tables[key].x * 800;
-                const y = tables[key].y * 800;
-                const min_x = x - 200;
-                const min_y = y - 200;
-                const max_x = x + 200;
-                const max_y = y + 200;
-                drawSquare(min_x, min_y, max_x, max_y, [188, 188, 188, 255]);
+                const expanded = expanded_tables.has(key);
+
+                const x = adjustedX(tables[key].x);
+                const y = adjustedY(tables[key].y);
+
+                const size_x = expanded ? EXPANDED_SIZE_X : HEX_SIZE;
+                const size_y = expanded ? EXPANDED_SIZE_Y : HEX_SIZE;
+                const min_x = x - size_x/2;
+                const min_y = y - size_y/2;
+                const max_x = x + size_x/2;
+                const max_y = y + size_y/2;
+                const hover = (mouse_world_x > min_x && mouse_world_x < max_x) &&
+                              (mouse_world_y > min_y && mouse_world_y < max_y);
+                const color = hover ? [158, 158, 158, 255] : [188, 188, 188, 255];
+                drawSquare(min_x, min_y, max_x, max_y, color);
+
+                if (mouse_released && hover) {
+                    if (expanded_tables.has(key)) {
+                        expanded_tables.delete(key);
+                    } else {
+                        expanded_tables.add(key);
+                    }
+                }
 
                 let i = 0;
                 const words = spaceCamel(key).split(' ');
@@ -13110,13 +13181,18 @@ requestAnimationFrame(function frame(timestamp) {
             }
         }
 
+        /* prepare input state for next frame */
+        {
+            mouse_released = false;
+        }
+
         /* geo pass */
         {
-            gl.useProgram(geoShader.program);
-            gl.enableVertexAttribArray(geoShader.a_pos);
-            gl.enableVertexAttribArray(geoShader.a_color);
+            gl.useProgram(geo_shader.program);
+            gl.enableVertexAttribArray(geo_shader.a_pos);
+            gl.enableVertexAttribArray(geo_shader.a_color);
 
-            gl.uniformMatrix4fv(geoShader.u_matrix, false, pMatrix);
+            gl.uniformMatrix4fv(geo_shader.u_matrix, false, pMatrix);
 
             /* upload/bind geometry */
 
@@ -13124,11 +13200,11 @@ requestAnimationFrame(function frame(timestamp) {
             {
                 gl.bindBuffer(gl.ARRAY_BUFFER, geo_vbuf_pos);
                 gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(geo_pos), gl.STATIC_DRAW);
-                gl.vertexAttribPointer(geoShader.a_pos, 3, gl.FLOAT, false, 0, 0);
+                gl.vertexAttribPointer(geo_shader.a_pos, 3, gl.FLOAT, false, 0, 0);
 
                 gl.bindBuffer(gl.ARRAY_BUFFER, geo_vbuf_color);
                 gl.bufferData(gl.ARRAY_BUFFER, new Uint8Array(geo_color), gl.STATIC_DRAW);
-                gl.vertexAttribPointer(geoShader.a_color, 4, gl.UNSIGNED_BYTE, true, 0, 0);
+                gl.vertexAttribPointer(geo_shader.a_color, 4, gl.UNSIGNED_BYTE, true, 0, 0);
 
                 gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, geo_ibuf);
                 gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, new Uint16Array(geo_idx), gl.STATIC_DRAW);
@@ -13139,21 +13215,21 @@ requestAnimationFrame(function frame(timestamp) {
 
         /* text pass */
         {
-            gl.useProgram(textShader.program);
-            gl.enableVertexAttribArray(textShader.a_pos);
-            gl.enableVertexAttribArray(textShader.a_uv);
+            gl.useProgram(text_shader.program);
+            gl.enableVertexAttribArray(text_shader.a_pos);
+            gl.enableVertexAttribArray(text_shader.a_uv);
 
             const gamma = 2;
-            gl.uniformMatrix4fv(textShader.u_matrix, false, pMatrix);
-            gl.uniform4fv(textShader.u_color, [0, 0, 0, 1]);
-            gl.uniform1f(textShader.u_buffer, 0.75);
-            gl.uniform1f(textShader.u_gamma, gamma * 1.4142 / fontscale);
+            gl.uniformMatrix4fv(text_shader.u_matrix, false, pMatrix);
+            gl.uniform4fv(text_shader.u_color, [0, 0, 0, 1]);
+            gl.uniform1f(text_shader.u_buffer, 0.75);
+            gl.uniform1f(text_shader.u_gamma, gamma * 1.4142 / fontscale);
 
             /* bind tex */
             {
                 gl.activeTexture(gl.TEXTURE0);
                 gl.bindTexture(gl.TEXTURE_2D, texture);
-                gl.uniform1i(textShader.u_texture, 0);
+                gl.uniform1i(text_shader.u_texture, 0);
             }
 
             /* upload/bind geometry */
@@ -13164,7 +13240,7 @@ requestAnimationFrame(function frame(timestamp) {
 
                 gl.bindBuffer(gl.ARRAY_BUFFER, text_vbuf);
                 gl.vertexAttribPointer(
-                    textShader.a_pos,
+                    text_shader.a_pos,
                     /* numComponents, */ 2,
                     /* type,          */ gl.FLOAT,
                     /* normalize,     */ false,
@@ -13172,7 +13248,7 @@ requestAnimationFrame(function frame(timestamp) {
                     /* offset         */ 0
                 );
                 gl.vertexAttribPointer(
-                    textShader.a_uv,
+                    text_shader.a_uv,
                     /* numComponents, */ 2,
                     /* type,          */ gl.FLOAT,
                     /* normalize,     */ false,
