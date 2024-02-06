@@ -12457,6 +12457,12 @@ const updateSDF = (() => {
 
 function lerp(v0, v1, t) { return (1 - t) * v0 + t * v1; }
 function inv_lerp(min, max, p) { return (p - min) / (max - min); }
+/* love me some IQ -> https://iquilezles.org/articles/functions/ <- */
+function exp_impulse(x, k) {
+    const h = k * x;
+    return h * Math.exp(1.0 - h);
+}
+function clamp(min, a, max) { return Math.min(max, Math.max(min, a)); }
 function bezier3_sample(out, a, control, b, t) {
     out[0] = lerp(lerp(a[0], control[0], t), lerp(control[0], b[0], t), t);
     out[1] = lerp(lerp(a[1], control[1], t), lerp(control[1], b[1], t), t);
@@ -12664,7 +12670,8 @@ let viewMatrix = mat4_create();
 }
 
 let active_domain = "Equipment";
-let expanded_tables = new Set(["Model"]);
+let table_state = new Map();
+let expanded_tables = new Map([["Model", { scroll: 0 }]]);
 window.onkeydown = e => {
     if (e.key == " ") {
         const categories = ["Asset", "Binding", "Building", "Event", "Environment", "Equipment", "Geometry", "People", "Property", "Quanta", "Site", "System"];
@@ -12672,7 +12679,7 @@ window.onkeydown = e => {
     }
 }
 
-let scroll = 0, 
+let scroll = 0, scroll_delta = 0, scroll_captured = false,
     mouse_x = 0, mouse_y = 0,
     mouse_down_x = 0, mouse_down_y = 0,
     mouse_down = false, mouse_released = false;
@@ -12680,6 +12687,8 @@ let wheelTimeout;
 window.onwheel = e => {
     if (mouse_down) return;
     scroll = Math.sign(e.deltaY);
+    scroll_delta = e.deltaY;
+
     clearTimeout(wheelTimeout)
     wheelTimeout = setTimeout(() => scroll = 0, 100)
 }
@@ -12901,6 +12910,14 @@ requestAnimationFrame(function frame(timestamp) {
 
         geo_idx.push(vbuf_i + 0, vbuf_i + 1, vbuf_i + 2, vbuf_i + 2, vbuf_i + 3, vbuf_i + 0);
     }
+    function drawSquareClamped( clampbox, min_x, min_y,   max_x, max_y,   color ) {
+        min_x = clamp(clampbox.min_x, min_x, clampbox.max_x);
+        max_x = clamp(clampbox.min_x, max_x, clampbox.max_x);
+        min_y = clamp(clampbox.min_y, min_y, clampbox.max_y);
+        max_y = clamp(clampbox.min_y, max_y, clampbox.max_y);
+
+        drawSquare( min_x, min_y,   max_x, max_y,   color );
+    }
     function drawLine( a_x, a_y,   b_x, b_y,  thickness,  color ) {
         const dx = b_x - a_x;
         const dy = b_y - a_y;
@@ -12993,7 +13010,7 @@ requestAnimationFrame(function frame(timestamp) {
         const mouse_clicked = mouse_released && !mouse_moved;
 
         /* zoom toward mouse */
-        if (scroll) {
+        if (scroll && !scroll_captured) {
             const zoom = 1.0 + 0.03*scroll;
 
             const focal = [mouse_x, mouse_y, 0, 1];
@@ -13049,6 +13066,8 @@ requestAnimationFrame(function frame(timestamp) {
         const fontscale = fontsize * Math.sqrt(view[0]*view[0] + view[1]*view[1]);
 
         {
+            scroll_captured = false;
+
             // drawText('accelerated instance graph', 0, 0, fontscale, ALIGN_CENTER);
             const spaceCamel = key =>
                 key
@@ -13155,7 +13174,7 @@ requestAnimationFrame(function frame(timestamp) {
 
             /* draw tables/hexes */
             for (const key in tables) {
-                const expanded = expanded_tables.has(key);
+                const expanded = expanded_tables.get(key);
 
                 const x = adjustedX(tables[key].x);
                 const y = adjustedY(tables[key].y);
@@ -13173,7 +13192,7 @@ requestAnimationFrame(function frame(timestamp) {
                     if (expanded_tables.has(key)) {
                         expanded_tables.delete(key);
                     } else {
-                        expanded_tables.add(key);
+                        expanded_tables.set(key, { scroll: 0 });
                     }
                 }
 
@@ -13216,19 +13235,50 @@ requestAnimationFrame(function frame(timestamp) {
                     const instance_width = 370;
                     const instance_pad_x = 45;
                     const instances_all_max_x = pen_x + 3*(instance_width + instance_pad_x) - instance_pad_x;
-                    let instances_all_max_y = 0;
+
+                    const scrollbox_bottom_pad = 45;
+                    const clampbox = {
+                        min_x: pen_x,
+                        min_y: pen_y,
+                        max_x: instances_all_max_x,
+                        max_y: max_y - scrollbox_bottom_pad,
+                    };
+
+                    const rect_size_y = fontsize*1.55;
+                    const rect_space_padded = rect_size_y*1.3;
+                    const instances_all_max_y = pen_y + rect_space_padded*62; /* TODO: this will change depending on your data */
+                    const visible_size_y = clampbox.max_y - clampbox.min_y;
+
+                    if (hover) {
+                        scroll_captured = true;
+                    }
+
+                    if (scroll && hover) {
+
+                        expanded.scroll += scroll_delta;
+                        scroll_delta = 0;
+
+                        expanded.scroll = Math.max(expanded.scroll, 0);
+
+                        const max_scroll = instances_all_max_y - pen_y - visible_size_y;
+                        expanded.scroll = Math.min(expanded.scroll, max_scroll);
+                    }
+
                     for (let row = 0; row < 3; row++) {
-                        for (let i = 0; i < 22; i++) {
-                            const rect_size_y = fontsize*1.55;
+                        const view_top_row_index = Math.floor(expanded.scroll / rect_space_padded);
+                        const view_bottom_row_index = Math.ceil((expanded.scroll + visible_size_y) / rect_space_padded);
+                        for (let i = view_top_row_index; i < view_bottom_row_index; i++) {
                             const rect_size_x = instance_width;
                             const rect_x = pen_x + row*(rect_size_x + instance_pad_x);
-                            const rect_y = pen_y + i*rect_size_y*1.3;
-                            instances_all_max_y = Math.max(instances_all_max_y, rect_y + rect_size_y);
-                            drawSquare(
+                            let rect_y = pen_y + i*rect_space_padded - expanded.scroll;
+                            drawSquareClamped(
+                                clampbox,
                                 rect_x, rect_y,
                                 rect_x + rect_size_x, rect_y + rect_size_y,
                                 highlight
                             );
+                            if (i == view_top_row_index && (rect_y - pen_y) < -20) continue;
+                            if (i == (view_bottom_row_index-1) && (rect_y + rect_size_y) - (pen_y + visible_size_y) > 20) continue;
                             drawText(
                                 "Instance",
                                 rect_x + rect_size_x/2, rect_y + (rect_size_y - fontsize)*0.7,
@@ -13240,25 +13290,26 @@ requestAnimationFrame(function frame(timestamp) {
 
                     /* scrollbar */
                     {
+                        const total_size_y = instances_all_max_y - pen_y;
+                        const visible_size_y = clampbox.max_y - clampbox.min_y;
+
+                        const scrollbar_size_y = (visible_size_y/total_size_y) * visible_size_y;
+
+                        const max_scroll = instances_all_max_y - pen_y - visible_size_y;
+                        const scrollbar_offset_y = (expanded.scroll / max_scroll) * (visible_size_y - scrollbar_size_y);
+
+                        const scrollbar_min_y = pen_y + scrollbar_offset_y;
+                        const scrollbar_max_y = pen_y + scrollbar_offset_y + scrollbar_size_y;
+
                         drawSquare(
                             instances_all_max_x + 30,
-                            pen_y               + 20,
+                            scrollbar_min_y,
                             instances_all_max_x + 30 + 40,
-                            pen_y + 700         + 20,
+                            scrollbar_max_y,
                             [140, 140, 140, 255]
                         )
                     }
 
-                    if (0) {
-                        const scrollbox_bottom_pad = 45;
-                        drawSquare(
-                            pen_x,
-                            pen_y,
-                            instances_all_max_x,
-                            max_y - scrollbox_bottom_pad,
-                            [140, 140, 140, 255]
-                        );
-                    }
                 } else {
 
                     /* draw "hex" */
