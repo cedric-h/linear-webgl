@@ -12641,12 +12641,15 @@ function mat4_invert(out, a) {
 }
 
 const graphCanvas = document.getElementById('inspectorGraphCanvas');
-const gl = graphCanvas.getContext('webgl', {antialias: true});
+const gl = graphCanvas.getContext('webgl2', {antialias: true});
 if (!gl) { alert('Failed to initialize WebGL'); }
 
 let pixel_matrix = mat4_create();
 let view_matrix = mat4_create();
-let render_target;
+const render_targets = [
+    { tex: null, fb: null },
+    { tex: null, fb: null },
+];
 (window.onresize = () => {
     graphCanvas.width = window.innerWidth;
     graphCanvas.height = window.innerHeight;
@@ -12666,6 +12669,37 @@ let render_target;
         graphCanvas.width,
         graphCanvas.height
     );
+
+    /* create scene-sized render-target for post-processing fx (like shadows) */
+    for (const target of render_targets) {
+        if (target.tex) gl.deleteTexture(    target.tex);
+        if (target.fb ) gl.deleteFramebuffer(target.fb );
+
+        target.tex = gl.createTexture();
+        gl.bindTexture(gl.TEXTURE_2D, target.tex);
+
+        // define size and format of level 0
+        gl.texImage2D(
+            gl.TEXTURE_2D,
+            /* level,          */ 0,
+            /* internalFormat, */ gl.RGBA,
+            /* width,          */ graphCanvas.width,
+            /* height,         */ graphCanvas.height,
+            /* border,         */ 0,
+            /* format,         */ gl.RGBA,
+            /* type,           */ gl.UNSIGNED_BYTE,
+            /* data            */ null
+        );
+
+        // set the filtering so we don't need mips
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+
+        target.fb = gl.createFramebuffer();
+        gl.bindFramebuffer(gl.FRAMEBUFFER, target.fb);
+        gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, target.tex, 0);
+    }
 })();
 {
     /* scale view_matrix to fit 5000 logical pixels */
@@ -12723,7 +12757,7 @@ const geo_vbuf_color = gl.createBuffer();
 const geo_ibuf = gl.createBuffer();
 
 
-let text_shader, geo_shader;
+let text_shader, geo_shader, fullscreen_shader;
 /* compile shaders */
 {
     const vs_text = `
@@ -12756,17 +12790,62 @@ let text_shader, geo_shader;
             gl_FragColor = vec4(u_color.rgb, alpha * u_color.a);
         }`;
 
+    const vs_fullscreen = `#version 300 es
+        precision mediump float;
+
+        out vec2 v_texcoord;
+
+        void main(void) {
+            float x = float((gl_VertexID & 1) << 2);
+            float y = float((gl_VertexID & 2) << 1);
+            v_texcoord.x = x * 0.5;
+            v_texcoord.y = y * 0.5;
+            gl_Position = vec4(x - 1.0, y - 1.0, 0, 1);
+        }
+    `;
+
+    const fs_fullscreen = `#version 300 es
+        precision mediump float;
+
+        uniform sampler2D u_texture;
+        uniform vec2 u_direction;
+
+        in vec2 v_texcoord;
+         
+        out vec4 frag_color;
+         
+        void main(void) {
+            vec2 one_pixel = u_direction*(vec2(1) / vec2(textureSize(u_texture, 0)));
+
+            frag_color = texture(u_texture, v_texcoord) * 0.2270270270;
+
+            frag_color += texture(u_texture, v_texcoord + one_pixel    ) * 0.1945945946;
+            frag_color += texture(u_texture, v_texcoord - one_pixel    ) * 0.1945945946;
+
+            frag_color += texture(u_texture, v_texcoord + one_pixel*2.0) * 0.1216216216;
+            frag_color += texture(u_texture, v_texcoord - one_pixel*2.0) * 0.1216216216;
+
+            frag_color += texture(u_texture, v_texcoord + one_pixel*3.0) * 0.0540540541;
+            frag_color += texture(u_texture, v_texcoord - one_pixel*3.0) * 0.0540540541;
+
+            frag_color += texture(u_texture, v_texcoord + one_pixel*4.0) * 0.0162162162;
+            frag_color += texture(u_texture, v_texcoord - one_pixel*4.0) * 0.0162162162;
+        }
+    `;
+
+
     const vs_geo = `
         attribute vec3 a_pos;
         attribute vec4 a_color;
 
         uniform mat4 u_matrix;
+        uniform vec4 u_color;
 
         varying vec4 v_color;
 
         void main() {
             gl_Position = u_matrix * vec4(a_pos.xyz, 1);
-            v_color = a_color;
+            v_color = u_color * a_color;
         }`;
 
     const fs_geo = `
@@ -12821,6 +12900,7 @@ let text_shader, geo_shader;
 
     text_shader = createProgram(gl, vs_text, fs_text);
     geo_shader = createProgram(gl, vs_geo, fs_geo);
+    fullscreen_shader = createProgram(gl, vs_fullscreen, fs_fullscreen);
 }
 
 /* upload new SDF to texture */
@@ -13054,10 +13134,6 @@ requestAnimationFrame(function frame(timestamp) {
 
     gl.enable(gl.DEPTH_TEST);
     gl.depthFunc(gl.LEQUAL);
-
-    /* clear all */
-    gl.clearColor(0.95, 0.95, 0.95, 1);
-    gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
 
     {
         /* curate input state for frame */
@@ -13405,13 +13481,13 @@ requestAnimationFrame(function frame(timestamp) {
             mouse_released = false;
         }
 
-        /* geo pass */
-        {
+        function geoPass(color) {
             gl.useProgram(geo_shader.program);
             gl.enableVertexAttribArray(geo_shader.a_pos);
             gl.enableVertexAttribArray(geo_shader.a_color);
 
             gl.uniformMatrix4fv(geo_shader.u_matrix, false, pixel_matrix);
+            gl.uniform4fv(geo_shader.u_color, color);
 
             /* upload/bind geometry */
 
@@ -13432,51 +13508,106 @@ requestAnimationFrame(function frame(timestamp) {
             gl.drawElements(gl.TRIANGLES, geo_idx.length, gl.UNSIGNED_SHORT, 0);
         }
 
-        /* text pass */
-        for (const font_buf of [labels, expanded_titles, hex_titles]) {
-            gl.useProgram(text_shader.program);
-            gl.enableVertexAttribArray(text_shader.a_pos);
-            gl.enableVertexAttribArray(text_shader.a_uv);
 
-            const gamma = 2;
-            gl.uniformMatrix4fv(text_shader.u_matrix, false, pixel_matrix);
-            gl.uniform4fv(text_shader.u_color, font_buf.color);
-            gl.uniform1f(text_shader.u_buffer, 0.75);
-            gl.uniform1f(text_shader.u_gamma, gamma * 1.4142 / font_buf.fontscale);
+        /* shadow pass "pre-post-processing :)" */
+        {
+            gl.bindFramebuffer(gl.FRAMEBUFFER, render_targets[0].fb);
+
+            /* clear all */
+            gl.clearColor(0.95, 0.95, 0.95, 1);
+            gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+
+            /* geo pass */
+            geoPass([0, 0, 0, 0.48]);
+        }
+
+        const passes = [
+            [render_targets[1].fb, render_targets[0].tex, [0, 8]],
+            [render_targets[0].fb, render_targets[1].tex, [7, 0]],
+            [render_targets[1].fb, render_targets[0].tex, [0, 6]],
+            [render_targets[0].fb, render_targets[1].tex, [5, 0]],
+            [render_targets[1].fb, render_targets[0].tex, [0, 4]],
+            [render_targets[0].fb, render_targets[1].tex, [3, 0]],
+            [render_targets[1].fb, render_targets[0].tex, [0, 2]],
+            [                null, render_targets[1].tex, [1, 0]]
+        ];
+        for (const [dst_fb, src_tex, dir] of passes) {
+            gl.bindFramebuffer(gl.FRAMEBUFFER, dst_fb);
+
+            /* clear all */
+            gl.clearColor(0.95, 0.0, 0.95, 1);
+            gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+
+            gl.useProgram(fullscreen_shader.program);
+
+            gl.uniform2fv(fullscreen_shader.u_direction, dir);
 
             /* bind tex */
             {
                 gl.activeTexture(gl.TEXTURE0);
-                gl.bindTexture(gl.TEXTURE_2D, texture);
-                gl.uniform1i(text_shader.u_texture, 0);
+                gl.bindTexture(gl.TEXTURE_2D, src_tex);
+                gl.uniform1i(fullscreen_shader.u_texture, 0);
             }
 
-            /* upload/bind geometry */
-            const vbuf_count = font_buf.text_verts.length / 4;
-            {
-                gl.bindBuffer(gl.ARRAY_BUFFER, text_vbuf);
-                gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(font_buf.text_verts), gl.STATIC_DRAW);
+            gl.drawArrays(gl.TRIANGLE_FAN, 0, 3);
+        }
 
-                gl.bindBuffer(gl.ARRAY_BUFFER, text_vbuf);
-                gl.vertexAttribPointer(
-                    text_shader.a_pos,
-                    /* numComponents, */ 2,
-                    /* type,          */ gl.FLOAT,
-                    /* normalize,     */ false,
-                    /* stride,        */ 4*4,
-                    /* offset         */ 0
-                );
-                gl.vertexAttribPointer(
-                    text_shader.a_uv,
-                    /* numComponents, */ 2,
-                    /* type,          */ gl.FLOAT,
-                    /* normalize,     */ false,
-                    /* stride,        */ 4*4,
-                    /* offset         */ 2*4
-                );
+        {
+            // gl.bindFramebuffer(gl.FRAMEBUFFER, render_targets[0].fb);
+
+            /* clear all */
+            // gl.clearColor(0.95, 0.95, 0.95, 1);
+            gl.clear(gl.DEPTH_BUFFER_BIT);
+
+            /* geo pass */
+            geoPass([1, 1, 1, 1]);
+
+            /* text pass */
+            for (const font_buf of [labels, expanded_titles, hex_titles]) {
+                gl.useProgram(text_shader.program);
+                gl.enableVertexAttribArray(text_shader.a_pos);
+                gl.enableVertexAttribArray(text_shader.a_uv);
+
+                const gamma = 2;
+                gl.uniformMatrix4fv(text_shader.u_matrix, false, pixel_matrix);
+                gl.uniform4fv(text_shader.u_color, font_buf.color);
+                gl.uniform1f(text_shader.u_buffer, 0.75);
+                gl.uniform1f(text_shader.u_gamma, gamma * 1.4142 / font_buf.fontscale);
+
+                /* bind tex */
+                {
+                    gl.activeTexture(gl.TEXTURE0);
+                    gl.bindTexture(gl.TEXTURE_2D, texture);
+                    gl.uniform1i(text_shader.u_texture, 0);
+                }
+
+                /* upload/bind geometry */
+                const vbuf_count = font_buf.text_verts.length / 4;
+                {
+                    gl.bindBuffer(gl.ARRAY_BUFFER, text_vbuf);
+                    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(font_buf.text_verts), gl.STATIC_DRAW);
+
+                    gl.bindBuffer(gl.ARRAY_BUFFER, text_vbuf);
+                    gl.vertexAttribPointer(
+                        text_shader.a_pos,
+                        /* numComponents, */ 2,
+                        /* type,          */ gl.FLOAT,
+                        /* normalize,     */ false,
+                        /* stride,        */ 4*4,
+                        /* offset         */ 0
+                    );
+                    gl.vertexAttribPointer(
+                        text_shader.a_uv,
+                        /* numComponents, */ 2,
+                        /* type,          */ gl.FLOAT,
+                        /* normalize,     */ false,
+                        /* stride,        */ 4*4,
+                        /* offset         */ 2*4
+                    );
+                }
+
+                gl.drawArrays(gl.TRIANGLES, 0, vbuf_count);
             }
-
-            gl.drawArrays(gl.TRIANGLES, 0, vbuf_count);
         }
 
     }
