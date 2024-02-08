@@ -12455,6 +12455,13 @@ const updateSDF = (() => {
     }
 })()
 
+function hex_to_four_channel(out, hex_str) {
+    const hex = parseInt(hex_str.slice(1), 16)
+
+    out[0] = (hex >> 16) & 0xff;
+    out[1] = (hex >>  8) & 0xff;
+    out[2] = (hex >>  0) & 0xff;
+}
 function lerp(v0, v1, t) { return (1 - t) * v0 + t * v1; }
 function inv_lerp(min, max, p) { return (p - min) / (max - min); }
 /* love me some IQ -> https://iquilezles.org/articles/functions/ <- */
@@ -12637,8 +12644,9 @@ const graphCanvas = document.getElementById('inspectorGraphCanvas');
 const gl = graphCanvas.getContext('webgl', {antialias: true});
 if (!gl) { alert('Failed to initialize WebGL'); }
 
-let pMatrix = mat4_create();
-let viewMatrix = mat4_create();
+let pixel_matrix = mat4_create();
+let view_matrix = mat4_create();
+let render_target;
 (window.onresize = () => {
     graphCanvas.width = window.innerWidth;
     graphCanvas.height = window.innerHeight;
@@ -12651,7 +12659,7 @@ let viewMatrix = mat4_create();
         graphCanvas.height *= window.devicePixelRatio;
     }
 
-    pMatrix = mat4_ortho(pMatrix, 0, gl.canvas.width, gl.canvas.height, 0, 1, -1);
+    pixel_matrix = mat4_ortho(pixel_matrix, 0, gl.canvas.width, gl.canvas.height, 0, 1, -1);
     gl.viewport(
         0,
         0,
@@ -12660,13 +12668,13 @@ let viewMatrix = mat4_create();
     );
 })();
 {
-    /* scale viewMatrix to fit 5000 logical pixels */
+    /* scale view_matrix to fit 5000 logical pixels */
     const aspect_ratio = window.innerHeight/window.innerWidth;
     const width = 3000;
     const x = 2000;
     const y = 1500;
-    mat4_ortho(viewMatrix, x-width, x+width, y+width*aspect_ratio, y-width*aspect_ratio, 1, -1)
-    mat4_mul(viewMatrix, mat4_invert(mat4_create(), pMatrix), viewMatrix);
+    mat4_ortho(view_matrix, x-width, x+width, y+width*aspect_ratio, y-width*aspect_ratio, 1, -1)
+    mat4_mul(view_matrix, mat4_invert(mat4_create(), pixel_matrix), view_matrix);
 }
 
 let active_domain = "Equipment";
@@ -12832,21 +12840,28 @@ let text_shader, geo_shader;
     gl.uniform2f(text_shader.u_texsize, sdf_image.width, sdf_image.height);
 }
 
-requestAnimationFrame(function frame(timestamp) {
-    requestAnimationFrame(frame);
+const ALIGN_LEFT = 0;
+const ALIGN_CENTER = 1;
+class FontBuf {
+    constructor(color, fontsize, view) {
+        /* fontscale is in "world size" (e.g. doesn't change by how much you zoom) and is
+         * stored here to be used in the layouting of UI widgets */ 
+        this.fontsize = fontsize;
 
-    const geo_idx = [];
-    const geo_pos = [];
-    const geo_color = [];
-    const text_verts = [];
+        /* fontscale is in final screen pixels (e.g. changes if you zoom) and is
+         * stored here to be used in the rendering of your texct */ 
+        this.fontscale = fontsize * Math.sqrt(view[0]*view[0] + view[1]*view[1]);
 
-    let view;
+        this.color = color;
 
-    const ALIGN_LEFT = 0;
-    const ALIGN_CENTER = 1;
-    function drawText(str, worldX, worldY, size, align = ALIGN_LEFT) {
-        const pos = [worldX, worldY, 0, 1]
-        mat4_transform_vec4(pos, pos, view);
+        this.view = view;
+
+        this.text_verts = [];
+    }
+
+    drawText(str, world_x, world_y, align = ALIGN_LEFT) {
+        const pos = [world_x, world_y, 0, 1]
+        mat4_transform_vec4(pos, pos, this.view);
         const x = Math.round(pos[0]);
         const y = Math.round(pos[1]);
 
@@ -12856,7 +12871,7 @@ requestAnimationFrame(function frame(timestamp) {
         const height = fontsize + buf * 2; // glyph height
         const bx = 0; // bearing x
 
-        const scale = size / fontsize;
+        const scale = this.fontscale / fontsize;
         const lineWidth = str.length * fontsize * scale;
 
         const pen = { x, y };
@@ -12869,7 +12884,7 @@ requestAnimationFrame(function frame(timestamp) {
             const advance = sdfs[str[i]].glyph.glyphAdvance;
             const by = sdfs[str[i]].glyph.glyphTop - (fontsize / 2 + buf); // bearing y
 
-            text_verts.push(
+            this.text_verts.push(
                 /* pos */ pen.x + ((bx - buf) * scale), pen.y - by * scale,
                 /* uv  */ pos_x, pos_y,
 
@@ -12893,6 +12908,17 @@ requestAnimationFrame(function frame(timestamp) {
             pen.x = pen.x + advance * scale;
         }
     }
+}
+
+requestAnimationFrame(function frame(timestamp) {
+    requestAnimationFrame(frame);
+
+    const geo_idx = [];
+    const geo_pos = [];
+    const geo_color = [];
+
+    let view;
+
     function drawSquare( min_x, min_y,   max_x, max_y,   color ) {
         geo_color.push(
             color[0], color[1], color[2], color[3],
@@ -12909,6 +12935,36 @@ requestAnimationFrame(function frame(timestamp) {
         p[0] = max_x; p[1] = max_y; mat4_transform_vec4(p, p, view); geo_pos.push(p[0], p[1], 0.1);
 
         geo_idx.push(vbuf_i + 0, vbuf_i + 1, vbuf_i + 2, vbuf_i + 2, vbuf_i + 3, vbuf_i + 0);
+    }
+    function drawHex( min_x, min_y,   max_x, max_y,   color ) {
+        geo_color.push(
+            color[0], color[1], color[2], color[3],
+            color[0], color[1], color[2], color[3],
+            color[0], color[1], color[2], color[3],
+            color[0], color[1], color[2], color[3],
+            color[0], color[1], color[2], color[3],
+            color[0], color[1], color[2], color[3],
+            color[0], color[1], color[2], color[3]
+        )
+
+        const vbuf_i = geo_pos.length / 3;
+        const p = [0, 0, 0, 1];
+        p[0] = lerp(min_x, max_x, 0.50); p[1] = lerp(min_y, max_y, 0.500000); mat4_transform_vec4(p, p, view); geo_pos.push(p[0], p[1], 0.1);
+        p[0] = lerp(min_x, max_x, 0.25); p[1] = lerp(min_y, max_y, 0.933013); mat4_transform_vec4(p, p, view); geo_pos.push(p[0], p[1], 0.1);
+        p[0] = lerp(min_x, max_x, 0.00); p[1] = lerp(min_y, max_y, 0.500000); mat4_transform_vec4(p, p, view); geo_pos.push(p[0], p[1], 0.1);
+        p[0] = lerp(min_x, max_x, 0.25); p[1] = lerp(min_y, max_y, 0.066987); mat4_transform_vec4(p, p, view); geo_pos.push(p[0], p[1], 0.1);
+        p[0] = lerp(min_x, max_x, 0.75); p[1] = lerp(min_y, max_y, 0.066987); mat4_transform_vec4(p, p, view); geo_pos.push(p[0], p[1], 0.1);
+        p[0] = lerp(min_x, max_x, 1.00); p[1] = lerp(min_y, max_y, 0.500000); mat4_transform_vec4(p, p, view); geo_pos.push(p[0], p[1], 0.1);
+        p[0] = lerp(min_x, max_x, 0.75); p[1] = lerp(min_y, max_y, 0.933013); mat4_transform_vec4(p, p, view); geo_pos.push(p[0], p[1], 0.1);
+
+        geo_idx.push(
+            vbuf_i + 0, vbuf_i + 1, vbuf_i + 2,
+            vbuf_i + 0, vbuf_i + 2, vbuf_i + 3,
+            vbuf_i + 0, vbuf_i + 3, vbuf_i + 4,
+            vbuf_i + 0, vbuf_i + 4, vbuf_i + 5,
+            vbuf_i + 0, vbuf_i + 5, vbuf_i + 6,
+            vbuf_i + 0, vbuf_i + 6, vbuf_i + 1,
+        );
     }
     function drawSquareClamped( clampbox, min_x, min_y,   max_x, max_y,   color ) {
         min_x = clamp(clampbox.min_x, min_x, clampbox.max_x);
@@ -13016,13 +13072,13 @@ requestAnimationFrame(function frame(timestamp) {
             const focal = [mouse_x, mouse_y, 0, 1];
             const tl = [-1, -1, -1,  1]
             const br = [ 1,  1,  1,  1]
-            const inv = mat4_invert(mat4_create(), viewMatrix);
+            const inv = mat4_invert(mat4_create(), view_matrix);
             mat4_transform_vec4(tl, tl, inv);
             mat4_transform_vec4(br, br, inv);
             mat4_transform_vec4(focal, focal, inv);
 
             mat4_ortho(
-                viewMatrix,
+                view_matrix,
                 (tl[0] - focal[0])*zoom + focal[0],
                 (br[0] - focal[0])*zoom + focal[0],
                 (tl[1] - focal[1])*zoom + focal[1],
@@ -13033,25 +13089,25 @@ requestAnimationFrame(function frame(timestamp) {
         }
 
         /* mouse drag */
-        let dragX = 0, dragY = 0;
+        let drag_x = 0, drag_y = 0;
         if (mouse_down) {
-            dragX += (mouse_x - mouse_down_x)
-            dragY += (mouse_y - mouse_down_y)
+            drag_x += (mouse_x - mouse_down_x)
+            drag_y += (mouse_y - mouse_down_y)
 
             if (mouse_released) {
                 mouse_down = false;
 
-                mat4_mul(viewMatrix, mat4_create_translate(dragX, dragY), viewMatrix);
+                mat4_mul(view_matrix, mat4_create_translate(drag_x, drag_y), view_matrix);
 
-                dragX = dragY = 0;
+                drag_x = drag_y = 0;
             }
         }
 
         /* text rendering wants the pen pixel-aligned, so scale here */
-        /* our pMatrix puts things in 0..1, but everything before that is in pixels */ 
-        // const view = mat4_create_translate(dragX + mouse_x, dragY + mouse_y)
-        view = mat4_create_translate(dragX, dragY)
-        mat4_mul(view, view, viewMatrix);
+        /* our pixel_matrix puts things in 0..1, but everything before that is in pixels */ 
+        // const view = mat4_create_translate(drag_x + mouse_x, drag_y + mouse_y)
+        view = mat4_create_translate(drag_x, drag_y)
+        mat4_mul(view, view, view_matrix);
 
         let mouse_world_x, mouse_world_y;
         {
@@ -13062,13 +13118,13 @@ requestAnimationFrame(function frame(timestamp) {
             mouse_world_y = p[1];
         }
 
-        const fontsize = 64;
-        const fontscale = fontsize * Math.sqrt(view[0]*view[0] + view[1]*view[1]);
+        const labels = new FontBuf([1, 1, 1, 1], 48, view);
+        const expanded_titles = new FontBuf([0, 0, 0, 1], 64, view);
+        const hex_titles = new FontBuf([1, 1, 1, 1], 58, view);
 
         {
             scroll_captured = false;
 
-            // drawText('accelerated instance graph', 0, 0, fontscale, ALIGN_CENTER);
             const spaceCamel = key =>
                 key
                     .split('')
@@ -13115,12 +13171,30 @@ requestAnimationFrame(function frame(timestamp) {
             }
             const adjustedX = layoutMapAxis('x', 400,  800); //1200);
             const adjustedY = layoutMapAxis('y', 500, 1600); //2000);
-            const HEX_SIZE = 400;
+            const HEX_SIZE = 450;
             const EXPANDED_SIZE_X = 1350;
             const EXPANDED_SIZE_Y = 3000;
             /* palette */
             const highlight       = [140, 110, 160, 255];
-            const highlight_hover = [130, 100, 150, 255];
+            hex_to_four_channel(highlight, DOMAIN_INFO[active_domain].color);
+            const highlight_hover = [
+                /* "boy i sure do hope these are in SRGB" - ced
+                 * ...
+                 * "They are not in SRGB." -- narrator */
+                Math.max(highlight[0] - 25, 0),
+                Math.max(highlight[1] - 25, 0),
+                Math.max(highlight[2] - 25, 0),
+                highlight[3]
+            ];
+            const highlight_lines = [
+                /* "boy i sure do hope these are in SRGB" - ced
+                 * ...
+                 * "They are not in SRGB." -- narrator */
+                Math.min(255, highlight[0] + 30),
+                Math.min(255, highlight[1] + 30),
+                Math.min(255, highlight[2] + 30),
+                highlight[3]
+            ];
 
             /* draw lines connecting tables/hexes */
             for (const key in tables) {
@@ -13167,7 +13241,7 @@ requestAnimationFrame(function frame(timestamp) {
                         from_x+out_x*dlen*0.04 , from_y+out_y*dlen*0.20 ,
                           to_x-out_x*dlen*0.08 ,   to_y-out_y*dlen*0.40 , /* control point hits harder going in */
                           to_x-out_x*HEX_RADIUS,   to_y-out_y*HEX_RADIUS, /* assumes hex is 175 radius */
-                        25, [150, 140, 180, 255]
+                        25, highlight_lines
                     )
                 }
             }
@@ -13208,7 +13282,7 @@ requestAnimationFrame(function frame(timestamp) {
                     {
                         pen_y += 40;
                         const pad_x = 40;
-                        const bar_size_y = fontsize*0.6;
+                        const bar_size_y = expanded_titles.fontsize*0.6;
                         const bar_x = pen_x + pad_x;
                         const bar_y = pen_y;
                         drawSquare(
@@ -13225,9 +13299,9 @@ requestAnimationFrame(function frame(timestamp) {
                     {
                         const pad_x = 45;
                         const text_x = pen_x + pad_x;
-                        const text_y = pen_y + fontsize*i++;
-                        drawText(spaceCamel(key), text_x, text_y, fontscale, ALIGN_LEFT);
-                        pen_y = text_y + fontsize*2.5;
+                        const text_y = pen_y + expanded_titles.fontsize*i++;
+                        expanded_titles.drawText(spaceCamel(key), text_x, text_y, ALIGN_LEFT);
+                        pen_y = text_y + expanded_titles.fontsize*2.5;
                         pen_x = text_x;
                     }
 
@@ -13244,7 +13318,7 @@ requestAnimationFrame(function frame(timestamp) {
                         max_y: max_y - scrollbox_bottom_pad,
                     };
 
-                    const rect_size_y = fontsize*1.55;
+                    const rect_size_y = labels.fontsize*1.55;
                     const rect_space_padded = rect_size_y*1.3;
                     const instances_all_max_y = pen_y + rect_space_padded*62; /* TODO: this will change depending on your data */
                     const visible_size_y = clampbox.max_y - clampbox.min_y;
@@ -13279,10 +13353,10 @@ requestAnimationFrame(function frame(timestamp) {
                             );
                             if (i == view_top_row_index && (rect_y - pen_y) < -20) continue;
                             if (i == (view_bottom_row_index-1) && (rect_y + rect_size_y) - (pen_y + visible_size_y) > 20) continue;
-                            drawText(
+                            labels.drawText(
                                 "Instance",
-                                rect_x + rect_size_x/2, rect_y + (rect_size_y - fontsize)*0.7,
-                                fontscale,
+                                rect_x + rect_size_x/2,
+                                rect_y + (rect_size_y - labels.fontsize)*0.7,
                                 ALIGN_CENTER
                             );
                         }
@@ -13314,13 +13388,13 @@ requestAnimationFrame(function frame(timestamp) {
 
                     /* draw "hex" */
                     const color = hover ? highlight_hover : highlight;
-                    drawSquare(min_x, min_y, max_x, max_y, color);
+                    drawHex(min_x, min_y, max_x, max_y, color);
 
                     const words = spaceCamel(key).split(' ');
-                    const word_height = words.length * fontsize;
+                    const word_height = words.length * hex_titles.fontsize;
                     for (const word of words) {
                         const center = ((max_y - min_y) - word_height) * 0.5;
-                        drawText(word, x, min_y + center + fontsize*i++, fontscale, ALIGN_CENTER);
+                        hex_titles.drawText(word, x, min_y + center + hex_titles.fontsize*i++, ALIGN_CENTER);
                     }
                 }
             }
@@ -13337,7 +13411,7 @@ requestAnimationFrame(function frame(timestamp) {
             gl.enableVertexAttribArray(geo_shader.a_pos);
             gl.enableVertexAttribArray(geo_shader.a_color);
 
-            gl.uniformMatrix4fv(geo_shader.u_matrix, false, pMatrix);
+            gl.uniformMatrix4fv(geo_shader.u_matrix, false, pixel_matrix);
 
             /* upload/bind geometry */
 
@@ -13359,16 +13433,16 @@ requestAnimationFrame(function frame(timestamp) {
         }
 
         /* text pass */
-        {
+        for (const font_buf of [labels, expanded_titles, hex_titles]) {
             gl.useProgram(text_shader.program);
             gl.enableVertexAttribArray(text_shader.a_pos);
             gl.enableVertexAttribArray(text_shader.a_uv);
 
             const gamma = 2;
-            gl.uniformMatrix4fv(text_shader.u_matrix, false, pMatrix);
-            gl.uniform4fv(text_shader.u_color, [0, 0, 0, 1]);
+            gl.uniformMatrix4fv(text_shader.u_matrix, false, pixel_matrix);
+            gl.uniform4fv(text_shader.u_color, font_buf.color);
             gl.uniform1f(text_shader.u_buffer, 0.75);
-            gl.uniform1f(text_shader.u_gamma, gamma * 1.4142 / fontscale);
+            gl.uniform1f(text_shader.u_gamma, gamma * 1.4142 / font_buf.fontscale);
 
             /* bind tex */
             {
@@ -13378,10 +13452,10 @@ requestAnimationFrame(function frame(timestamp) {
             }
 
             /* upload/bind geometry */
-            const vbuf_count = text_verts.length / 4;
+            const vbuf_count = font_buf.text_verts.length / 4;
             {
                 gl.bindBuffer(gl.ARRAY_BUFFER, text_vbuf);
-                gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(text_verts), gl.STATIC_DRAW);
+                gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(font_buf.text_verts), gl.STATIC_DRAW);
 
                 gl.bindBuffer(gl.ARRAY_BUFFER, text_vbuf);
                 gl.vertexAttribPointer(
