@@ -12,12 +12,25 @@
     <canvas id="inspectorGraphCanvas"></canvas>
     <script>
 /*
- * [ ] reuse gpu buffers 'cross frames (geo abstraction)
+ * [ ] reuse arrays + gpu buffers 'cross frames (geo abstraction)
  * [ ] don't invert mat4 in drawText
  * [ ] have frame ring buffer for scratch mats (avoid heap alloc/frame)
  * [ ] index-ify text renderer
  * [ ] re-work shader loading so compilation can be parallelized
  * [ ] use VAOs
+ *
+ * [ ] arrows on the ends of lines
+ * [ ] lines that actually leave their boxes
+ * [ ] cola animations
+ *
+ * [ ] get second hex tones to lerp to from the original SVGs instead of just going "lighter"
+ *
+ * [ ] drop shadows for buttons composited over expanded hex backgrounds
+ * [ ] constant world-space drop shadows
+ *
+ * [ ] lines between guys
+ *
+ * [ ] integration into existing app
  */
 
 function getZoomedHexagonPositions(domain) {
@@ -12259,7 +12272,7 @@ const sdfs = {};
 /* higher number = prettier text using more VRAM */
 const SDF_FONT_SIZE = 32;
 
-const updateSDF = (() => {
+const update_sdf = (() => {
 
     const chars = ' abcdefghijklmnopqrstuvwxyzZABCDEFGHIJKLMNOPQRSTUVWXYZ!@#$%^&*()1234567890<,>./?;:\'"\\|{}[]-=_+';
     const fontCanvas = document.createElement('canvas');
@@ -12275,7 +12288,7 @@ const updateSDF = (() => {
                 buffer = 3,
                 radius = 8,
                 cutoff = 0.25,
-                fontFamily = 'Avenir Next',
+                fontFamily = 'sans-serif',
                 fontWeight = 'normal',
                 fontStyle = 'normal'
             } = {}) {
@@ -12413,7 +12426,7 @@ const updateSDF = (() => {
         return TinySDF
     })()
 
-    return async function updateSDF(font) {
+    return async function update_sdf(sdfs, font_name, font) {
         // Convert alpha-only to RGBA so we can use `putImageData` for building the composite bitmap
         function makeRGBAImageData(alphaChannel, width, height) {
             const imageData = ctx.createImageData(width, height);
@@ -12433,7 +12446,7 @@ const updateSDF = (() => {
         document.fonts.add(font);
 
         const fontSize = +SDF_FONT_SIZE;
-        const fontFamily = "GraphCanvasFont";
+        const fontFamily = font_name;
         const buffer = Math.ceil(fontSize / 8);
         const radius = Math.ceil(fontSize / 3);
         const sdf = new TinySDF({fontSize, buffer, radius, fontFamily});
@@ -12751,7 +12764,17 @@ window.onmouseup = e => {
     mouse_y = e.clientY*window.devicePixelRatio;
 }
 
-const texture = gl.createTexture();
+const labels_gl_font_face = {
+    texture: gl.createTexture(),
+    sdfs: {},
+    font_image_dimensions: { width: 0, height: 0 }
+}
+
+const hex_titles_gl_font_face = {
+    texture: gl.createTexture(),
+    sdfs: {},
+    font_image_dimensions: { width: 0, height: 0 }
+}
 
 const text_vbuf = gl.createBuffer();
 const geo_vbuf_pos = gl.createBuffer();
@@ -12864,8 +12887,8 @@ uniform vec4 u_color;
 in vec2 v_uv;
 
 #define LIGHT_POSITION      vec2(-1.3, 2.2)
-#define DIFFUSE_INTENSITY   ( 0.30)
-#define DIFFUSE_LOWER_BOUND (-0.05)
+#define DIFFUSE_INTENSITY   ( 0.35)
+#define DIFFUSE_LOWER_BOUND (-0.08)
 
 #define NORMAL_SDF_ROUND    (4.065)
 #define INSIDE_SDF_ROUND    (1.065)
@@ -12999,10 +13022,27 @@ void main(void) {
     fullscreen_shader = createProgram(gl, vs_fullscreen, fs_fullscreen);
 }
 
-/* upload new SDF to texture */
+/* upload new SDF to font_texture_* */
 {
     gl.useProgram(text_shader.program);
-    const font = new FontFace(
+
+    function prepare_font(font_name, font, gl_font_face) {
+        update_sdf(gl_font_face.sdfs, font_name, font).then(sdf_image => {
+            const sdf_bytes = new Uint8Array(sdf_image.data)
+
+            gl_font_face.font_image_dimensions.width = sdf_image.width;
+            gl_font_face.font_image_dimensions.height = sdf_image.height;
+
+            gl.bindTexture(gl.TEXTURE_2D, gl_font_face.texture);
+            gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, sdf_image.width, sdf_image.height, 0, gl.RGBA, gl.UNSIGNED_BYTE, sdf_bytes);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+        });
+    }
+
+    const font_hex_title = new FontFace(
         "GraphCanvasFont",
         "url(AvenirNext_Variable.ttf)",
         {
@@ -13010,25 +13050,21 @@ void main(void) {
             weight: "630"
         }
     );
-    updateSDF(font).then(sdf_image => {
-        // sdfs[' '].width = sdfs['w'].width;
-        const sdf_bytes = new Uint8Array(sdf_image.data)
 
-        gl.bindTexture(gl.TEXTURE_2D, texture);
-        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, sdf_image.width, sdf_image.height, 0, gl.RGBA, gl.UNSIGNED_BYTE, sdf_bytes);
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    const font_labels = new FontFace(
+        "GraphLabelFont",
+        "url(AvenirNext_Variable.ttf)",
+        { weight: "bold" }
+    );
 
-        gl.uniform2f(text_shader.u_texsize, sdf_image.width, sdf_image.height);
-    });
+    prepare_font("GraphCanvasFont", font_hex_title, hex_titles_gl_font_face);
+    prepare_font("GraphLabelFont" , font_labels, labels_gl_font_face);
 }
 
 const ALIGN_LEFT = 0;
 const ALIGN_CENTER = 1;
 class FontBuf {
-    constructor(color, fontsize, view) {
+    constructor(color, fontsize, view, gl_font_face) {
         /* fontscale is in "world size" (e.g. doesn't change by how much you zoom) and is
          * stored here to be used in the layouting of UI widgets */ 
         this.fontsize = fontsize;
@@ -13036,6 +13072,12 @@ class FontBuf {
         /* fontscale is in final screen pixels (e.g. changes if you zoom) and is
          * stored here to be used in the rendering of your texct */ 
         this.fontscale = fontsize * Math.sqrt(view[0]*view[0] + view[1]*view[1]);
+
+        this.gl_texture = gl_font_face.texture;
+        this.sdfs = gl_font_face.sdfs;
+        this.font_image_dimensions = gl_font_face.font_image_dimensions;
+
+        this.extra_letter_spacing = 0;
 
         this.color = color;
 
@@ -13045,6 +13087,8 @@ class FontBuf {
     }
 
     drawText(str, world_x, world_y, align = ALIGN_LEFT) {
+        const sdfs = this.sdfs;
+
         const pos = [world_x, world_y, 0, 1]
         mat4_transform_vec4(pos, pos, this.view);
         const x = Math.round(pos[0]);
@@ -13059,16 +13103,18 @@ class FontBuf {
         const scale = this.fontscale / fontsize;
         const lineWidth = str.length * fontsize * scale;
 
+        const extra = this.extra_letter_spacing;
+
         const pen = { x, y };
         if (align == ALIGN_CENTER) {
-            pen.x -= (str.split('').reduce((a, c) => a + ((c in sdfs) ? sdfs[c].glyph.glyphAdvance : 0), 0) / 2) * scale;
+            pen.x -= (str.split('').reduce((a, c) => a + ((c in sdfs) ? (sdfs[c].glyph.glyphAdvance + extra) : 0), 0) / 2) * scale;
         }
         for (let i = 0; i < str.length; i++) {
             if (!(str[i] in sdfs)) continue;
 
             const pos_x = sdfs[str[i]].x; // pos in sprite x
             const pos_y = sdfs[str[i]].y; // pos in sprite y
-            const advance = sdfs[str[i]].glyph.glyphAdvance;
+            const advance = sdfs[str[i]].glyph.glyphAdvance + extra;
             const by = sdfs[str[i]].glyph.glyphTop - (fontsize / 2 + buf); // bearing y
 
             this.text_verts.push(
@@ -13345,9 +13391,10 @@ requestAnimationFrame(function frame(timestamp) {
             mouse_world_y = p[1];
         }
 
-        const labels = new FontBuf([1, 1, 1, 1], 38, view);
-        const expanded_titles = new FontBuf([0, 0, 0, 1], 50, view);
-        const hex_titles = new FontBuf([1, 1, 1, 1], 58, view);
+        const labels = new FontBuf([1, 1, 1, 1], 34, view,              labels_gl_font_face);
+        labels.extra_letter_spacing = 2;
+        const expanded_titles = new FontBuf([0, 0, 0, 1], 50, view, hex_titles_gl_font_face);
+        const hex_titles = new FontBuf([1, 1, 1, 1], 58, view,      hex_titles_gl_font_face);
 
         if (0) {
             button_aspect_ratio = 2400 / 800;
@@ -13557,7 +13604,7 @@ requestAnimationFrame(function frame(timestamp) {
                     };
 
                     const outline_thickness = 6;
-                    const rect_size_y = labels.fontsize*2.35;
+                    const rect_size_y = labels.fontsize*3.15;
                     const rect_space_padded = rect_size_y*1.2;
                     const instances_all_max_y = pen_y + rect_space_padded*62; /* TODO: this will change depending on your data */
                     const visible_size_y = clampbox.max_y - clampbox.min_y;
@@ -13604,7 +13651,7 @@ requestAnimationFrame(function frame(timestamp) {
                             if (i == view_top_row_index && (rect_y - pen_y) < -20) continue;
                             if (i == (view_bottom_row_index-1) && (rect_y + rect_size_y) - (pen_y + visible_size_y) > 20) continue;
                             labels.drawText(
-                                "instanceProperty",
+                                "zoneID",
                                 rect_x + rect_size_x/2,
                                 rect_y + (rect_size_y - labels.fontsize)*0.6,
                                 ALIGN_CENTER
@@ -13788,11 +13835,12 @@ requestAnimationFrame(function frame(timestamp) {
                 gl.uniform4fv(text_shader.u_color, font_buf.color);
                 gl.uniform1f(text_shader.u_buffer, 0.75);
                 gl.uniform1f(text_shader.u_gamma, gamma * 1.4142 / font_buf.fontscale);
+                gl.uniform2f(text_shader.u_texsize, font_buf.font_image_dimensions.width, font_buf.font_image_dimensions.height);
 
                 /* bind tex */
                 {
                     gl.activeTexture(gl.TEXTURE0);
-                    gl.bindTexture(gl.TEXTURE_2D, texture);
+                    gl.bindTexture(gl.TEXTURE_2D, font_buf.gl_texture);
                     gl.uniform1i(text_shader.u_texture, 0);
                 }
 
