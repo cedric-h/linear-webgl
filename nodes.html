@@ -12275,7 +12275,7 @@ const updateSDF = (() => {
                 buffer = 3,
                 radius = 8,
                 cutoff = 0.25,
-                fontFamily = 'sans-serif',
+                fontFamily = 'Avenir Next',
                 fontWeight = 'normal',
                 fontStyle = 'normal'
             } = {}) {
@@ -12413,7 +12413,7 @@ const updateSDF = (() => {
         return TinySDF
     })()
 
-    return function updateSDF() {
+    return async function updateSDF(font) {
         // Convert alpha-only to RGBA so we can use `putImageData` for building the composite bitmap
         function makeRGBAImageData(alphaChannel, width, height) {
             const imageData = ctx.createImageData(width, height);
@@ -12429,12 +12429,14 @@ const updateSDF = (() => {
         const charWidths = Array.from({ length: chars.length }, _ => 0);
 
         ctx.clearRect(0, 0, fontCanvas.width, fontCanvas.height);
+        await font.load();
+        document.fonts.add(font);
+
         const fontSize = +SDF_FONT_SIZE;
-        const fontWeight = +SDF_FONT_SIZE;
-        const fontStyle = 'normal';
+        const fontFamily = "GraphCanvasFont";
         const buffer = Math.ceil(fontSize / 8);
         const radius = Math.ceil(fontSize / 3);
-        const sdf = new TinySDF({fontSize, buffer, radius, fontWeight, fontStyle});
+        const sdf = new TinySDF({fontSize, buffer, radius, fontFamily});
         const size = fontSize + buffer * 2;
 
         const now = performance.now();
@@ -12449,10 +12451,10 @@ const updateSDF = (() => {
                 i++;
             }
         }
-        console.log(`${i} characters (${fontSize}px, font-weight: ${fontWeight} with ${buffer}px buffer) rendered in ${Math.round(performance.now() - now)}ms.`)
+        console.log(`${i} characters (${fontSize}px, with ${buffer}px buffer) rendered in ${Math.round(performance.now() - now)}ms.`)
 
         return ctx.getImageData(0, 0, fontCanvas.width, fontCanvas.height)
-    }
+    };
 })()
 
 function hex_to_four_channel(out, hex_str) {
@@ -12755,9 +12757,12 @@ const text_vbuf = gl.createBuffer();
 const geo_vbuf_pos = gl.createBuffer();
 const geo_vbuf_color = gl.createBuffer();
 const geo_ibuf = gl.createBuffer();
+const button_vbuf_pos = gl.createBuffer();
+const button_vbuf_uv = gl.createBuffer();
+const button_ibuf = gl.createBuffer();
 
 
-let text_shader, geo_shader, fullscreen_shader;
+let text_shader, geo_shader, button_shader, fullscreen_shader;
 /* compile shaders */
 {
     const vs_text = `
@@ -12833,6 +12838,96 @@ let text_shader, geo_shader, fullscreen_shader;
         }
     `;
 
+    const vs_button = `#version 300 es
+        precision mediump float;
+
+        in vec3 a_pos;
+        in vec2 a_uv;
+
+        out vec2 v_uv;
+
+        uniform mat4 u_matrix;
+        uniform float u_aspect_ratio;
+
+        void main() {
+            v_uv = a_uv * vec2(u_aspect_ratio, 1.0);
+            gl_Position = u_matrix * vec4(a_pos.xyz, 1);
+        }`;
+
+
+    const fs_button = `#version 300 es
+
+precision mediump float;
+
+uniform float u_aspect_ratio;
+uniform vec4 u_color;
+in vec2 v_uv;
+
+#define LIGHT_POSITION      vec2(-1.3, 2.2)
+#define DIFFUSE_INTENSITY   ( 0.30)
+#define DIFFUSE_LOWER_BOUND (-0.05)
+
+#define NORMAL_SDF_ROUND    (4.065)
+#define INSIDE_SDF_ROUND    (1.065)
+#define SIZE                (1.000)
+
+float sdRoundBox(in vec2 p, in vec2 b, in vec4 r, in vec2 ar) {
+    r.xy = (p.x>0.0)?r.xy : r.zw;
+    r.x  = (p.y>0.0)?r.x  : r.y;
+
+    r.xy /= ar;
+
+    vec2 q = abs(p)-b+r.x;
+    return min(max(q.x,q.y),0.0) + length(max(q,0.0)) - r.x;
+}
+
+vec4 fromLinear(vec4 linearRGB) {
+    bvec3 cutoff = lessThan(linearRGB.rgb, vec3(0.0031308));
+    vec3 higher = vec3(1.055)*pow(linearRGB.rgb, vec3(1.0/2.4)) - vec3(0.055);
+    vec3 lower = linearRGB.rgb * vec3(12.92);
+
+    return vec4(mix(higher, lower, cutoff), linearRGB.a);
+}
+vec3 toLinear(vec3 sRGB) {
+    bvec3 cutoff = lessThan(sRGB.rgb, vec3(0.04045));
+    vec3 higher = pow((sRGB.rgb + vec3(0.055))/vec3(1.055), vec3(2.4));
+    vec3 lower = sRGB.rgb/vec3(12.92);
+
+    return mix(higher, lower, cutoff);
+}
+
+float normalSDF(vec2 p) {  return sdRoundBox(p, SIZE*vec2(u_aspect_ratio, 1.0), vec4(NORMAL_SDF_ROUND), vec2(u_aspect_ratio, 1.0)); }
+float insideSDF(vec2 p) {  return sdRoundBox(p, SIZE*vec2(u_aspect_ratio, 1.0), vec4(INSIDE_SDF_ROUND), vec2(u_aspect_ratio, 1.0)); }
+
+vec3 normal(vec2 p){
+	vec2 e = vec2(-1,1) * 0.00001;
+	return vec3(
+        normalize(
+            e.xy * normalSDF(p + e.xy) +
+            e.yx * normalSDF(p + e.yx) +
+            e.yy * normalSDF(p + e.yy) +
+            e.xx * normalSDF(p + e.xx) ),
+        0.5*sqrt(1.0-normalSDF(p))
+    );
+}
+
+out vec4 frag_color;
+ 
+void main(void) {
+    vec3 col = toLinear(u_color.rgb);
+    float inside = smoothstep(-0.6, -0.05, insideSDF(v_uv));
+
+    vec2 ar = vec2(u_aspect_ratio, 1.0);
+
+    vec3 to_light = normalize(vec3(LIGHT_POSITION - v_uv, 3.0));
+    vec3 N = normal(v_uv);
+    float specular = 0.105*pow(clamp(dot(reflect(-to_light, N), normalize(vec3(-2000.0, 500.0, 4.0))), 0.0, 1.0), 10.0);
+    float diffuse = DIFFUSE_INTENSITY * max(DIFFUSE_LOWER_BOUND, dot(to_light, N));
+    col.xyz += vec3((specular + diffuse) * inside + 0.05*(1.0 - inside));
+
+	frag_color = fromLinear(vec4(col,1.0));
+}`
+
 
     const vs_geo = `
         attribute vec3 a_pos;
@@ -12900,24 +12995,34 @@ let text_shader, geo_shader, fullscreen_shader;
 
     text_shader = createProgram(gl, vs_text, fs_text);
     geo_shader = createProgram(gl, vs_geo, fs_geo);
+    button_shader = createProgram(gl, vs_button, fs_button);
     fullscreen_shader = createProgram(gl, vs_fullscreen, fs_fullscreen);
 }
 
 /* upload new SDF to texture */
 {
     gl.useProgram(text_shader.program);
-    const sdf_image = updateSDF();
-    // sdfs[' '].width = sdfs['w'].width;
-    const sdf_bytes = new Uint8Array(sdf_image.data)
+    const font = new FontFace(
+        "GraphCanvasFont",
+        "url(AvenirNext_Variable.ttf)",
+        {
+            stretch: "75%",
+            weight: "630"
+        }
+    );
+    updateSDF(font).then(sdf_image => {
+        // sdfs[' '].width = sdfs['w'].width;
+        const sdf_bytes = new Uint8Array(sdf_image.data)
 
-    gl.bindTexture(gl.TEXTURE_2D, texture);
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, sdf_image.width, sdf_image.height, 0, gl.RGBA, gl.UNSIGNED_BYTE, sdf_bytes);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+        gl.bindTexture(gl.TEXTURE_2D, texture);
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, sdf_image.width, sdf_image.height, 0, gl.RGBA, gl.UNSIGNED_BYTE, sdf_bytes);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
 
-    gl.uniform2f(text_shader.u_texsize, sdf_image.width, sdf_image.height);
+        gl.uniform2f(text_shader.u_texsize, sdf_image.width, sdf_image.height);
+    });
 }
 
 const ALIGN_LEFT = 0;
@@ -12956,9 +13061,11 @@ class FontBuf {
 
         const pen = { x, y };
         if (align == ALIGN_CENTER) {
-            pen.x -= (str.split('').reduce((a, c) => a + sdfs[c].glyph.glyphAdvance, 0) / 2) * scale;
+            pen.x -= (str.split('').reduce((a, c) => a + ((c in sdfs) ? sdfs[c].glyph.glyphAdvance : 0), 0) / 2) * scale;
         }
         for (let i = 0; i < str.length; i++) {
+            if (!(str[i] in sdfs)) continue;
+
             const pos_x = sdfs[str[i]].x; // pos in sprite x
             const pos_y = sdfs[str[i]].y; // pos in sprite y
             const advance = sdfs[str[i]].glyph.glyphAdvance;
@@ -12997,9 +13104,14 @@ requestAnimationFrame(function frame(timestamp) {
     const geo_pos = [];
     const geo_color = [];
 
+    let button_aspect_ratio = 0;
+    const button_pos = [];
+    const button_uv  = [];
+    const button_idx = [];
+
     let view;
 
-    function drawSquare( min_x, min_y,   max_x, max_y,   color ) {
+    function drawBox( min_x, min_y,   max_x, max_y,   color ) {
         geo_color.push(
             color[0], color[1], color[2], color[3],
             color[0], color[1], color[2], color[3],
@@ -13016,16 +13128,63 @@ requestAnimationFrame(function frame(timestamp) {
 
         geo_idx.push(vbuf_i + 0, vbuf_i + 1, vbuf_i + 2, vbuf_i + 2, vbuf_i + 3, vbuf_i + 0);
     }
-    function drawHex( min_x, min_y,   max_x, max_y,   color ) {
-        geo_color.push(
-            color[0], color[1], color[2], color[3],
-            color[0], color[1], color[2], color[3],
-            color[0], color[1], color[2], color[3],
-            color[0], color[1], color[2], color[3],
-            color[0], color[1], color[2], color[3],
-            color[0], color[1], color[2], color[3],
-            color[0], color[1], color[2], color[3]
-        )
+    function drawBoxClamped(clampbox, min_x, min_y,   max_x, max_y,   color) {
+        min_x = clamp(clampbox.min_x, min_x, clampbox.max_x);
+        max_x = clamp(clampbox.min_x, max_x, clampbox.max_x);
+        min_y = clamp(clampbox.min_y, min_y, clampbox.max_y);
+        max_y = clamp(clampbox.min_y, max_y, clampbox.max_y);
+
+        drawBox(min_x, min_y,   max_x, max_y,  color);
+    }
+    function drawButton( min_x, min_y,   max_x, max_y) {
+        const vbuf_i = button_pos.length / 3;
+        const p = [0, 0, 0, 1];
+        p[0] = max_x; p[1] = min_y; mat4_transform_vec4(p, p, view); button_pos.push(p[0], p[1], 0.1);
+        p[0] = min_x; p[1] = min_y; mat4_transform_vec4(p, p, view); button_pos.push(p[0], p[1], 0.1);
+        p[0] = min_x; p[1] = max_y; mat4_transform_vec4(p, p, view); button_pos.push(p[0], p[1], 0.1);
+        p[0] = max_x; p[1] = max_y; mat4_transform_vec4(p, p, view); button_pos.push(p[0], p[1], 0.1);
+
+        button_uv.push( 1.0,  1.0)
+        button_uv.push(-1.0,  1.0)
+        button_uv.push(-1.0, -1.0)
+        button_uv.push( 1.0, -1.0)
+
+        button_idx.push(vbuf_i + 0, vbuf_i + 1, vbuf_i + 2, vbuf_i + 2, vbuf_i + 3, vbuf_i + 0);
+    }
+    function drawButtonClamped(clampbox, min_x, min_y,   max_x, max_y) {
+        min_x = clamp(clampbox.min_x, min_x, clampbox.max_x);
+        max_x = clamp(clampbox.min_x, max_x, clampbox.max_x);
+        min_y = clamp(clampbox.min_y, min_y, clampbox.max_y);
+        max_y = clamp(clampbox.min_y, max_y, clampbox.max_y);
+
+        drawButton(min_x, min_y,   max_x, max_y);
+    }
+    function drawHex( min_x, min_y,   max_x, max_y,   color,  gradient ) {
+        {
+            const g = +(!!gradient);
+            if (1) {
+                geo_color.push(
+                    Math.min(255, color[0] + 15*g), Math.min(255, color[1] + 15*g), Math.min(255, color[2] + 15*g), color[3],
+                    Math.min(255, color[0] +  0*g), Math.min(255, color[1] +  0*g), Math.min(255, color[2] +  0*g), color[3],
+                    Math.min(255, color[0] + 30*g), Math.min(255, color[1] + 30*g), Math.min(255, color[2] + 30*g), color[3],
+                    Math.min(255, color[0] + 35*g), Math.min(255, color[1] + 35*g), Math.min(255, color[2] + 35*g), color[3],
+                    Math.min(255, color[0] + 45*g), Math.min(255, color[1] + 45*g), Math.min(255, color[2] + 45*g), color[3],
+                    Math.min(255, color[0] +  0*g), Math.min(255, color[1] +  0*g), Math.min(255, color[2] +  0*g), color[3],
+                    Math.min(255, color[0] +  0*g), Math.min(255, color[1] +  0*g), Math.min(255, color[2] +  0*g), color[3]
+                );
+            } else {
+                /* sometimes i just don't want to look at those gawd-awful gradients */
+                geo_color.push(
+                    color[0], color[1], color[2], color[3],
+                    color[0], color[1], color[2], color[3],
+                    color[0], color[1], color[2], color[3],
+                    color[0], color[1], color[2], color[3],
+                    color[0], color[1], color[2], color[3],
+                    color[0], color[1], color[2], color[3],
+                    color[0], color[1], color[2], color[3]
+                );
+            }
+        }
 
         const vbuf_i = geo_pos.length / 3;
         const p = [0, 0, 0, 1];
@@ -13045,14 +13204,6 @@ requestAnimationFrame(function frame(timestamp) {
             vbuf_i + 0, vbuf_i + 5, vbuf_i + 6,
             vbuf_i + 0, vbuf_i + 6, vbuf_i + 1,
         );
-    }
-    function drawSquareClamped( clampbox, min_x, min_y,   max_x, max_y,   color ) {
-        min_x = clamp(clampbox.min_x, min_x, clampbox.max_x);
-        max_x = clamp(clampbox.min_x, max_x, clampbox.max_x);
-        min_y = clamp(clampbox.min_y, min_y, clampbox.max_y);
-        max_y = clamp(clampbox.min_y, max_y, clampbox.max_y);
-
-        drawSquare( min_x, min_y,   max_x, max_y,   color );
     }
     function drawLine( a_x, a_y,   b_x, b_y,  thickness,  color ) {
         const dx = b_x - a_x;
@@ -13194,9 +13345,19 @@ requestAnimationFrame(function frame(timestamp) {
             mouse_world_y = p[1];
         }
 
-        const labels = new FontBuf([1, 1, 1, 1], 48, view);
-        const expanded_titles = new FontBuf([0, 0, 0, 1], 64, view);
+        const labels = new FontBuf([1, 1, 1, 1], 38, view);
+        const expanded_titles = new FontBuf([0, 0, 0, 1], 50, view);
         const hex_titles = new FontBuf([1, 1, 1, 1], 58, view);
+
+        if (0) {
+            button_aspect_ratio = 2400 / 800;
+            drawButtonClamped(
+                { min_x: -3200+400, min_y: -400+400,
+                  max_x:  3200+400, max_y:  400+400 },
+                         -3200+400,        -400+400,
+                          3200+400,         400+400,
+            );
+        }
 
         {
             scroll_captured = false;
@@ -13251,21 +13412,22 @@ requestAnimationFrame(function frame(timestamp) {
             const EXPANDED_SIZE_X = 1350;
             const EXPANDED_SIZE_Y = 3000;
             /* palette */
-            const highlight       = [140, 110, 160, 255];
+            const bone = [235, 235, 235, 255];
+            const highlight = [0, 0, 0, 255];
             hex_to_four_channel(highlight, DOMAIN_INFO[active_domain].color);
             const highlight_hover = [
-                /* "boy i sure do hope these are in SRGB" - ced
+                /* "boy i sure do hope these are in Linear, not SRGB" - ced
                  * ...
-                 * "They are not in SRGB." -- narrator */
+                 * "They are in SRGB." -- narrator */
                 Math.max(highlight[0] - 25, 0),
                 Math.max(highlight[1] - 25, 0),
                 Math.max(highlight[2] - 25, 0),
                 highlight[3]
             ];
             const highlight_lines = [
-                /* "boy i sure do hope these are in SRGB" - ced
+                /* "boy i sure do hope these are in Linear, not SRGB" - ced
                  * ...
-                 * "They are not in SRGB." -- narrator */
+                 * "They are in SRGB." -- narrator */
                 Math.min(255, highlight[0] + 30),
                 Math.min(255, highlight[1] + 30),
                 Math.min(255, highlight[2] + 30),
@@ -13349,8 +13511,8 @@ requestAnimationFrame(function frame(timestamp) {
                 let i = 0;
                 if (expanded) {
                     /* draw base outine */
-                    const color = hover ? [188, 188, 188, 255] : [195, 195, 195, 255];
-                    drawSquare(min_x, min_y, max_x, max_y, color);
+                    const color = hover ? [208+4, 208+4, 208, 255] : [215+4, 215+4, 215, 255];
+                    drawBox(min_x, min_y, max_x, max_y, color);
 
                     let pen_x = x - size_x/2;
                     let pen_y = min_y;
@@ -13361,7 +13523,7 @@ requestAnimationFrame(function frame(timestamp) {
                         const bar_size_y = expanded_titles.fontsize*0.6;
                         const bar_x = pen_x + pad_x;
                         const bar_y = pen_y;
-                        drawSquare(
+                        drawBox(
                             bar_x,
                             bar_y,
                             bar_x + (EXPANDED_SIZE_X - pad_x*3),
@@ -13382,8 +13544,8 @@ requestAnimationFrame(function frame(timestamp) {
                     }
 
                     /* instances */
-                    const instance_width = 370;
-                    const instance_pad_x = 45;
+                    const instance_width = 378;
+                    const instance_pad_x = 32;
                     const instances_all_max_x = pen_x + 3*(instance_width + instance_pad_x) - instance_pad_x;
 
                     const scrollbox_bottom_pad = 45;
@@ -13394,10 +13556,13 @@ requestAnimationFrame(function frame(timestamp) {
                         max_y: max_y - scrollbox_bottom_pad,
                     };
 
-                    const rect_size_y = labels.fontsize*1.55;
-                    const rect_space_padded = rect_size_y*1.3;
+                    const outline_thickness = 6;
+                    const rect_size_y = labels.fontsize*2.35;
+                    const rect_space_padded = rect_size_y*1.2;
                     const instances_all_max_y = pen_y + rect_space_padded*62; /* TODO: this will change depending on your data */
                     const visible_size_y = clampbox.max_y - clampbox.min_y;
+
+                    button_aspect_ratio = (instance_width - 2.0*outline_thickness) / (rect_size_y - 2.0*outline_thickness);
 
                     if (hover) {
                         scroll_captured = true;
@@ -13421,18 +13586,27 @@ requestAnimationFrame(function frame(timestamp) {
                             const rect_size_x = instance_width;
                             const rect_x = pen_x + row*(rect_size_x + instance_pad_x);
                             let rect_y = pen_y + i*rect_space_padded - expanded.scroll;
-                            drawSquareClamped(
+                            drawBoxClamped(
                                 clampbox,
-                                rect_x, rect_y,
-                                rect_x + rect_size_x, rect_y + rect_size_y,
-                                highlight
+                                rect_x,
+                                rect_y,
+                                rect_x + rect_size_x,
+                                rect_y + rect_size_y,
+                                [245, 245, 245, 255]
+                            );
+                            drawButtonClamped(
+                                clampbox,
+                                rect_x + outline_thickness,
+                                rect_y + outline_thickness,
+                                rect_x + rect_size_x - outline_thickness,
+                                rect_y + rect_size_y - outline_thickness
                             );
                             if (i == view_top_row_index && (rect_y - pen_y) < -20) continue;
                             if (i == (view_bottom_row_index-1) && (rect_y + rect_size_y) - (pen_y + visible_size_y) > 20) continue;
                             labels.drawText(
-                                "Instance",
+                                "instanceProperty",
                                 rect_x + rect_size_x/2,
-                                rect_y + (rect_size_y - labels.fontsize)*0.7,
+                                rect_y + (rect_size_y - labels.fontsize)*0.6,
                                 ALIGN_CENTER
                             );
                         }
@@ -13451,7 +13625,7 @@ requestAnimationFrame(function frame(timestamp) {
                         const scrollbar_min_y = pen_y + scrollbar_offset_y;
                         const scrollbar_max_y = pen_y + scrollbar_offset_y + scrollbar_size_y;
 
-                        drawSquare(
+                        drawBox(
                             instances_all_max_x + 30,
                             scrollbar_min_y,
                             instances_all_max_x + 30 + 40,
@@ -13464,7 +13638,8 @@ requestAnimationFrame(function frame(timestamp) {
 
                     /* draw "hex" */
                     const color = hover ? highlight_hover : highlight;
-                    drawHex(min_x, min_y, max_x, max_y, color);
+                    drawHex(min_x-17, min_y-17, max_x+17, max_y+17, bone, false);
+                    drawHex(min_x   , min_y   , max_x   , max_y   , color, true);
 
                     const words = spaceCamel(key).split(' ');
                     const word_height = words.length * hex_titles.fontsize;
@@ -13487,7 +13662,7 @@ requestAnimationFrame(function frame(timestamp) {
             gl.enableVertexAttribArray(geo_shader.a_color);
 
             gl.uniformMatrix4fv(geo_shader.u_matrix, false, pixel_matrix);
-            gl.uniform4fv(geo_shader.u_color, color);
+            gl.uniform4f(geo_shader.u_color, color[0], color[1], color[2], color[3]);
 
             /* upload/bind geometry */
 
@@ -13561,6 +13736,46 @@ requestAnimationFrame(function frame(timestamp) {
 
             /* geo pass */
             geoPass([1, 1, 1, 1]);
+
+            /* button pass */
+            {
+                gl.useProgram(button_shader.program);
+                gl.enableVertexAttribArray(button_shader.a_pos);
+                gl.enableVertexAttribArray(button_shader.a_color);
+
+                gl.uniformMatrix4fv(button_shader.u_matrix, false, pixel_matrix);
+                gl.uniform1f(button_shader.u_aspect_ratio, button_aspect_ratio);
+                {
+                    const highlight = [0, 0, 0, 255];
+                    hex_to_four_channel(highlight, DOMAIN_INFO[active_domain].color);
+                    gl.uniform4f(
+                        button_shader.u_color,
+                        highlight[0] / 255,
+                        highlight[1] / 255,
+                        highlight[2] / 255,
+                        highlight[3] / 255
+                    );
+                }
+
+                /* upload/bind geometry */
+
+                let vbuf_count = 3;
+                {
+                    gl.bindBuffer(gl.ARRAY_BUFFER, button_vbuf_pos);
+                    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(button_pos), gl.STATIC_DRAW);
+                    gl.vertexAttribPointer(button_shader.a_pos, 3, gl.FLOAT, false, 0, 0);
+
+                    gl.bindBuffer(gl.ARRAY_BUFFER, button_vbuf_uv);
+                    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(button_uv), gl.STATIC_DRAW);
+                    gl.vertexAttribPointer(button_shader.a_uv, 2, gl.FLOAT, false, 0, 0);
+
+                    gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, button_ibuf);
+                    gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, new Uint16Array(button_idx), gl.STATIC_DRAW);
+                }
+
+                gl.drawElements(gl.TRIANGLES, button_idx.length, gl.UNSIGNED_SHORT, 0);
+            }
+
 
             /* text pass */
             for (const font_buf of [labels, expanded_titles, hex_titles]) {
