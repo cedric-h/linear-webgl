@@ -19,9 +19,9 @@
  * [ ] re-work shader loading so compilation can be parallelized
  * [ ] use VAOs
  *
- * [ ] arrows on the ends of lines
- * [ ] lines that actually leave their boxes
- * [ ] cola animations
+ * [x] lines that actually leave their boxes
+ * [x] arrows on the ends of lines
+ * [x] cola animations
  *
  * [ ] get second hex tones to lerp to from the original SVGs instead of just going "lighter"
  *
@@ -12277,7 +12277,7 @@ const update_sdf = (() => {
     const chars = ' abcdefghijklmnopqrstuvwxyzZABCDEFGHIJKLMNOPQRSTUVWXYZ!@#$%^&*()1234567890<,>./?;:\'"\\|{}[]-=_+';
     const fontCanvas = document.createElement('canvas');
     fontCanvas.width = fontCanvas.height = 512
-    const ctx = fontCanvas.getContext('2d');
+    const ctx = fontCanvas.getContext('2d', { willReadFrequently: true });
 
     const TinySDF = (() => {
         const INF = 1e20;
@@ -12476,6 +12476,18 @@ function hex_to_four_channel(out, hex_str) {
     out[0] = (hex >> 16) & 0xff;
     out[1] = (hex >>  8) & 0xff;
     out[2] = (hex >>  0) & 0xff;
+}
+/**
+ * https://easings.net/#easeOutElastic
+ */
+function ease_out_elastic(x) {
+    const c4 = (2 * Math.PI) / 3;
+
+    return x === 0
+        ? 0
+        : x === 1
+        ? 1
+        : Math.pow(2, -10 * x) * Math.sin((x * 10 - 0.75) * c4) + 1;
 }
 function lerp(v0, v1, t) { return (1 - t) * v0 + t * v1; }
 function inv_lerp(min, max, p) { return (p - min) / (max - min); }
@@ -12719,16 +12731,27 @@ const render_targets = [
 {
     /* scale view_matrix to fit 5000 logical pixels */
     const aspect_ratio = window.innerHeight/window.innerWidth;
-    const width = 3000;
+    const width = 8000;
     const x = 2000;
-    const y = 1500;
+    const y = 3500;
     mat4_ortho(view_matrix, x-width, x+width, y+width*aspect_ratio, y-width*aspect_ratio, 1, -1)
     mat4_mul(view_matrix, mat4_invert(mat4_create(), pixel_matrix), view_matrix);
 }
 
 let active_domain = "Equipment";
 let table_state = new Map();
-let expanded_tables = new Map([["Model", { scroll: 0 }]]);
+let expanded_tables = new Map([["Model", { scroll: 0, expanded_timestamp: 0 }]]);
+function expanded_show(expanded, timestamp) {
+    if (!expanded) return false;
+    if ((timestamp - expanded.expanded_timestamp) < 1000) return false;
+    return true;
+}
+function expanded_progress(expanded, timestamp) {
+    if (!expanded) return 0;
+
+    let t = (timestamp - expanded.expanded_timestamp) / 1000;
+    return clamp(0.0, t, 1.0);
+}
 window.onkeydown = e => {
     if (e.key == " ") {
         const categories = ["Asset", "Binding", "Building", "Event", "Environment", "Equipment", "Geometry", "People", "Property", "Quanta", "Site", "System"];
@@ -13324,6 +13347,26 @@ requestAnimationFrame(function frame(timestamp) {
             last[1] = out[1];
         }
     }
+    function drawTriangle(
+        a_x, a_y,
+        b_x, b_y,
+        c_x, c_y,
+        color
+    ) {
+        geo_color.push(
+            color[0], color[1], color[2], color[3],
+            color[0], color[1], color[2], color[3],
+            color[0], color[1], color[2], color[3]
+        )
+
+        const vbuf_i = geo_pos.length / 3;
+        const p = [0, 0, 0, 1];
+        p[0] = a_x; p[1] = a_y; mat4_transform_vec4(p, p, view); geo_pos.push(p[0], p[1], 0.1);
+        p[0] = b_x; p[1] = b_y; mat4_transform_vec4(p, p, view); geo_pos.push(p[0], p[1], 0.1);
+        p[0] = c_x; p[1] = c_y; mat4_transform_vec4(p, p, view); geo_pos.push(p[0], p[1], 0.1);
+
+        geo_idx.push(vbuf_i + 0, vbuf_i + 1, vbuf_i + 2);
+    }
 
     /* set up premultiplied alpha */
     gl.blendFuncSeparate(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA, gl.ONE, gl.ONE);
@@ -13397,15 +13440,15 @@ requestAnimationFrame(function frame(timestamp) {
         const hex_titles = new FontBuf([1, 1, 1, 1], 58, view,      hex_titles_gl_font_face);
 
         if (0) {
-            button_aspect_ratio = 2400 / 800;
-            drawButtonClamped(
-                { min_x: -3200+400, min_y: -400+400,
-                  max_x:  3200+400, max_y:  400+400 },
-                         -3200+400,        -400+400,
-                          3200+400,         400+400,
+            drawTriangle(
+                 200+500, -200+500,
+                -200+500, -200+500,
+                -200+500,  200+500,
+                [0, 0, 0, 255]
             );
         }
 
+        /* put a frame's worth of UI into the buffers using the draw* functions */
         {
             scroll_captured = false;
 
@@ -13426,6 +13469,7 @@ requestAnimationFrame(function frame(timestamp) {
 
             const tables = getZoomedHexagonPositions(active_domain).internal;
             const edges = domain_edges.find(x => x.domain == active_domain).internal.map(x => [x.from.table, x.to.table])
+            const edgeSet = new Set(edges.map(x => x+''));
 
             const layoutMapAxis = (axis, hex_space, expanded_space) => {
                 let space_map_x_min = 0;
@@ -13437,7 +13481,12 @@ requestAnimationFrame(function frame(timestamp) {
                     space_map_x_min = Math.min(space_map_x_min, idx_x);
                     space_map_x_max = Math.max(space_map_x_max, idx_x);
 
-                    const space_needed = 2*(expanded_tables.has(key) ? expanded_space : hex_space);
+                    let space_needed = hex_space;
+                    if (expanded_tables.has(key)) {
+                        const t = ease_out_elastic(expanded_progress(expanded_tables.get(key), timestamp));
+                        space_needed = lerp(hex_space, expanded_space, t);
+                    }
+                    space_needed *= 2;
                     space_map_x[idx_x] = Math.max(space_map_x[idx_x] ?? 0, space_needed);
                 }
 
@@ -13453,8 +13502,8 @@ requestAnimationFrame(function frame(timestamp) {
                     return ret;
                 }
             }
-            const adjustedX = layoutMapAxis('x', 400,  800); //1200);
-            const adjustedY = layoutMapAxis('y', 500, 1600); //2000);
+            const adjustedX = layoutMapAxis('x', 550, 1000); //1200);
+            const adjustedY = layoutMapAxis('y', 500, 2000); //2000);
             const HEX_SIZE = 450;
             const EXPANDED_SIZE_X = 1350;
             const EXPANDED_SIZE_Y = 3000;
@@ -13485,15 +13534,20 @@ requestAnimationFrame(function frame(timestamp) {
             for (const key in tables) {
                 const from_x = adjustedX(tables[key].x);
                 const from_y = adjustedY(tables[key].y);
+                const from_expanded = expanded_show(expanded_tables.get(key), timestamp);
 
                 for (const edge of edges) {
                     if (edge[0] != key) continue;
                     if (!(edge[1] in tables)) continue;
 
+                    /* TODO: support this */
                     if (edge[0] == edge[1]) continue;
+
+                    const circular = edgeSet.has(''+[edge[1], edge[0]]);
 
                     const to_x = adjustedX(tables[edge[1]].x);
                     const to_y = adjustedY(tables[edge[1]].y);
+                    const to_expanded = expanded_show(expanded_tables.get(edge[1]), timestamp);
 
                     /* TO GENERATE AESTHETICALLY PLEASING CONTROL POINTS:
                      * - find the face of the hexagon we're coming out of
@@ -13508,38 +13562,128 @@ requestAnimationFrame(function frame(timestamp) {
                     /* NOTE: to match existing SVG-based renderer, I actually "round to nearest face"
                      * as if it were a square ... */
 
-                    const dx = to_x - from_x;
-                    const dy = to_y - from_y;
-                    const dlen = Math.sqrt(dx*dx + dy*dy); /* used to weight control point spacing */
-                    const hex = (Math.PI*2)/4; /* would be a sixth of a revolution in radians, but see note */
-                    let angle = Math.atan2(dy, dx) - hex/2;
-                    angle = Math.round(angle / hex) * hex + hex/2;
-                    if (Math.abs(dy) < 1) /* make horizontal lines straight */
-                        angle = (dx > 0) ? 0 : Math.PI;
-                    const out_x = Math.cos(angle);
-                    const out_y = Math.sin(angle);
+                    /* arrow starting point unit vector relative to origin hex */
+                    let out_x, out_y;
+                    {
+                        const dx = to_x - from_x;
+                        const dy = to_y - from_y;
+                        const dlen = Math.sqrt(dx*dx + dy*dy); /* used to weight control point spacing */
+                        const hex = (Math.PI*2)/4; /* would be a sixth of a revolution in radians, but see note */
+                        const adjust = from_expanded ? -0.3 : hex/2;
+                        let angle = Math.atan2(dy, dx) - adjust;
+                        angle = Math.round(angle / hex) * hex + adjust;
+                        if (Math.abs(dy) < 1) /* make horizontal lines straight */
+                            angle = (dx > 0) ? 0 : Math.PI;
+                        out_x = Math.cos(angle);
+                        out_y = Math.sin(angle);
+                    }
 
-                    /* TODO: use actual shape size */
-                    const HEX_RADIUS = 175;
-                    drawBezier4(
-                        from_x+out_x*HEX_RADIUS, from_y+out_y*HEX_RADIUS, /* assumes hex is 175 radius */
-                        from_x+out_x*dlen*0.04 , from_y+out_y*dlen*0.20 ,
-                          to_x-out_x*dlen*0.08 ,   to_y-out_y*dlen*0.40 , /* control point hits harder going in */
-                          to_x-out_x*HEX_RADIUS,   to_y-out_y*HEX_RADIUS, /* assumes hex is 175 radius */
-                        25, highlight_lines
-                    )
+                    /* arrow destination unit vector relative to target hex */
+                    let in_x, in_y;
+                    {
+                        const dx = to_x - from_x;
+                        const dy = to_y - from_y;
+                        const dlen = Math.sqrt(dx*dx + dy*dy); /* used to weight control point spacing */
+                        const hex = (Math.PI*2)/(to_expanded ? 4 : 6); /* would be a sixth of a revolution in radians, but see note */
+                        const adjust = to_expanded ? 0.3 : hex/2;
+                        let angle = Math.atan2(dy, dx) - adjust;
+                        angle = Math.round(angle / hex) * hex + adjust;
+                        if (Math.abs(dy) < 1) /* make horizontal lines straight */
+                            angle = (dx > 0) ? 0 : Math.PI;
+                        in_x = -Math.cos(angle);
+                        in_y = -Math.sin(angle);
+                    }
+
+                    {
+                        const ARROWHEAD_BACK    = 84.0;
+                        const ARROWHEAD_WIDTH   = 36.0;
+
+                        const FROM_SIZE_X = from_expanded ? (EXPANDED_SIZE_X*0.5 ) : (195 + 0             );
+                        const FROM_SIZE_Y = from_expanded ? (EXPANDED_SIZE_Y*0.5 ) : (165 + 0             );
+                        const TO_SIZE_X   =   to_expanded ? (EXPANDED_SIZE_X*0.6 ) : (195 + Math.abs(in_x)*ARROWHEAD_BACK*1.5);
+                        const TO_SIZE_Y   =   to_expanded ? (EXPANDED_SIZE_Y*0.55) : (165 + Math.abs(in_y)*ARROWHEAD_BACK*1.5);
+
+                        let   start_x = from_x+out_x*FROM_SIZE_X, start_y = from_y+out_y*FROM_SIZE_Y;
+                        let     end_x =   to_x+ in_x*TO_SIZE_X  ,   end_y =   to_y+ in_y*  TO_SIZE_Y;
+
+                        let len = Math.sqrt((start_x - end_x)*(start_x - end_x) + (start_y - end_y)*(start_y - end_y));
+                        let ctrl1_x = start_x+out_x*0.04*len, ctrl1_y = start_y+out_y*0.20*len;
+                        let ctrl2_x =   end_x+ in_x*0.08*len, ctrl2_y =   end_y+ in_y*0.35*len;
+
+                        if (circular && (Math.abs(to_y - from_y) < 1)) {
+                            const sign = ((to_x - from_x) < 0) ? -1 : 1;
+                            ctrl1_x = lerp(start_x, end_x, 0.5);
+                            ctrl1_y = lerp(start_y, end_y, 0.5) + 150*sign;
+                            ctrl2_x = lerp(start_x, end_x, 0.5);
+                            ctrl2_y = lerp(start_y, end_y, 0.5) + 150*sign;
+
+                            end_y   += 50*sign;
+                            start_y += 50*sign;
+                        }
+
+                        drawBezier4(
+                            start_x, start_y, /* assumes hex is 175 radius */
+                            ctrl1_x, ctrl1_y,
+                            ctrl2_x, ctrl2_y, /* control point hits harder going in */
+                              end_x,   end_y, /* assumes hex is 175 radius */
+                            25, highlight_lines
+                        )
+
+                        {
+                            const    start = [start_x, start_y];
+                            const control1 = [ctrl1_x, ctrl1_y];
+                            const control2 = [ctrl2_x, ctrl2_y];
+                            const      end = [  end_x,   end_y];
+
+                            let arrow_back = [0, 0];
+                            if (Math.abs(in_y - out_y) > 0) {
+                                bezier4_sample(arrow_back, start, control1, control2, end, 0.98);
+                            } else {
+                                arrow_back = [ start_x, start_y ];
+                            }
+
+                            const dx = arrow_back[0] - end_x;
+                            const dy = arrow_back[1] - end_y;
+
+                            /* normalize */
+                            let tlen = Math.sqrt(dx*dx + dy*dy);
+                            if (tlen > 0) {
+                                const tx = dx/tlen;
+                                const ty = dy/tlen;
+
+                                const arrow_back_x  = end_x + tx*10;
+                                const arrow_back_y  = end_y + ty*10;
+                                const arrow_front_x = end_x - tx*(ARROWHEAD_BACK - 10);
+                                const arrow_front_y = end_y - ty*(ARROWHEAD_BACK - 10);
+
+                                const px = -ty * ARROWHEAD_WIDTH;
+                                const py =  tx * ARROWHEAD_WIDTH;
+
+                                drawTriangle(
+                                    arrow_back_x+px, arrow_back_y+py,
+                                    arrow_back_x-px, arrow_back_y-py,
+                                    arrow_front_x  , arrow_front_y  ,
+                                    highlight_lines
+                                );
+                            }
+                        }
+                    }
                 }
             }
 
             /* draw tables/hexes */
             for (const key in tables) {
-                const expanded = expanded_tables.get(key);
+                let expanded = expanded_tables.get(key);
 
                 const x = adjustedX(tables[key].x);
                 const y = adjustedY(tables[key].y);
 
-                const size_x = expanded ? EXPANDED_SIZE_X : HEX_SIZE;
-                const size_y = expanded ? EXPANDED_SIZE_Y : HEX_SIZE;
+                // const size_x = expanded_show(expanded, timestamp) ? EXPANDED_SIZE_X : HEX_SIZE;
+                // const size_y = expanded_show(expanded, timestamp) ? EXPANDED_SIZE_Y : HEX_SIZE;
+                const expansion_progress = ease_out_elastic(expanded_progress(expanded, timestamp));
+                const size_x = lerp(HEX_SIZE, EXPANDED_SIZE_X, Math.min(1.0, expansion_progress));
+                const size_y = lerp(HEX_SIZE, EXPANDED_SIZE_Y, Math.min(1.0, expansion_progress));
+
                 const min_x = x - size_x/2;
                 const min_y = y - size_y/2;
                 const max_x = x + size_x/2;
@@ -13551,15 +13695,24 @@ requestAnimationFrame(function frame(timestamp) {
                     if (expanded_tables.has(key)) {
                         expanded_tables.delete(key);
                     } else {
-                        expanded_tables.set(key, { scroll: 0 });
+                        expanded_tables.set(key, { scroll: 0, expanded_timestamp: timestamp });
                     }
                 }
 
                 let i = 0;
-                if (expanded) {
+                if (expansion_progress >= 0.8) {
                     /* draw base outine */
                     const color = hover ? [208+4, 208+4, 208, 255] : [215+4, 215+4, 215, 255];
-                    drawBox(min_x, min_y, max_x, max_y, color);
+                    {
+                        const over = expansion_progress - 1.0;
+                        drawBox(
+                            min_x - over*0.25 * EXPANDED_SIZE_X,
+                            min_y - over*0.25 * EXPANDED_SIZE_Y,
+                            max_x + over*0.25 * EXPANDED_SIZE_X,
+                            max_y + over*0.25 * EXPANDED_SIZE_Y,
+                            color
+                        );
+                    }
 
                     let pen_x = x - size_x/2;
                     let pen_y = min_y;
