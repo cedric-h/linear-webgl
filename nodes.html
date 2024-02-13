@@ -13637,16 +13637,16 @@ requestAnimationFrame(function frame(timestamp) {
                         const ARROWHEAD_BACK    = 84.0;
                         const ARROWHEAD_WIDTH   = 36.0;
 
-                        const FROM_SIZE_X = lerp(195    , expanded_size_x(from_key)*0.5, from_expanded_t);
-                        const FROM_SIZE_Y = lerp(165    , expanded_size_y(from_key)*0.5, from_expanded_t);
-                        const TO_SIZE_X   = lerp(195*2.1, expanded_size_x(  to_key)    ,   to_expanded_t);
-                        const TO_SIZE_Y   = lerp(165*2.1, expanded_size_y(  to_key)    ,   to_expanded_t);
+                        const FROM_SIZE_X = lerp(195,      expanded_size_x(from_key)*0.5, from_expanded_t);
+                        const FROM_SIZE_Y = lerp(165,      expanded_size_y(from_key)*0.5, from_expanded_t);
+                        const TO_SIZE_X   = lerp(195*1.05, expanded_size_x(  to_key)    ,   to_expanded_t);
+                        const TO_SIZE_Y   = lerp(165*1.05, expanded_size_y(  to_key)    ,   to_expanded_t);
 
                         let   start_x = from_x+out_x*FROM_SIZE_X, start_y = from_y+out_y*FROM_SIZE_Y;
                         let     end_x =   to_x+ in_x*TO_SIZE_X  ,   end_y =   to_y+ in_y*  TO_SIZE_Y;
 
-                        end_x = clamp(to_x-TO_SIZE_X/2, end_x, to_x+TO_SIZE_X/2);
-                        end_y = clamp(to_y-TO_SIZE_Y/2, end_y, to_y+TO_SIZE_Y/2);
+                        end_x = lerp(end_x, clamp(to_x-TO_SIZE_X/2, end_x, to_x+TO_SIZE_X/2), to_expanded_t);
+                        end_y = lerp(end_y, clamp(to_y-TO_SIZE_Y/2, end_y, to_y+TO_SIZE_Y/2), to_expanded_t);
 
                         end_x += in_x*ARROWHEAD_BACK*1.5
                         end_y += in_y*ARROWHEAD_BACK*1.5
