@@ -24,13 +24,23 @@
  * [x] cola animations
  *
  * [ ] get second hex tones to lerp to from the original SVGs instead of just going "lighter"
+ * [ ] hex shrinking animations?
+ * [ ] fix cola/space layout calculations to adjust from center so things don't shift as much
+ * [ ] fix cola/space layout calculations so things in edge grids are pulled in, not centered in their partition
  *
  * [ ] drop shadows for buttons composited over expanded hex backgrounds
  * [ ] constant world-space drop shadows
  *
- * [ ] lines between guys
+ * [ ] instances connected to themselves
+ * [ ] lines between instances
+ * [x] dynamic row sizing
+ * [x] stop trying to look like the manual line configuration, it's bad
  *
  * [ ] integration into existing app
+ * 
+ * [ ] prefer keywords everywhere (maybe just comments?) 
+ * [ ] Renderer class which manages the buffers n' fonts
+ * [ ] extracting ALL magic numbers/colors into CSS-like blocks
  */
 
 function getZoomedHexagonPositions(domain) {
@@ -239,7 +249,7 @@ function getZoomedHexagonPositions(domain) {
  *   [...this.domain?.get('tables').models].map(x => ({ name: x?.get("name"), data: x?.get("data").map(json) }))
  *
  */
-const graph = [
+const graph = Object.fromEntries([
     {
         "name": "Equipment",
         "data": [
@@ -8576,7 +8586,7 @@ const graph = [
             }
         ]
     }
-]
+].map(x => [x.name, x.data]));
 
 const DOMAIN_INFO = {
     "Asset": {
@@ -12731,9 +12741,9 @@ const render_targets = [
 {
     /* scale view_matrix to fit 5000 logical pixels */
     const aspect_ratio = window.innerHeight/window.innerWidth;
-    const width = 8000;
-    const x = 2000;
-    const y = 3500;
+    const width = 5500;
+    const x = 3100;
+    const y = 3100;
     mat4_ortho(view_matrix, x-width, x+width, y+width*aspect_ratio, y-width*aspect_ratio, 1, -1)
     mat4_mul(view_matrix, mat4_invert(mat4_create(), pixel_matrix), view_matrix);
 }
@@ -12741,6 +12751,10 @@ const render_targets = [
 let active_domain = "Equipment";
 let table_state = new Map();
 let expanded_tables = new Map([["Model", { scroll: 0, expanded_timestamp: 0 }]]);
+
+const EXPANDED_SIZE_X = 1350;
+const EXPANDED_SIZE_Y = 3000;
+const LABELS_FONT_SIZE = 34;
 function expanded_show(expanded, timestamp) {
     if (!expanded) return false;
     if ((timestamp - expanded.expanded_timestamp) < 1000) return false;
@@ -12752,6 +12766,24 @@ function expanded_progress(expanded, timestamp) {
     let t = (timestamp - expanded.expanded_timestamp) / 1000;
     return clamp(0.0, t, 1.0);
 }
+function expanded_size_x(key) {
+    const instance_count = (key in graph) ? graph[key].length : 0;
+    const instance_columns = Math.max(1, 1 + Math.min(2, instance_count-1));
+    const instance_width = 378;
+    const instance_pad_x = 32;
+    return EXPANDED_SIZE_X - (( 3 - instance_columns   ) * instance_width);
+}
+function expanded_size_y(key) {
+    const instance_count = (key in graph) ? graph[key].length : 0;
+    const rect_size_y = LABELS_FONT_SIZE*3.15;
+    const rect_space_y_padded = rect_size_y*1.2;
+
+    const instance_columns = Math.max(1, 1 + Math.min(2, instance_count-1));
+    const instance_rows_visible = Math.min(22, 1 + Math.ceil(instance_count/instance_columns));
+
+    return EXPANDED_SIZE_Y - ((22 - instance_rows_visible) * rect_space_y_padded);
+}
+
 window.onkeydown = e => {
     if (e.key == " ") {
         const categories = ["Asset", "Binding", "Building", "Event", "Environment", "Equipment", "Geometry", "People", "Property", "Quanta", "Site", "System"];
@@ -13434,10 +13466,10 @@ requestAnimationFrame(function frame(timestamp) {
             mouse_world_y = p[1];
         }
 
-        const labels = new FontBuf([1, 1, 1, 1], 34, view,              labels_gl_font_face);
+        const labels = new FontBuf(         [1, 1, 1, 1], LABELS_FONT_SIZE, view, labels_gl_font_face);
         labels.extra_letter_spacing = 2;
-        const expanded_titles = new FontBuf([0, 0, 0, 1], 50, view, hex_titles_gl_font_face);
-        const hex_titles = new FontBuf([1, 1, 1, 1], 58, view,      hex_titles_gl_font_face);
+        const expanded_titles = new FontBuf([0, 0, 0, 1],               50, view, hex_titles_gl_font_face);
+        const hex_titles = new FontBuf(     [1, 1, 1, 1],               58, view, hex_titles_gl_font_face);
 
         if (0) {
             drawTriangle(
@@ -13471,7 +13503,7 @@ requestAnimationFrame(function frame(timestamp) {
             const edges = domain_edges.find(x => x.domain == active_domain).internal.map(x => [x.from.table, x.to.table])
             const edgeSet = new Set(edges.map(x => x+''));
 
-            const layoutMapAxis = (axis, hex_space, expanded_space) => {
+            const layout_map_axis = (axis, hex_space_px, expanded_space_px) => {
                 let space_map_x_min = 0;
                 let space_map_x_max = 0;
                 const space_map_x = {};
@@ -13481,10 +13513,15 @@ requestAnimationFrame(function frame(timestamp) {
                     space_map_x_min = Math.min(space_map_x_min, idx_x);
                     space_map_x_max = Math.max(space_map_x_max, idx_x);
 
-                    let space_needed = hex_space;
+                    let space_needed = hex_space_px;
                     if (expanded_tables.has(key)) {
                         const t = ease_out_elastic(expanded_progress(expanded_tables.get(key), timestamp));
-                        space_needed = lerp(hex_space, expanded_space, t);
+
+                        let computed_space;
+                        if (axis == 'x') computed_space = expanded_space_px + 0.5*(expanded_size_x(key) - EXPANDED_SIZE_X);
+                        if (axis == 'y') computed_space = expanded_space_px + 0.5*(expanded_size_y(key) - EXPANDED_SIZE_Y);
+
+                        space_needed = lerp(hex_space_px, computed_space, t);
                     }
                     space_needed *= 2;
                     space_map_x[idx_x] = Math.max(space_map_x[idx_x] ?? 0, space_needed);
@@ -13502,11 +13539,9 @@ requestAnimationFrame(function frame(timestamp) {
                     return ret;
                 }
             }
-            const adjustedX = layoutMapAxis('x', 550, 1000); //1200);
-            const adjustedY = layoutMapAxis('y', 500, 2000); //2000);
+            const adjustedX = layout_map_axis('x', 600, 1000); //1200);
+            const adjustedY = layout_map_axis('y', 500, 2000); //2000);
             const HEX_SIZE = 450;
-            const EXPANDED_SIZE_X = 1350;
-            const EXPANDED_SIZE_Y = 3000;
             /* palette */
             const bone = [235, 235, 235, 255];
             const highlight = [0, 0, 0, 255];
@@ -13531,13 +13566,14 @@ requestAnimationFrame(function frame(timestamp) {
             ];
 
             /* draw lines connecting tables/hexes */
-            for (const key in tables) {
-                const from_x = adjustedX(tables[key].x);
-                const from_y = adjustedY(tables[key].y);
-                const from_expanded = expanded_show(expanded_tables.get(key), timestamp);
+            for (const from_key in tables) {
+                const from_x = adjustedX(tables[from_key].x);
+                const from_y = adjustedY(tables[from_key].y);
+                const from_expanded = expanded_tables.get(from_key);
+                const from_expanded_t = ease_out_elastic(expanded_progress(from_expanded, timestamp));
 
                 for (const edge of edges) {
-                    if (edge[0] != key) continue;
+                    if (edge[0] != from_key) continue;
                     if (!(edge[1] in tables)) continue;
 
                     /* TODO: support this */
@@ -13545,9 +13581,12 @@ requestAnimationFrame(function frame(timestamp) {
 
                     const circular = edgeSet.has(''+[edge[1], edge[0]]);
 
-                    const to_x = adjustedX(tables[edge[1]].x);
-                    const to_y = adjustedY(tables[edge[1]].y);
-                    const to_expanded = expanded_show(expanded_tables.get(edge[1]), timestamp);
+                    const to_key = edge[1];
+                    const to_x = adjustedX(tables[to_key].x);
+                    const to_y = adjustedY(tables[to_key].y);
+                    const to_expanded = expanded_tables.get(to_key);
+                    const to_expanded_t = ease_out_elastic(expanded_progress(to_expanded, timestamp));
+
 
                     /* TO GENERATE AESTHETICALLY PLEASING CONTROL POINTS:
                      * - find the face of the hexagon we're coming out of
@@ -13568,12 +13607,12 @@ requestAnimationFrame(function frame(timestamp) {
                         const dx = to_x - from_x;
                         const dy = to_y - from_y;
                         const dlen = Math.sqrt(dx*dx + dy*dy); /* used to weight control point spacing */
-                        const hex = (Math.PI*2)/4; /* would be a sixth of a revolution in radians, but see note */
-                        const adjust = from_expanded ? -0.3 : hex/2;
+                        // const hex = (Math.PI*2)/4; /* would be a sixth of a revolution in radians, but see note */
+                        const adjust = 0;// lerp(hex/2, -0.3, from_expanded_t)
                         let angle = Math.atan2(dy, dx) - adjust;
-                        angle = Math.round(angle / hex) * hex + adjust;
-                        if (Math.abs(dy) < 1) /* make horizontal lines straight */
-                            angle = (dx > 0) ? 0 : Math.PI;
+                        // angle = Math.round(angle / hex) * hex + adjust;
+                        // if (Math.abs(dy) < 1) /* make horizontal lines straight */
+                        //     angle = (dx > 0) ? 0 : Math.PI;
                         out_x = Math.cos(angle);
                         out_y = Math.sin(angle);
                     }
@@ -13584,12 +13623,12 @@ requestAnimationFrame(function frame(timestamp) {
                         const dx = to_x - from_x;
                         const dy = to_y - from_y;
                         const dlen = Math.sqrt(dx*dx + dy*dy); /* used to weight control point spacing */
-                        const hex = (Math.PI*2)/(to_expanded ? 4 : 6); /* would be a sixth of a revolution in radians, but see note */
-                        const adjust = to_expanded ? 0.3 : hex/2;
+                        // const hex = (Math.PI*2)/lerp(6, 4, to_expanded_t); /* would be a sixth of a revolution in radians, but see note */
+                        const adjust = 0;// lerp(hex/2, 0.3, to_expanded_t);
                         let angle = Math.atan2(dy, dx) - adjust;
-                        angle = Math.round(angle / hex) * hex + adjust;
-                        if (Math.abs(dy) < 1) /* make horizontal lines straight */
-                            angle = (dx > 0) ? 0 : Math.PI;
+                        // angle = Math.round(angle / hex) * hex + adjust;
+                        // if (Math.abs(dy) < 1) /* make horizontal lines straight */
+                        //     angle = (dx > 0) ? 0 : Math.PI;
                         in_x = -Math.cos(angle);
                         in_y = -Math.sin(angle);
                     }
@@ -13598,27 +13637,37 @@ requestAnimationFrame(function frame(timestamp) {
                         const ARROWHEAD_BACK    = 84.0;
                         const ARROWHEAD_WIDTH   = 36.0;
 
-                        const FROM_SIZE_X = from_expanded ? (EXPANDED_SIZE_X*0.5 ) : (195 + 0             );
-                        const FROM_SIZE_Y = from_expanded ? (EXPANDED_SIZE_Y*0.5 ) : (165 + 0             );
-                        const TO_SIZE_X   =   to_expanded ? (EXPANDED_SIZE_X*0.6 ) : (195 + Math.abs(in_x)*ARROWHEAD_BACK*1.5);
-                        const TO_SIZE_Y   =   to_expanded ? (EXPANDED_SIZE_Y*0.55) : (165 + Math.abs(in_y)*ARROWHEAD_BACK*1.5);
+                        const FROM_SIZE_X = lerp(195    , expanded_size_x(from_key)*0.5, from_expanded_t);
+                        const FROM_SIZE_Y = lerp(165    , expanded_size_y(from_key)*0.5, from_expanded_t);
+                        const TO_SIZE_X   = lerp(195*2.1, expanded_size_x(  to_key)    ,   to_expanded_t);
+                        const TO_SIZE_Y   = lerp(165*2.1, expanded_size_y(  to_key)    ,   to_expanded_t);
 
                         let   start_x = from_x+out_x*FROM_SIZE_X, start_y = from_y+out_y*FROM_SIZE_Y;
                         let     end_x =   to_x+ in_x*TO_SIZE_X  ,   end_y =   to_y+ in_y*  TO_SIZE_Y;
+
+                        end_x = clamp(to_x-TO_SIZE_X/2, end_x, to_x+TO_SIZE_X/2);
+                        end_y = clamp(to_y-TO_SIZE_Y/2, end_y, to_y+TO_SIZE_Y/2);
+
+                        end_x += in_x*ARROWHEAD_BACK*1.5
+                        end_y += in_y*ARROWHEAD_BACK*1.5
 
                         let len = Math.sqrt((start_x - end_x)*(start_x - end_x) + (start_y - end_y)*(start_y - end_y));
                         let ctrl1_x = start_x+out_x*0.04*len, ctrl1_y = start_y+out_y*0.20*len;
                         let ctrl2_x =   end_x+ in_x*0.08*len, ctrl2_y =   end_y+ in_y*0.35*len;
 
-                        if (circular && (Math.abs(to_y - from_y) < 1)) {
-                            const sign = ((to_x - from_x) < 0) ? -1 : 1;
-                            ctrl1_x = lerp(start_x, end_x, 0.5);
-                            ctrl1_y = lerp(start_y, end_y, 0.5) + 150*sign;
-                            ctrl2_x = lerp(start_x, end_x, 0.5);
-                            ctrl2_y = lerp(start_y, end_y, 0.5) + 150*sign;
+                        if (circular) {
+                            const px = -in_y;
+                            const py =  in_x;
 
-                            end_y   += 50*sign;
-                            start_y += 50*sign;
+                            ctrl1_x = lerp(start_x, end_x, 0.5) + 150*px;
+                            ctrl1_y = lerp(start_y, end_y, 0.5) + 150*py;
+                            ctrl2_x = lerp(start_x, end_x, 0.5) + 150*px;
+                            ctrl2_y = lerp(start_y, end_y, 0.5) + 150*py;
+
+                            end_x   += 50*px;
+                            end_y   += 50*py;
+                            start_x += 50*px;
+                            start_y += 50*py;
                         }
 
                         drawBezier4(
@@ -13681,8 +13730,8 @@ requestAnimationFrame(function frame(timestamp) {
                 // const size_x = expanded_show(expanded, timestamp) ? EXPANDED_SIZE_X : HEX_SIZE;
                 // const size_y = expanded_show(expanded, timestamp) ? EXPANDED_SIZE_Y : HEX_SIZE;
                 const expansion_progress = ease_out_elastic(expanded_progress(expanded, timestamp));
-                const size_x = lerp(HEX_SIZE, EXPANDED_SIZE_X, Math.min(1.0, expansion_progress));
-                const size_y = lerp(HEX_SIZE, EXPANDED_SIZE_Y, Math.min(1.0, expansion_progress));
+                const size_x = lerp(HEX_SIZE, expanded_size_x(key), Math.min(1.0, expansion_progress));
+                const size_y = lerp(HEX_SIZE, expanded_size_y(key), Math.min(1.0, expansion_progress));
 
                 const min_x = x - size_x/2;
                 const min_y = y - size_y/2;
@@ -13701,6 +13750,20 @@ requestAnimationFrame(function frame(timestamp) {
 
                 let i = 0;
                 if (expansion_progress >= 0.8) {
+                    const pad_x = 40;
+                    let pen_x = x - size_x/2 + pad_x;
+                    let pen_y = min_y;
+
+                    const outline_thickness = 6;
+                    const rect_size_y = labels.fontsize*3.15;
+                    const rect_space_y_padded = rect_size_y*1.2;
+
+                    const instance_count = (key in graph) ? graph[key].length : 0;
+                    const instance_columns = 1 + Math.min(2, instance_count-1);
+                    const instance_rows = Math.ceil(instance_count / instance_columns);
+                    const instance_width = 378;
+                    const instance_pad_x = 32;
+
                     /* draw base outine */
                     const color = hover ? [208+4, 208+4, 208, 255] : [215+4, 215+4, 215, 255];
                     {
@@ -13714,19 +13777,16 @@ requestAnimationFrame(function frame(timestamp) {
                         );
                     }
 
-                    let pen_x = x - size_x/2;
-                    let pen_y = min_y;
-
+                    /* draw colorful top bar */
                     {
                         pen_y += 40;
-                        const pad_x = 40;
                         const bar_size_y = expanded_titles.fontsize*0.6;
-                        const bar_x = pen_x + pad_x;
+                        const bar_x = pen_x;
                         const bar_y = pen_y;
                         drawBox(
                             bar_x,
                             bar_y,
-                            bar_x + (EXPANDED_SIZE_X - pad_x*3),
+                            max_x - pad_x*2,
                             bar_y + bar_size_y,
                             highlight
                         )
@@ -13736,7 +13796,7 @@ requestAnimationFrame(function frame(timestamp) {
                     /* title */
                     {
                         const pad_x = 45;
-                        const text_x = pen_x + pad_x;
+                        const text_x = pen_x;
                         const text_y = pen_y + expanded_titles.fontsize*i++;
                         expanded_titles.drawText(spaceCamel(key), text_x, text_y, ALIGN_LEFT);
                         pen_y = text_y + expanded_titles.fontsize*2.5;
@@ -13744,24 +13804,18 @@ requestAnimationFrame(function frame(timestamp) {
                     }
 
                     /* instances */
-                    const instance_width = 378;
-                    const instance_pad_x = 32;
-                    const instances_all_max_x = pen_x + 3*(instance_width + instance_pad_x) - instance_pad_x;
-
                     const scrollbox_bottom_pad = 45;
                     const clampbox = {
                         min_x: pen_x,
                         min_y: pen_y,
-                        max_x: instances_all_max_x,
+                        max_x: max_x,
                         max_y: max_y - scrollbox_bottom_pad,
                     };
 
-                    const outline_thickness = 6;
-                    const rect_size_y = labels.fontsize*3.15;
-                    const rect_space_padded = rect_size_y*1.2;
-                    const instances_all_max_y = pen_y + rect_space_padded*62; /* TODO: this will change depending on your data */
+                    const instances_all_size_y = rect_space_y_padded*instance_rows;
                     const visible_size_y = clampbox.max_y - clampbox.min_y;
-
+                    const instances_all_max_x = pen_x + instance_columns*(instance_width + instance_pad_x) - instance_pad_x;
+                    const instances_all_max_y = pen_y + instances_all_size_y;
                     button_aspect_ratio = (instance_width - 2.0*outline_thickness) / (rect_size_y - 2.0*outline_thickness);
 
                     if (hover) {
@@ -13779,13 +13833,16 @@ requestAnimationFrame(function frame(timestamp) {
                         expanded.scroll = Math.min(expanded.scroll, max_scroll);
                     }
 
-                    for (let row = 0; row < 3; row++) {
-                        const view_top_row_index = Math.floor(expanded.scroll / rect_space_padded);
-                        const view_bottom_row_index = Math.ceil((expanded.scroll + visible_size_y) / rect_space_padded);
+                    for (let column = 0; column < instance_columns; column++) {
+                        const view_top_row_index = Math.floor(expanded.scroll / rect_space_y_padded);
+                        const view_bottom_row_index = Math.ceil((expanded.scroll + visible_size_y) / rect_space_y_padded);
                         for (let i = view_top_row_index; i < view_bottom_row_index; i++) {
+                            const graph_index = i*instance_columns + column;
+                            if (!(graph[key] && graph[key][graph_index])) continue;
+
                             const rect_size_x = instance_width;
-                            const rect_x = pen_x + row*(rect_size_x + instance_pad_x);
-                            let rect_y = pen_y + i*rect_space_padded - expanded.scroll;
+                            const rect_x = pen_x + column*(rect_size_x + instance_pad_x);
+                            let rect_y = pen_y + i*rect_space_y_padded - expanded.scroll;
                             drawBoxClamped(
                                 clampbox,
                                 rect_x,
@@ -13803,8 +13860,9 @@ requestAnimationFrame(function frame(timestamp) {
                             );
                             if (i == view_top_row_index && (rect_y - pen_y) < -20) continue;
                             if (i == (view_bottom_row_index-1) && (rect_y + rect_size_y) - (pen_y + visible_size_y) > 20) continue;
+
                             labels.drawText(
-                                "zoneID",
+                                (graph[key][graph_index].name ?? graph[key][graph_index].ID).substr(0, 14),
                                 rect_x + rect_size_x/2,
                                 rect_y + (rect_size_y - labels.fontsize)*0.6,
                                 ALIGN_CENTER
@@ -13813,7 +13871,7 @@ requestAnimationFrame(function frame(timestamp) {
                     }
 
                     /* scrollbar */
-                    {
+                    if (visible_size_y < instances_all_size_y) {
                         const total_size_y = instances_all_max_y - pen_y;
                         const visible_size_y = clampbox.max_y - clampbox.min_y;
 
