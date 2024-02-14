@@ -13152,6 +13152,9 @@ class Frame {
         this.button_uv  = [];
         this.button_idx = [];
 
+        /* just a little cached vector used for matrix transforms */
+        this.p = [0, 0, 0, 1];
+
         this.font_bufs = [];
 
         this.view = mat4_create();
@@ -13187,10 +13190,10 @@ class Frame {
 
         const vbuf_i = this.geo_pos.length / 3;
         const p = [0, 0, 0, 1];
-        p[0] = max_x; p[1] = min_y; mat4_transform_vec4(p, p, this.view); this.geo_pos.push(p[0], p[1], 0.1);
-        p[0] = min_x; p[1] = min_y; mat4_transform_vec4(p, p, this.view); this.geo_pos.push(p[0], p[1], 0.1);
-        p[0] = min_x; p[1] = max_y; mat4_transform_vec4(p, p, this.view); this.geo_pos.push(p[0], p[1], 0.1);
-        p[0] = max_x; p[1] = max_y; mat4_transform_vec4(p, p, this.view); this.geo_pos.push(p[0], p[1], 0.1);
+        this.posPush(max_x, min_y);
+        this.posPush(min_x, min_y);
+        this.posPush(min_x, max_y);
+        this.posPush(max_x, max_y);
 
         this.geo_idx.push(vbuf_i + 0, vbuf_i + 1, vbuf_i + 2, vbuf_i + 2, vbuf_i + 3, vbuf_i + 0);
     }
@@ -13198,10 +13201,10 @@ class Frame {
     drawButton( min_x, min_y,   max_x, max_y) {
         const vbuf_i = this.button_pos.length / 3;
         const p = [0, 0, 0, 1];
-        p[0] = max_x; p[1] = min_y; mat4_transform_vec4(p, p, this.view); this.button_pos.push(p[0], p[1], 0.1);
-        p[0] = min_x; p[1] = min_y; mat4_transform_vec4(p, p, this.view); this.button_pos.push(p[0], p[1], 0.1);
-        p[0] = min_x; p[1] = max_y; mat4_transform_vec4(p, p, this.view); this.button_pos.push(p[0], p[1], 0.1);
-        p[0] = max_x; p[1] = max_y; mat4_transform_vec4(p, p, this.view); this.button_pos.push(p[0], p[1], 0.1);
+        this.buttonPosPush(max_x, min_y);
+        this.buttonPosPush(min_x, min_y);
+        this.buttonPosPush(min_x, max_y);
+        this.buttonPosPush(max_x, max_y);
 
         this.button_uv.push(
              1.0,  1.0,
@@ -13261,13 +13264,13 @@ class Frame {
 
         const vbuf_i = this.geo_pos.length / 3;
         const p = [0, 0, 0, 1];
-        p[0] = lerp(min_x, max_x, 0.50); p[1] = lerp(min_y, max_y, 0.500000); mat4_transform_vec4(p, p, this.view); this.geo_pos.push(p[0], p[1], 0.1);
-        p[0] = lerp(min_x, max_x, 0.25); p[1] = lerp(min_y, max_y, 0.933013); mat4_transform_vec4(p, p, this.view); this.geo_pos.push(p[0], p[1], 0.1);
-        p[0] = lerp(min_x, max_x, 0.00); p[1] = lerp(min_y, max_y, 0.500000); mat4_transform_vec4(p, p, this.view); this.geo_pos.push(p[0], p[1], 0.1);
-        p[0] = lerp(min_x, max_x, 0.25); p[1] = lerp(min_y, max_y, 0.066987); mat4_transform_vec4(p, p, this.view); this.geo_pos.push(p[0], p[1], 0.1);
-        p[0] = lerp(min_x, max_x, 0.75); p[1] = lerp(min_y, max_y, 0.066987); mat4_transform_vec4(p, p, this.view); this.geo_pos.push(p[0], p[1], 0.1);
-        p[0] = lerp(min_x, max_x, 1.00); p[1] = lerp(min_y, max_y, 0.500000); mat4_transform_vec4(p, p, this.view); this.geo_pos.push(p[0], p[1], 0.1);
-        p[0] = lerp(min_x, max_x, 0.75); p[1] = lerp(min_y, max_y, 0.933013); mat4_transform_vec4(p, p, this.view); this.geo_pos.push(p[0], p[1], 0.1);
+        this.posPush(lerp(min_x, max_x, 0.50), lerp(min_y, max_y, 0.500000));
+        this.posPush(lerp(min_x, max_x, 0.25), lerp(min_y, max_y, 0.933013));
+        this.posPush(lerp(min_x, max_x, 0.00), lerp(min_y, max_y, 0.500000));
+        this.posPush(lerp(min_x, max_x, 0.25), lerp(min_y, max_y, 0.066987));
+        this.posPush(lerp(min_x, max_x, 0.75), lerp(min_y, max_y, 0.066987));
+        this.posPush(lerp(min_x, max_x, 1.00), lerp(min_y, max_y, 0.500000));
+        this.posPush(lerp(min_x, max_x, 0.75), lerp(min_y, max_y, 0.933013));
 
         this.geo_idx.push(
             vbuf_i + 0, vbuf_i + 1, vbuf_i + 2,
@@ -13298,10 +13301,10 @@ class Frame {
 
         const vbuf_i = this.geo_pos.length / 3;
         const p = [0, 0, 0, 1];
-        p[0] = a_x + tx; p[1] = a_y + ty; mat4_transform_vec4(p, p, this.view); this.geo_pos.push(p[0], p[1], 0.1);
-        p[0] = a_x - tx; p[1] = a_y - ty; mat4_transform_vec4(p, p, this.view); this.geo_pos.push(p[0], p[1], 0.1);
-        p[0] = b_x + tx; p[1] = b_y + ty; mat4_transform_vec4(p, p, this.view); this.geo_pos.push(p[0], p[1], 0.1);
-        p[0] = b_x - tx; p[1] = b_y - ty; mat4_transform_vec4(p, p, this.view); this.geo_pos.push(p[0], p[1], 0.1);
+        this.posPush(a_x + tx, a_y + ty);
+        this.posPush(a_x - tx, a_y - ty);
+        this.posPush(b_x + tx, b_y + ty);
+        this.posPush(b_x - tx, b_y - ty);
 
         this.geo_idx.push(vbuf_i + 0, vbuf_i + 1, vbuf_i + 2, vbuf_i + 2, vbuf_i + 1, vbuf_i + 3);
     }
@@ -13368,12 +13371,29 @@ class Frame {
         )
 
         const vbuf_i = this.geo_pos.length / 3;
-        const p = [0, 0, 0, 1];
-        p[0] = a_x; p[1] = a_y; mat4_transform_vec4(p, p, this.view); this.geo_pos.push(p[0], p[1], 0.1);
-        p[0] = b_x; p[1] = b_y; mat4_transform_vec4(p, p, this.view); this.geo_pos.push(p[0], p[1], 0.1);
-        p[0] = c_x; p[1] = c_y; mat4_transform_vec4(p, p, this.view); this.geo_pos.push(p[0], p[1], 0.1);
+        this.posPush(a_x, a_y);
+        this.posPush(b_x, b_y);
+        this.posPush(c_x, c_y);
 
         this.geo_idx.push(vbuf_i + 0, vbuf_i + 1, vbuf_i + 2);
+    }
+
+    buttonPosPush(x, y) {
+        this.p[0] = x;
+        this.p[1] = y;
+        this.p[2] = 0;
+        this.p[3] = 1;
+        mat4_transform_vec4(this.p, this.p, this.view);
+        this.button_pos.push(this.p[0], this.p[1], 0.1);
+    }
+
+    posPush(x, y) {
+        this.p[0] = x;
+        this.p[1] = y;
+        this.p[2] = 0;
+        this.p[3] = 1;
+        mat4_transform_vec4(this.p, this.p, this.view);
+        this.geo_pos.push(this.p[0], this.p[1], 0.1);
     }
 
     geoPass(color) {
