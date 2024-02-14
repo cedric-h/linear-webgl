@@ -37,9 +37,9 @@
  *
  * [ ] function() { mat4_transform_vec4(p, p, view); this.geo_pos.push }
  *
- * [ ] prefer keywords everywhere (maybe just comments?)  (~hour)
- * [ ] extracting ALL magic numbers/colors into CSS-like blocks (~hour)
- * [ ] Renderer class which manages the buffers n' fonts (~2 hours)
+ * [x] prefer keywords everywhere (maybe just comments?)  (~hour)
+ * [x] extracting ALL magic numbers/colors into CSS-like blocks (~hour)
+ * [x] Renderer class which manages the buffers n' fonts (~2 hours)
  *
  * [ ] integration into existing app
  *   [ ] put WebGL context management in enyo/service (~2 hours)
@@ -14027,10 +14027,10 @@ function uiFrame(frame, input, timestamp) {
                         const py =  tx * ARROWHEAD_WIDTH;
 
                         frame.drawTriangle(
-                            arrow_back_x+px, arrow_back_y+py,
-                            arrow_back_x-px, arrow_back_y-py,
-                            arrow_front_x  , arrow_front_y  ,
-                            highlight_lines
+                            /* point a, */ arrow_back_x+px, arrow_back_y+py,
+                            /* point b, */ arrow_back_x-px, arrow_back_y-py,
+                            /* point c, */ arrow_front_x  , arrow_front_y  ,
+                            /*   color  */ highlight_lines
                         );
                     }
                 }
@@ -14082,11 +14082,11 @@ function uiFrame(frame, input, timestamp) {
             {
                 const over = expansion_progress - 1.0;
                 frame.drawBox(
-                    min_x - over*EXPANDED_WINDOW_BOUNCE_EXAGGERATION * EXPANDED_SIZE_X,
-                    min_y - over*EXPANDED_WINDOW_BOUNCE_EXAGGERATION * EXPANDED_SIZE_Y,
-                    max_x + over*EXPANDED_WINDOW_BOUNCE_EXAGGERATION * EXPANDED_SIZE_X,
-                    max_y + over*EXPANDED_WINDOW_BOUNCE_EXAGGERATION * EXPANDED_SIZE_Y,
-                    color
+                    /* box min_x */ min_x - over*EXPANDED_WINDOW_BOUNCE_EXAGGERATION * EXPANDED_SIZE_X,
+                    /* box min_y */ min_y - over*EXPANDED_WINDOW_BOUNCE_EXAGGERATION * EXPANDED_SIZE_Y,
+                    /* box max_x */ max_x + over*EXPANDED_WINDOW_BOUNCE_EXAGGERATION * EXPANDED_SIZE_X,
+                    /* box max_y */ max_y + over*EXPANDED_WINDOW_BOUNCE_EXAGGERATION * EXPANDED_SIZE_Y,
+                    /*     color */ color
                 );
             }
 
@@ -14097,11 +14097,11 @@ function uiFrame(frame, input, timestamp) {
                 const bar_x = pen_x;
                 const bar_y = pen_y;
                 frame.drawBox(
-                    bar_x,
-                    bar_y,
-                    max_x - EXPANDED_WINDOW_INNER_PAD_X*2, /* x2 for the left and right side */
-                    bar_y + bar_size_y,
-                    highlight
+                    /* box min_x */ bar_x,
+                    /* box min_y */ bar_y,
+                    /* box max_x */ max_x - EXPANDED_WINDOW_INNER_PAD_X*2, /* x2 for the left and right side */
+                    /* box max_y */ bar_y + bar_size_y,
+                    /*     color */ highlight
                 )
                 pen_y += bar_size_y * 2;
             }
@@ -14110,7 +14110,12 @@ function uiFrame(frame, input, timestamp) {
             {
                 const text_x = pen_x;
                 const text_y = pen_y + expanded_titles.fontsize*i++;
-                expanded_titles.drawText(spaceCamel(key), text_x, text_y, ALIGN_LEFT);
+                expanded_titles.drawText(
+                    /*      text */ spaceCamel(key),
+                    /*    left_x */ text_x,
+                    /*     top_y */ text_y,
+                    /* alignment */ ALIGN_LEFT
+                );
                 pen_y = text_y + EXPANDED_WINDOW_TITLE_BOTTOM_MARGIN;
                 pen_x = text_x;
             }
@@ -14155,19 +14160,19 @@ function uiFrame(frame, input, timestamp) {
                     const rect_x = pen_x + column*(rect_size_x + EXPANDED_WINDOW_INSTANCE_PAD_X);
                     let rect_y = pen_y + i*rect_space_y_padded - expanded.scroll;
                     frame.drawBoxClamped(
-                        clampbox,
-                        rect_x,
-                        rect_y,
-                        rect_x + rect_size_x,
-                        rect_y + rect_size_y,
-                        COLOR_BUTTON_BORDER
+                        /* clamping box */ clampbox,
+                        /*    box min_x */ rect_x,
+                        /*    box min_y */ rect_y,
+                        /*    box max_x */ rect_x + rect_size_x,
+                        /*    box max_y */ rect_y + rect_size_y,
+                        /*        color */ COLOR_BUTTON_BORDER
                     );
                     frame.drawButtonClamped(
-                        clampbox,
-                        rect_x + outline_thickness,
-                        rect_y + outline_thickness,
-                        rect_x + rect_size_x - outline_thickness,
-                        rect_y + rect_size_y - outline_thickness
+                        /* clamping box */ clampbox,
+                        /* button min_x */ rect_x + outline_thickness,
+                        /* button min_y */ rect_y + outline_thickness,
+                        /* button max_x */ rect_x + rect_size_x - outline_thickness,
+                        /* button max_y */ rect_y + rect_size_y - outline_thickness
                     );
 
                     /* these are cases where we need to clamp text, but for now I will just hide it */
@@ -14175,10 +14180,10 @@ function uiFrame(frame, input, timestamp) {
                     if (i == (view_bottom_row_index-1) && (rect_y + rect_size_y) - (pen_y + visible_size_y) > 20) continue;
 
                     labels.drawText(
-                        (graph[key][graph_index].name ?? graph[key][graph_index].ID).substr(0, BUTTON_TEXT_CHARACTERS_MAX),
-                        rect_x + rect_size_x/2,
-                        rect_y + (rect_size_y - labels.fontsize)*0.6, /* the 0.6 just centers the text vertically, -ish */
-                        ALIGN_CENTER
+                        /*      text */ (graph[key][graph_index].name ?? graph[key][graph_index].ID).substr(0, BUTTON_TEXT_CHARACTERS_MAX),
+                        /*  center_x */ rect_x + rect_size_x/2,
+                        /*     top_y */ rect_y + (rect_size_y - labels.fontsize)*0.6, /* the 0.6 just centers the text vertically, -ish */
+                        /* alignment */ ALIGN_CENTER
                     );
                 }
             }
@@ -14197,28 +14202,37 @@ function uiFrame(frame, input, timestamp) {
                 const scrollbar_max_y = pen_y + scrollbar_offset_y + scrollbar_size_y;
 
                 frame.drawBox(
-                    instances_all_max_x + SCROLLBAR_OFFSET,
-                    scrollbar_min_y,
-                    instances_all_max_x + SCROLLBAR_OFFSET + SCROLLBAR_WIDTH,
-                    scrollbar_max_y,
-                    COLOR_SCROLLBAR
+                    /* box min_x */ instances_all_max_x + SCROLLBAR_OFFSET,
+                    /* box min_y */ scrollbar_min_y,
+                    /* box max_x */ instances_all_max_x + SCROLLBAR_OFFSET + SCROLLBAR_WIDTH,
+                    /* box max_y */ scrollbar_max_y,
+                    /*     color */ COLOR_SCROLLBAR
                 )
             }
 
         } else {
 
-            /* draw "hex" */
-            const color = hover ? highlight_hover : highlight;
-            const n = HEX_BORDER_THICKNESS/2;
-            frame.drawHex(min_x-n, min_y-n, max_x+n, max_y+n, COLOR_HEX_BORDER, false);
-            frame.drawHex(min_x  , min_y  , max_x  , max_y  , color,            true);
+            /* draw "hex" shape */
+            {
+                const color = hover ? highlight_hover : highlight;
+                const n = HEX_BORDER_THICKNESS/2;
+
+                /*            min_x,   min_y,   max_x,   max_y,   color,            gradient */
+                frame.drawHex(min_x-n, min_y-n, max_x+n, max_y+n, COLOR_HEX_BORDER, false);
+                frame.drawHex(min_x  , min_y  , max_x  , max_y  , color,            true);
+            }
 
             /* we put each word in a hex title on a different line */
             const words = spaceCamel(key).split(' ');
             const word_height = words.length * hex_titles.fontsize;
             for (const word of words) {
                 const center = ((max_y - min_y) - word_height) * 0.5;
-                hex_titles.drawText(word, x, min_y + center + hex_titles.fontsize*i++, ALIGN_CENTER);
+                hex_titles.drawText(
+                    /*      text */ word,
+                    /*  center_x */ x,
+                    /*     top_y */ min_y + center + hex_titles.fontsize*i++,
+                    /* alignment */ ALIGN_CENTER
+                );
             }
         }
     }
