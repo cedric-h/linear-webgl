@@ -11,13 +11,48 @@
   <body>
     <canvas id="inspectorGraphCanvas"></canvas>
     <script>
+"use strict";
 /*
+
+ * ### POSSIBLE INTERNAL RENDERER IMPROVEMENTS/OPTIMIZATIONS ###
+ *
  * [ ] reuse arrays + gpu buffers 'cross frames (geo abstraction)
  * [ ] don't invert mat4 in drawText
  * [ ] have frame ring buffer for scratch mats (avoid heap alloc/frame)
  * [ ] index-ify text renderer
  * [ ] re-work shader loading so compilation can be parallelized
  * [ ] use VAOs
+ *
+ *
+ *
+ * ### KIND OF IMPORTANT FEATURES ###
+ *
+ * [ ] tables connected to themselves
+ * [x] dynamic row sizing
+ * [x] stop trying to look like the manual line configuration, it's bad
+ *
+ *
+ *
+ * ### FOR THE MR ###
+ *
+ * [ ] function() { mat4_transform_vec4(p, p, view); this.geo_pos.push }
+ *
+ * [ ] prefer keywords everywhere (maybe just comments?)  (~hour)
+ * [ ] extracting ALL magic numbers/colors into CSS-like blocks (~hour)
+ * [ ] Renderer class which manages the buffers n' fonts (~2 hours)
+ *
+ * [ ] integration into existing app
+ *   [ ] put WebGL context management in enyo/service (~2 hours)
+ *   [ ] swap out `getZoomedHexagonPositions` (~hour)
+ *   [ ] swap out graph snapshot for real enyo graph (~hour)
+ *   [ ] domain info (~hour)
+ *   [ ] domain edges (~hour)
+ *   [ ] instance lines (~2 hours)
+ *   [ ] selection state (~2 hours)
+ *
+ *
+ *
+ * ### YOU'LL NEVER NOTICE ###
  *
  * [x] lines that actually leave their boxes
  * [x] arrows on the ends of lines
@@ -31,16 +66,6 @@
  * [ ] drop shadows for buttons composited over expanded hex backgrounds
  * [ ] constant world-space drop shadows
  *
- * [ ] instances connected to themselves
- * [ ] lines between instances
- * [x] dynamic row sizing
- * [x] stop trying to look like the manual line configuration, it's bad
- *
- * [ ] integration into existing app
- * 
- * [ ] prefer keywords everywhere (maybe just comments?) 
- * [ ] Renderer class which manages the buffers n' fonts
- * [ ] extracting ALL magic numbers/colors into CSS-like blocks
  */
 
 function getZoomedHexagonPositions(domain) {
@@ -12512,13 +12537,13 @@ function bezier3_sample(out, a, control, b, t) {
     out[1] = lerp(lerp(a[1], control[1], t), lerp(control[1], b[1], t), t);
 }
 function bezier4_sample(out, p0, p1, p2, p3, t) {
-    out[0] = Math.pow(1 - t, 3) * p0[0] + 
-               Math.pow(1 - t, 2) * 3 * t * p1[0] + 
-               (1 - t) * 3 * t * t * p2[0] + 
+    out[0] = Math.pow(1 - t, 3) * p0[0] +
+               Math.pow(1 - t, 2) * 3 * t * p1[0] +
+               (1 - t) * 3 * t * t * p2[0] +
                t * t * t * p3[0];
-    out[1] = Math.pow(1 - t, 3) * p0[1] + 
-               Math.pow(1 - t, 2) * 3 * t * p1[1] + 
-               (1 - t) * 3 * t * t * p2[1] + 
+    out[1] = Math.pow(1 - t, 3) * p0[1] +
+               Math.pow(1 - t, 2) * 3 * t * p1[1] +
+               (1 - t) * 3 * t * t * p2[1] +
                t * t * t * p3[1];
 }
 function mat4_create() {
@@ -12682,7 +12707,6 @@ const gl = graphCanvas.getContext('webgl2', {antialias: true});
 if (!gl) { alert('Failed to initialize WebGL'); }
 
 let pixel_matrix = mat4_create();
-let view_matrix = mat4_create();
 const render_targets = [
     { tex: null, fb: null },
     { tex: null, fb: null },
@@ -12738,107 +12762,6 @@ const render_targets = [
         gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, target.tex, 0);
     }
 })();
-{
-    /* scale view_matrix to fit 5000 logical pixels */
-    const aspect_ratio = window.innerHeight/window.innerWidth;
-    const width = 5500;
-    const x = 3100;
-    const y = 3100;
-    mat4_ortho(view_matrix, x-width, x+width, y+width*aspect_ratio, y-width*aspect_ratio, 1, -1)
-    mat4_mul(view_matrix, mat4_invert(mat4_create(), pixel_matrix), view_matrix);
-}
-
-let active_domain = "Equipment";
-let table_state = new Map();
-let expanded_tables = new Map([["Model", { scroll: 0, expanded_timestamp: 0 }]]);
-
-const EXPANDED_SIZE_X = 1350;
-const EXPANDED_SIZE_Y = 3000;
-const LABELS_FONT_SIZE = 34;
-function expanded_show(expanded, timestamp) {
-    if (!expanded) return false;
-    if ((timestamp - expanded.expanded_timestamp) < 1000) return false;
-    return true;
-}
-function expanded_progress(expanded, timestamp) {
-    if (!expanded) return 0;
-
-    let t = (timestamp - expanded.expanded_timestamp) / 1000;
-    return clamp(0.0, t, 1.0);
-}
-function expanded_size_x(key) {
-    const instance_count = (key in graph) ? graph[key].length : 0;
-    const instance_columns = Math.max(1, 1 + Math.min(2, instance_count-1));
-    const instance_width = 378;
-    const instance_pad_x = 32;
-    return EXPANDED_SIZE_X - (( 3 - instance_columns   ) * instance_width);
-}
-function expanded_size_y(key) {
-    const instance_count = (key in graph) ? graph[key].length : 0;
-    const rect_size_y = LABELS_FONT_SIZE*3.15;
-    const rect_space_y_padded = rect_size_y*1.2;
-
-    const instance_columns = Math.max(1, 1 + Math.min(2, instance_count-1));
-    const instance_rows_visible = Math.min(22, 1 + Math.ceil(instance_count/instance_columns));
-
-    return EXPANDED_SIZE_Y - ((22 - instance_rows_visible) * rect_space_y_padded);
-}
-
-window.onkeydown = e => {
-    if (e.key == " ") {
-        const categories = ["Asset", "Binding", "Building", "Event", "Environment", "Equipment", "Geometry", "People", "Property", "Quanta", "Site", "System"];
-        active_domain = categories[(categories.indexOf(active_domain) + 1) % categories.length];
-    }
-}
-
-let scroll = 0, scroll_delta = 0, scroll_captured = false,
-    mouse_x = 0, mouse_y = 0,
-    mouse_down_x = 0, mouse_down_y = 0,
-    mouse_down = false, mouse_released = false;
-let wheelTimeout;
-window.onwheel = e => {
-    if (mouse_down) return;
-    scroll = Math.sign(e.deltaY);
-    scroll_delta = e.deltaY;
-
-    clearTimeout(wheelTimeout)
-    wheelTimeout = setTimeout(() => scroll = 0, 100)
-}
-window.onmousedown = e => {
-    mouse_down = true;
-    mouse_down_x = e.clientX*window.devicePixelRatio;
-    mouse_down_y = e.clientY*window.devicePixelRatio;
-}
-window.onmousemove = e => {
-    mouse_x = e.clientX*window.devicePixelRatio;
-    mouse_y = e.clientY*window.devicePixelRatio;
-}
-window.onmouseup = e => {
-    mouse_released = true;
-    mouse_x = e.clientX*window.devicePixelRatio;
-    mouse_y = e.clientY*window.devicePixelRatio;
-}
-
-const labels_gl_font_face = {
-    texture: gl.createTexture(),
-    sdfs: {},
-    font_image_dimensions: { width: 0, height: 0 }
-}
-
-const hex_titles_gl_font_face = {
-    texture: gl.createTexture(),
-    sdfs: {},
-    font_image_dimensions: { width: 0, height: 0 }
-}
-
-const text_vbuf = gl.createBuffer();
-const geo_vbuf_pos = gl.createBuffer();
-const geo_vbuf_color = gl.createBuffer();
-const geo_ibuf = gl.createBuffer();
-const button_vbuf_pos = gl.createBuffer();
-const button_vbuf_uv = gl.createBuffer();
-const button_ibuf = gl.createBuffer();
-
 
 let text_shader, geo_shader, button_shader, fullscreen_shader;
 /* compile shaders */
@@ -12894,9 +12817,9 @@ let text_shader, geo_shader, button_shader, fullscreen_shader;
         uniform vec2 u_direction;
 
         in vec2 v_texcoord;
-         
+
         out vec4 frag_color;
-         
+
         void main(void) {
             vec2 one_pixel = u_direction*(vec2(1) / vec2(textureSize(u_texture, 0)));
 
@@ -12990,7 +12913,7 @@ vec3 normal(vec2 p){
 }
 
 out vec4 frag_color;
- 
+
 void main(void) {
     vec3 col = toLinear(u_color.rgb);
     float inside = smoothstep(-0.6, -0.05, insideSDF(v_uv));
@@ -13077,6 +13000,26 @@ void main(void) {
     fullscreen_shader = createProgram(gl, vs_fullscreen, fs_fullscreen);
 }
 
+const gl_font_face_labels = {
+    texture: gl.createTexture(),
+    sdfs: {},
+    font_image_dimensions: { width: 0, height: 0 }
+}
+
+const gl_font_face_hex_titles = {
+    texture: gl.createTexture(),
+    sdfs: {},
+    font_image_dimensions: { width: 0, height: 0 }
+}
+
+const text_vbuf = gl.createBuffer();
+const geo_vbuf_pos = gl.createBuffer();
+const geo_vbuf_color = gl.createBuffer();
+const geo_ibuf = gl.createBuffer();
+const button_vbuf_pos = gl.createBuffer();
+const button_vbuf_uv = gl.createBuffer();
+const button_ibuf = gl.createBuffer();
+
 /* upload new SDF to font_texture_* */
 {
     gl.useProgram(text_shader.program);
@@ -13112,8 +13055,8 @@ void main(void) {
         { weight: "bold" }
     );
 
-    prepare_font("GraphCanvasFont", font_hex_title, hex_titles_gl_font_face);
-    prepare_font("GraphLabelFont" , font_labels, labels_gl_font_face);
+    prepare_font("GraphCanvasFont", font_hex_title, gl_font_face_hex_titles);
+    prepare_font("GraphLabelFont" , font_labels, gl_font_face_labels);
 }
 
 const ALIGN_LEFT = 0;
@@ -13121,11 +13064,11 @@ const ALIGN_CENTER = 1;
 class FontBuf {
     constructor(color, fontsize, view, gl_font_face) {
         /* fontscale is in "world size" (e.g. doesn't change by how much you zoom) and is
-         * stored here to be used in the layouting of UI widgets */ 
+         * stored here to be used in the layouting of UI widgets */
         this.fontsize = fontsize;
 
         /* fontscale is in final screen pixels (e.g. changes if you zoom) and is
-         * stored here to be used in the rendering of your texct */ 
+         * stored here to be used in the rendering of your texct */
         this.fontscale = fontsize * Math.sqrt(view[0]*view[0] + view[1]*view[1]);
 
         this.gl_texture = gl_font_face.texture;
@@ -13198,73 +13141,102 @@ class FontBuf {
     }
 }
 
-requestAnimationFrame(function frame(timestamp) {
-    requestAnimationFrame(frame);
+class Frame {
+    constructor() {
+        this.geo_idx = [];
+        this.geo_pos = [];
+        this.geo_color = [];
 
-    const geo_idx = [];
-    const geo_pos = [];
-    const geo_color = [];
+        this.button_aspect_ratio = 0;
+        this.button_pos = [];
+        this.button_uv  = [];
+        this.button_idx = [];
 
-    let button_aspect_ratio = 0;
-    const button_pos = [];
-    const button_uv  = [];
-    const button_idx = [];
+        this.font_bufs = [];
 
-    let view;
+        this.view = mat4_create();
+    }
 
-    function drawBox( min_x, min_y,   max_x, max_y,   color ) {
-        geo_color.push(
+    clear() {
+        /* (possible) TODO: pool/reuse memory here */
+        this.geo_idx = [];
+        this.geo_pos = [];
+        this.geo_color = [];
+
+        this.button_aspect_ratio = 0;
+        this.button_pos = [];
+        this.button_uv  = [];
+        this.button_idx = [];
+
+        this.font_bufs = [];
+    }
+
+    makeFontFace(color, fontsize, gl_font_face) {
+        const font_buf = new FontBuf(color, fontsize, this.view, gl_font_face);
+        this.font_bufs.push(font_buf);
+        return font_buf;
+    }
+
+    drawBox( min_x, min_y,   max_x, max_y,   color ) {
+        this.geo_color.push(
             color[0], color[1], color[2], color[3],
             color[0], color[1], color[2], color[3],
             color[0], color[1], color[2], color[3],
             color[0], color[1], color[2], color[3]
         )
 
-        const vbuf_i = geo_pos.length / 3;
+        const vbuf_i = this.geo_pos.length / 3;
         const p = [0, 0, 0, 1];
-        p[0] = max_x; p[1] = min_y; mat4_transform_vec4(p, p, view); geo_pos.push(p[0], p[1], 0.1);
-        p[0] = min_x; p[1] = min_y; mat4_transform_vec4(p, p, view); geo_pos.push(p[0], p[1], 0.1);
-        p[0] = min_x; p[1] = max_y; mat4_transform_vec4(p, p, view); geo_pos.push(p[0], p[1], 0.1);
-        p[0] = max_x; p[1] = max_y; mat4_transform_vec4(p, p, view); geo_pos.push(p[0], p[1], 0.1);
+        p[0] = max_x; p[1] = min_y; mat4_transform_vec4(p, p, this.view); this.geo_pos.push(p[0], p[1], 0.1);
+        p[0] = min_x; p[1] = min_y; mat4_transform_vec4(p, p, this.view); this.geo_pos.push(p[0], p[1], 0.1);
+        p[0] = min_x; p[1] = max_y; mat4_transform_vec4(p, p, this.view); this.geo_pos.push(p[0], p[1], 0.1);
+        p[0] = max_x; p[1] = max_y; mat4_transform_vec4(p, p, this.view); this.geo_pos.push(p[0], p[1], 0.1);
 
-        geo_idx.push(vbuf_i + 0, vbuf_i + 1, vbuf_i + 2, vbuf_i + 2, vbuf_i + 3, vbuf_i + 0);
+        this.geo_idx.push(vbuf_i + 0, vbuf_i + 1, vbuf_i + 2, vbuf_i + 2, vbuf_i + 3, vbuf_i + 0);
     }
-    function drawBoxClamped(clampbox, min_x, min_y,   max_x, max_y,   color) {
+
+    drawButton( min_x, min_y,   max_x, max_y) {
+        const vbuf_i = this.button_pos.length / 3;
+        const p = [0, 0, 0, 1];
+        p[0] = max_x; p[1] = min_y; mat4_transform_vec4(p, p, this.view); this.button_pos.push(p[0], p[1], 0.1);
+        p[0] = min_x; p[1] = min_y; mat4_transform_vec4(p, p, this.view); this.button_pos.push(p[0], p[1], 0.1);
+        p[0] = min_x; p[1] = max_y; mat4_transform_vec4(p, p, this.view); this.button_pos.push(p[0], p[1], 0.1);
+        p[0] = max_x; p[1] = max_y; mat4_transform_vec4(p, p, this.view); this.button_pos.push(p[0], p[1], 0.1);
+
+        this.button_uv.push(
+             1.0,  1.0,
+            -1.0,  1.0,
+            -1.0, -1.0,
+             1.0, -1.0
+         );
+
+        this.button_idx.push(vbuf_i + 0, vbuf_i + 1, vbuf_i + 2, vbuf_i + 2, vbuf_i + 3, vbuf_i + 0);
+    }
+
+    drawBoxClamped(clampbox, min_x, min_y,   max_x, max_y,   color) {
         min_x = clamp(clampbox.min_x, min_x, clampbox.max_x);
         max_x = clamp(clampbox.min_x, max_x, clampbox.max_x);
         min_y = clamp(clampbox.min_y, min_y, clampbox.max_y);
         max_y = clamp(clampbox.min_y, max_y, clampbox.max_y);
 
-        drawBox(min_x, min_y,   max_x, max_y,  color);
+        this.drawBox(min_x, min_y,   max_x, max_y,  color);
     }
-    function drawButton( min_x, min_y,   max_x, max_y) {
-        const vbuf_i = button_pos.length / 3;
-        const p = [0, 0, 0, 1];
-        p[0] = max_x; p[1] = min_y; mat4_transform_vec4(p, p, view); button_pos.push(p[0], p[1], 0.1);
-        p[0] = min_x; p[1] = min_y; mat4_transform_vec4(p, p, view); button_pos.push(p[0], p[1], 0.1);
-        p[0] = min_x; p[1] = max_y; mat4_transform_vec4(p, p, view); button_pos.push(p[0], p[1], 0.1);
-        p[0] = max_x; p[1] = max_y; mat4_transform_vec4(p, p, view); button_pos.push(p[0], p[1], 0.1);
 
-        button_uv.push( 1.0,  1.0)
-        button_uv.push(-1.0,  1.0)
-        button_uv.push(-1.0, -1.0)
-        button_uv.push( 1.0, -1.0)
-
-        button_idx.push(vbuf_i + 0, vbuf_i + 1, vbuf_i + 2, vbuf_i + 2, vbuf_i + 3, vbuf_i + 0);
-    }
-    function drawButtonClamped(clampbox, min_x, min_y,   max_x, max_y) {
+    /* TODO: reproject UVs, make same thing for text */
+    drawButtonClamped(clampbox, min_x, min_y,   max_x, max_y) {
         min_x = clamp(clampbox.min_x, min_x, clampbox.max_x);
         max_x = clamp(clampbox.min_x, max_x, clampbox.max_x);
         min_y = clamp(clampbox.min_y, min_y, clampbox.max_y);
         max_y = clamp(clampbox.min_y, max_y, clampbox.max_y);
 
-        drawButton(min_x, min_y,   max_x, max_y);
+        this.drawButton(min_x, min_y,   max_x, max_y);
     }
-    function drawHex( min_x, min_y,   max_x, max_y,   color,  gradient ) {
+
+    drawHex( min_x, min_y,   max_x, max_y,   color,  gradient ) {
         {
             const g = +(!!gradient);
             if (1) {
-                geo_color.push(
+                this.geo_color.push(
                     Math.min(255, color[0] + 15*g), Math.min(255, color[1] + 15*g), Math.min(255, color[2] + 15*g), color[3],
                     Math.min(255, color[0] +  0*g), Math.min(255, color[1] +  0*g), Math.min(255, color[2] +  0*g), color[3],
                     Math.min(255, color[0] + 30*g), Math.min(255, color[1] + 30*g), Math.min(255, color[2] + 30*g), color[3],
@@ -13275,7 +13247,7 @@ requestAnimationFrame(function frame(timestamp) {
                 );
             } else {
                 /* sometimes i just don't want to look at those gawd-awful gradients */
-                geo_color.push(
+                this.geo_color.push(
                     color[0], color[1], color[2], color[3],
                     color[0], color[1], color[2], color[3],
                     color[0], color[1], color[2], color[3],
@@ -13287,17 +13259,17 @@ requestAnimationFrame(function frame(timestamp) {
             }
         }
 
-        const vbuf_i = geo_pos.length / 3;
+        const vbuf_i = this.geo_pos.length / 3;
         const p = [0, 0, 0, 1];
-        p[0] = lerp(min_x, max_x, 0.50); p[1] = lerp(min_y, max_y, 0.500000); mat4_transform_vec4(p, p, view); geo_pos.push(p[0], p[1], 0.1);
-        p[0] = lerp(min_x, max_x, 0.25); p[1] = lerp(min_y, max_y, 0.933013); mat4_transform_vec4(p, p, view); geo_pos.push(p[0], p[1], 0.1);
-        p[0] = lerp(min_x, max_x, 0.00); p[1] = lerp(min_y, max_y, 0.500000); mat4_transform_vec4(p, p, view); geo_pos.push(p[0], p[1], 0.1);
-        p[0] = lerp(min_x, max_x, 0.25); p[1] = lerp(min_y, max_y, 0.066987); mat4_transform_vec4(p, p, view); geo_pos.push(p[0], p[1], 0.1);
-        p[0] = lerp(min_x, max_x, 0.75); p[1] = lerp(min_y, max_y, 0.066987); mat4_transform_vec4(p, p, view); geo_pos.push(p[0], p[1], 0.1);
-        p[0] = lerp(min_x, max_x, 1.00); p[1] = lerp(min_y, max_y, 0.500000); mat4_transform_vec4(p, p, view); geo_pos.push(p[0], p[1], 0.1);
-        p[0] = lerp(min_x, max_x, 0.75); p[1] = lerp(min_y, max_y, 0.933013); mat4_transform_vec4(p, p, view); geo_pos.push(p[0], p[1], 0.1);
+        p[0] = lerp(min_x, max_x, 0.50); p[1] = lerp(min_y, max_y, 0.500000); mat4_transform_vec4(p, p, this.view); this.geo_pos.push(p[0], p[1], 0.1);
+        p[0] = lerp(min_x, max_x, 0.25); p[1] = lerp(min_y, max_y, 0.933013); mat4_transform_vec4(p, p, this.view); this.geo_pos.push(p[0], p[1], 0.1);
+        p[0] = lerp(min_x, max_x, 0.00); p[1] = lerp(min_y, max_y, 0.500000); mat4_transform_vec4(p, p, this.view); this.geo_pos.push(p[0], p[1], 0.1);
+        p[0] = lerp(min_x, max_x, 0.25); p[1] = lerp(min_y, max_y, 0.066987); mat4_transform_vec4(p, p, this.view); this.geo_pos.push(p[0], p[1], 0.1);
+        p[0] = lerp(min_x, max_x, 0.75); p[1] = lerp(min_y, max_y, 0.066987); mat4_transform_vec4(p, p, this.view); this.geo_pos.push(p[0], p[1], 0.1);
+        p[0] = lerp(min_x, max_x, 1.00); p[1] = lerp(min_y, max_y, 0.500000); mat4_transform_vec4(p, p, this.view); this.geo_pos.push(p[0], p[1], 0.1);
+        p[0] = lerp(min_x, max_x, 0.75); p[1] = lerp(min_y, max_y, 0.933013); mat4_transform_vec4(p, p, this.view); this.geo_pos.push(p[0], p[1], 0.1);
 
-        geo_idx.push(
+        this.geo_idx.push(
             vbuf_i + 0, vbuf_i + 1, vbuf_i + 2,
             vbuf_i + 0, vbuf_i + 2, vbuf_i + 3,
             vbuf_i + 0, vbuf_i + 3, vbuf_i + 4,
@@ -13306,7 +13278,8 @@ requestAnimationFrame(function frame(timestamp) {
             vbuf_i + 0, vbuf_i + 6, vbuf_i + 1,
         );
     }
-    function drawLine( a_x, a_y,   b_x, b_y,  thickness,  color ) {
+
+    drawLine( a_x, a_y,   b_x, b_y,  thickness,  color ) {
         const dx = b_x - a_x;
         const dy = b_y - a_y;
         const nx = -dy; /* perp */
@@ -13316,23 +13289,24 @@ requestAnimationFrame(function frame(timestamp) {
         const tx = nx/tlen;
         const ty = ny/tlen;
 
-        geo_color.push(
+        this.geo_color.push(
             color[0], color[1], color[2], color[3],
             color[0], color[1], color[2], color[3],
             color[0], color[1], color[2], color[3],
             color[0], color[1], color[2], color[3]
         )
 
-        const vbuf_i = geo_pos.length / 3;
+        const vbuf_i = this.geo_pos.length / 3;
         const p = [0, 0, 0, 1];
-        p[0] = a_x + tx; p[1] = a_y + ty; mat4_transform_vec4(p, p, view); geo_pos.push(p[0], p[1], 0.1);
-        p[0] = a_x - tx; p[1] = a_y - ty; mat4_transform_vec4(p, p, view); geo_pos.push(p[0], p[1], 0.1);
-        p[0] = b_x + tx; p[1] = b_y + ty; mat4_transform_vec4(p, p, view); geo_pos.push(p[0], p[1], 0.1);
-        p[0] = b_x - tx; p[1] = b_y - ty; mat4_transform_vec4(p, p, view); geo_pos.push(p[0], p[1], 0.1);
+        p[0] = a_x + tx; p[1] = a_y + ty; mat4_transform_vec4(p, p, this.view); this.geo_pos.push(p[0], p[1], 0.1);
+        p[0] = a_x - tx; p[1] = a_y - ty; mat4_transform_vec4(p, p, this.view); this.geo_pos.push(p[0], p[1], 0.1);
+        p[0] = b_x + tx; p[1] = b_y + ty; mat4_transform_vec4(p, p, this.view); this.geo_pos.push(p[0], p[1], 0.1);
+        p[0] = b_x - tx; p[1] = b_y - ty; mat4_transform_vec4(p, p, this.view); this.geo_pos.push(p[0], p[1], 0.1);
 
-        geo_idx.push(vbuf_i + 0, vbuf_i + 1, vbuf_i + 2, vbuf_i + 2, vbuf_i + 1, vbuf_i + 3);
+        this.geo_idx.push(vbuf_i + 0, vbuf_i + 1, vbuf_i + 2, vbuf_i + 2, vbuf_i + 1, vbuf_i + 3);
     }
-    function drawBezier3( a_x, a_y,   control_x, control_y,   b_x, b_y,  thickness,  color ) {
+
+    drawBezier3( a_x, a_y,   control_x, control_y,   b_x, b_y,  thickness,  color ) {
         const out  = [0, 0];
         const last = [0, 0];
 
@@ -13344,18 +13318,19 @@ requestAnimationFrame(function frame(timestamp) {
         for (let i = 1; i <= 10; i++) {
             const t = i/10;
             bezier3_sample(out, a, control, b, t);
-            drawLine(last[0], last[1], out[0], out[1], thickness, color);
+            this.drawLine(last[0], last[1], out[0], out[1], thickness, color);
 
             if (i > 1) {
                 const vbuf_i = geo_pos.length / 3 - 6;
-                geo_idx.push(vbuf_i + 0, vbuf_i + 1, vbuf_i + 2, vbuf_i + 2, vbuf_i + 1, vbuf_i + 3);
+                this.geo_idx.push(vbuf_i + 0, vbuf_i + 1, vbuf_i + 2, vbuf_i + 2, vbuf_i + 1, vbuf_i + 3);
             }
 
             last[0] = out[0];
             last[1] = out[1];
         }
     }
-    function drawBezier4( a_x, a_y,   control0_x, control0_y,   control1_x, control1_y,   b_x, b_y,  thickness,  color ) {
+
+    drawBezier4( a_x, a_y,   control0_x, control0_y,   control1_x, control1_y,   b_x, b_y,  thickness,  color ) {
         const out  = [0, 0];
         const last = [0, 0];
 
@@ -13368,579 +13343,74 @@ requestAnimationFrame(function frame(timestamp) {
         for (let i = 1; i <= 30; i++) {
             const t = i/30;
             bezier4_sample(out, a, control0, control1, b, t);
-            drawLine(last[0], last[1], out[0], out[1], thickness, color);
+            this.drawLine(last[0], last[1], out[0], out[1], thickness, color);
 
             if (i > 1) {
-                const vbuf_i = geo_pos.length / 3 - 6;
-                geo_idx.push(vbuf_i + 0, vbuf_i + 1, vbuf_i + 2, vbuf_i + 2, vbuf_i + 1, vbuf_i + 3);
+                const vbuf_i = this.geo_pos.length / 3 - 6;
+                this.geo_idx.push(vbuf_i + 0, vbuf_i + 1, vbuf_i + 2, vbuf_i + 2, vbuf_i + 1, vbuf_i + 3);
             }
 
             last[0] = out[0];
             last[1] = out[1];
         }
     }
-    function drawTriangle(
+
+    drawTriangle(
         a_x, a_y,
         b_x, b_y,
         c_x, c_y,
         color
     ) {
-        geo_color.push(
+        this.geo_color.push(
             color[0], color[1], color[2], color[3],
             color[0], color[1], color[2], color[3],
             color[0], color[1], color[2], color[3]
         )
 
-        const vbuf_i = geo_pos.length / 3;
+        const vbuf_i = this.geo_pos.length / 3;
         const p = [0, 0, 0, 1];
-        p[0] = a_x; p[1] = a_y; mat4_transform_vec4(p, p, view); geo_pos.push(p[0], p[1], 0.1);
-        p[0] = b_x; p[1] = b_y; mat4_transform_vec4(p, p, view); geo_pos.push(p[0], p[1], 0.1);
-        p[0] = c_x; p[1] = c_y; mat4_transform_vec4(p, p, view); geo_pos.push(p[0], p[1], 0.1);
+        p[0] = a_x; p[1] = a_y; mat4_transform_vec4(p, p, this.view); this.geo_pos.push(p[0], p[1], 0.1);
+        p[0] = b_x; p[1] = b_y; mat4_transform_vec4(p, p, this.view); this.geo_pos.push(p[0], p[1], 0.1);
+        p[0] = c_x; p[1] = c_y; mat4_transform_vec4(p, p, this.view); this.geo_pos.push(p[0], p[1], 0.1);
 
-        geo_idx.push(vbuf_i + 0, vbuf_i + 1, vbuf_i + 2);
+        this.geo_idx.push(vbuf_i + 0, vbuf_i + 1, vbuf_i + 2);
     }
 
-    /* set up premultiplied alpha */
-    gl.blendFuncSeparate(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA, gl.ONE, gl.ONE);
-    gl.enable(gl.BLEND);
+    geoPass(color) {
+        gl.useProgram(geo_shader.program);
+        gl.enableVertexAttribArray(geo_shader.a_pos);
+        gl.enableVertexAttribArray(geo_shader.a_color);
 
-    gl.enable(gl.DEPTH_TEST);
-    gl.depthFunc(gl.LEQUAL);
+        gl.uniformMatrix4fv(geo_shader.u_matrix, false, pixel_matrix);
+        gl.uniform4f(geo_shader.u_color, color[0], color[1], color[2], color[3]);
 
-    {
-        /* curate input state for frame */
-        const mouse_moved = Math.sqrt((mouse_x - mouse_down_x)*(mouse_x - mouse_down_x) +
-                                      (mouse_y - mouse_down_y)*(mouse_y - mouse_down_y)) > 2;
-        const mouse_clicked = mouse_released && !mouse_moved;
+        /* upload/bind geometry */
 
-        /* zoom toward mouse */
-        if (scroll && !scroll_captured) {
-            const zoom = 1.0 + 0.03*scroll;
-
-            const focal = [mouse_x, mouse_y, 0, 1];
-            const tl = [-1, -1, -1,  1]
-            const br = [ 1,  1,  1,  1]
-            const inv = mat4_invert(mat4_create(), view_matrix);
-            mat4_transform_vec4(tl, tl, inv);
-            mat4_transform_vec4(br, br, inv);
-            mat4_transform_vec4(focal, focal, inv);
-
-            mat4_ortho(
-                view_matrix,
-                (tl[0] - focal[0])*zoom + focal[0],
-                (br[0] - focal[0])*zoom + focal[0],
-                (tl[1] - focal[1])*zoom + focal[1],
-                (br[1] - focal[1])*zoom + focal[1],
-                br[2],
-                tl[2]
-            )
-        }
-
-        /* mouse drag */
-        let drag_x = 0, drag_y = 0;
-        if (mouse_down) {
-            drag_x += (mouse_x - mouse_down_x)
-            drag_y += (mouse_y - mouse_down_y)
-
-            if (mouse_released) {
-                mouse_down = false;
-
-                mat4_mul(view_matrix, mat4_create_translate(drag_x, drag_y), view_matrix);
-
-                drag_x = drag_y = 0;
-            }
-        }
-
-        /* text rendering wants the pen pixel-aligned, so scale here */
-        /* our pixel_matrix puts things in 0..1, but everything before that is in pixels */ 
-        // const view = mat4_create_translate(drag_x + mouse_x, drag_y + mouse_y)
-        view = mat4_create_translate(drag_x, drag_y)
-        mat4_mul(view, view, view_matrix);
-
-        let mouse_world_x, mouse_world_y;
+        let vbuf_count = 3;
         {
-            const inv = mat4_invert(mat4_create(), view);
-            const p = [mouse_x, mouse_y, 0, 1];
-            mat4_transform_vec4(p, p, inv);
-            mouse_world_x = p[0];
-            mouse_world_y = p[1];
+            gl.bindBuffer(gl.ARRAY_BUFFER, geo_vbuf_pos);
+            gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(this.geo_pos), gl.STATIC_DRAW);
+            gl.vertexAttribPointer(geo_shader.a_pos, 3, gl.FLOAT, false, 0, 0);
+
+            gl.bindBuffer(gl.ARRAY_BUFFER, geo_vbuf_color);
+            gl.bufferData(gl.ARRAY_BUFFER, new Uint8Array(this.geo_color), gl.STATIC_DRAW);
+            gl.vertexAttribPointer(geo_shader.a_color, 4, gl.UNSIGNED_BYTE, true, 0, 0);
+
+            gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, geo_ibuf);
+            gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, new Uint16Array(this.geo_idx), gl.STATIC_DRAW);
         }
 
-        const labels = new FontBuf(         [1, 1, 1, 1], LABELS_FONT_SIZE, view, labels_gl_font_face);
-        labels.extra_letter_spacing = 2;
-        const expanded_titles = new FontBuf([0, 0, 0, 1],               50, view, hex_titles_gl_font_face);
-        const hex_titles = new FontBuf(     [1, 1, 1, 1],               58, view, hex_titles_gl_font_face);
+        gl.drawElements(gl.TRIANGLES, this.geo_idx.length, gl.UNSIGNED_SHORT, 0);
+    }
 
-        if (0) {
-            drawTriangle(
-                 200+500, -200+500,
-                -200+500, -200+500,
-                -200+500,  200+500,
-                [0, 0, 0, 255]
-            );
-        }
+    render() {
 
-        /* put a frame's worth of UI into the buffers using the draw* functions */
-        {
-            scroll_captured = false;
+        /* set up premultiplied alpha */
+        gl.blendFuncSeparate(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA, gl.ONE, gl.ONE);
+        gl.enable(gl.BLEND);
 
-            const spaceCamel = key =>
-                key
-                    .split('')
-                    .reduce(
-                        (a, c) => {
-                            if (c == c.toUpperCase())
-                                a.push(' ');
-                            a.push(c);
-                            return a;
-                        },
-                        []
-                    )
-                    .join('')
-                    .trim();
-
-            const tables = getZoomedHexagonPositions(active_domain).internal;
-            const edges = domain_edges.find(x => x.domain == active_domain).internal.map(x => [x.from.table, x.to.table])
-            const edgeSet = new Set(edges.map(x => x+''));
-
-            const layout_map_axis = (axis, hex_space_px, expanded_space_px) => {
-                let space_map_x_min = 0;
-                let space_map_x_max = 0;
-                const space_map_x = {};
-                for (const key in tables) {
-                    const idx_x = Math.floor(tables[key][axis]*4);
-
-                    space_map_x_min = Math.min(space_map_x_min, idx_x);
-                    space_map_x_max = Math.max(space_map_x_max, idx_x);
-
-                    let space_needed = hex_space_px;
-                    if (expanded_tables.has(key)) {
-                        const t = ease_out_elastic(expanded_progress(expanded_tables.get(key), timestamp));
-
-                        let computed_space;
-                        if (axis == 'x') computed_space = expanded_space_px + 0.5*(expanded_size_x(key) - EXPANDED_SIZE_X);
-                        if (axis == 'y') computed_space = expanded_space_px + 0.5*(expanded_size_y(key) - EXPANDED_SIZE_Y);
-
-                        space_needed = lerp(hex_space_px, computed_space, t);
-                    }
-                    space_needed *= 2;
-                    space_map_x[idx_x] = Math.max(space_map_x[idx_x] ?? 0, space_needed);
-                }
-
-                return _x => {
-                    const x = _x*4 + 0.5;
-                    const x_int = Math.floor(x);
-                    const x_frac = x - x_int;
-
-                    let ret = 0;
-                    for (let i = space_map_x_min; i <= x_int; i++) {
-                        ret += (space_map_x[i] ?? 0) * ((i == x_int) ? x_frac : 1);
-                    }
-                    return ret;
-                }
-            }
-            const adjustedX = layout_map_axis('x', 600, 1000); //1200);
-            const adjustedY = layout_map_axis('y', 500, 2000); //2000);
-            const HEX_SIZE = 450;
-            /* palette */
-            const bone = [235, 235, 235, 255];
-            const highlight = [0, 0, 0, 255];
-            hex_to_four_channel(highlight, DOMAIN_INFO[active_domain].color);
-            const highlight_hover = [
-                /* "boy i sure do hope these are in Linear, not SRGB" - ced
-                 * ...
-                 * "They are in SRGB." -- narrator */
-                Math.max(highlight[0] - 25, 0),
-                Math.max(highlight[1] - 25, 0),
-                Math.max(highlight[2] - 25, 0),
-                highlight[3]
-            ];
-            const highlight_lines = [
-                /* "boy i sure do hope these are in Linear, not SRGB" - ced
-                 * ...
-                 * "They are in SRGB." -- narrator */
-                Math.min(255, highlight[0] + 30),
-                Math.min(255, highlight[1] + 30),
-                Math.min(255, highlight[2] + 30),
-                highlight[3]
-            ];
-
-            /* draw lines connecting tables/hexes */
-            for (const from_key in tables) {
-                const from_x = adjustedX(tables[from_key].x);
-                const from_y = adjustedY(tables[from_key].y);
-                const from_expanded = expanded_tables.get(from_key);
-                const from_expanded_t = ease_out_elastic(expanded_progress(from_expanded, timestamp));
-
-                for (const edge of edges) {
-                    if (edge[0] != from_key) continue;
-                    if (!(edge[1] in tables)) continue;
-
-                    /* TODO: support this */
-                    if (edge[0] == edge[1]) continue;
-
-                    const circular = edgeSet.has(''+[edge[1], edge[0]]);
-
-                    const to_key = edge[1];
-                    const to_x = adjustedX(tables[to_key].x);
-                    const to_y = adjustedY(tables[to_key].y);
-                    const to_expanded = expanded_tables.get(to_key);
-                    const to_expanded_t = ease_out_elastic(expanded_progress(to_expanded, timestamp));
-
-
-                    /* TO GENERATE AESTHETICALLY PLEASING CONTROL POINTS:
-                     * - find the face of the hexagon we're coming out of
-                     * - create a vector tangent to that hexagon face[0]
-                     * - multiply it by some constant, add to point where we leave hex */
-
-                    /* TO GET VECTOR TANGENT TO OUR HEXAGON FACE[0] 
-                     * - get vector delta pointing from US to THEM
-                     * - get angle from (1, 0) to delta (atan2)
-                     * - round to nearest multiple of (Math.PI*2)/6 */
-
-                    /* NOTE: to match existing SVG-based renderer, I actually "round to nearest face"
-                     * as if it were a square ... */
-
-                    /* arrow starting point unit vector relative to origin hex */
-                    let out_x, out_y;
-                    {
-                        const dx = to_x - from_x;
-                        const dy = to_y - from_y;
-                        const dlen = Math.sqrt(dx*dx + dy*dy); /* used to weight control point spacing */
-                        // const hex = (Math.PI*2)/4; /* would be a sixth of a revolution in radians, but see note */
-                        const adjust = 0;// lerp(hex/2, -0.3, from_expanded_t)
-                        let angle = Math.atan2(dy, dx) - adjust;
-                        // angle = Math.round(angle / hex) * hex + adjust;
-                        // if (Math.abs(dy) < 1) /* make horizontal lines straight */
-                        //     angle = (dx > 0) ? 0 : Math.PI;
-                        out_x = Math.cos(angle);
-                        out_y = Math.sin(angle);
-                    }
-
-                    /* arrow destination unit vector relative to target hex */
-                    let in_x, in_y;
-                    {
-                        const dx = to_x - from_x;
-                        const dy = to_y - from_y;
-                        const dlen = Math.sqrt(dx*dx + dy*dy); /* used to weight control point spacing */
-                        // const hex = (Math.PI*2)/lerp(6, 4, to_expanded_t); /* would be a sixth of a revolution in radians, but see note */
-                        const adjust = 0;// lerp(hex/2, 0.3, to_expanded_t);
-                        let angle = Math.atan2(dy, dx) - adjust;
-                        // angle = Math.round(angle / hex) * hex + adjust;
-                        // if (Math.abs(dy) < 1) /* make horizontal lines straight */
-                        //     angle = (dx > 0) ? 0 : Math.PI;
-                        in_x = -Math.cos(angle);
-                        in_y = -Math.sin(angle);
-                    }
-
-                    {
-                        const ARROWHEAD_BACK    = 84.0;
-                        const ARROWHEAD_WIDTH   = 36.0;
-
-                        const FROM_SIZE_X = lerp(195,      expanded_size_x(from_key)*0.5, from_expanded_t);
-                        const FROM_SIZE_Y = lerp(165,      expanded_size_y(from_key)*0.5, from_expanded_t);
-                        const TO_SIZE_X   = lerp(195*1.05, expanded_size_x(  to_key)    ,   to_expanded_t);
-                        const TO_SIZE_Y   = lerp(165*1.05, expanded_size_y(  to_key)    ,   to_expanded_t);
-
-                        let   start_x = from_x+out_x*FROM_SIZE_X, start_y = from_y+out_y*FROM_SIZE_Y;
-                        let     end_x =   to_x+ in_x*TO_SIZE_X  ,   end_y =   to_y+ in_y*  TO_SIZE_Y;
-
-                        end_x = lerp(end_x, clamp(to_x-TO_SIZE_X/2, end_x, to_x+TO_SIZE_X/2), to_expanded_t);
-                        end_y = lerp(end_y, clamp(to_y-TO_SIZE_Y/2, end_y, to_y+TO_SIZE_Y/2), to_expanded_t);
-
-                        end_x += in_x*ARROWHEAD_BACK*1.5
-                        end_y += in_y*ARROWHEAD_BACK*1.5
-
-                        let len = Math.sqrt((start_x - end_x)*(start_x - end_x) + (start_y - end_y)*(start_y - end_y));
-                        let ctrl1_x = start_x+out_x*0.04*len, ctrl1_y = start_y+out_y*0.20*len;
-                        let ctrl2_x =   end_x+ in_x*0.08*len, ctrl2_y =   end_y+ in_y*0.35*len;
-
-                        if (circular) {
-                            const px = -in_y;
-                            const py =  in_x;
-
-                            ctrl1_x = lerp(start_x, end_x, 0.5) + 150*px;
-                            ctrl1_y = lerp(start_y, end_y, 0.5) + 150*py;
-                            ctrl2_x = lerp(start_x, end_x, 0.5) + 150*px;
-                            ctrl2_y = lerp(start_y, end_y, 0.5) + 150*py;
-
-                            end_x   += 50*px;
-                            end_y   += 50*py;
-                            start_x += 50*px;
-                            start_y += 50*py;
-                        }
-
-                        drawBezier4(
-                            start_x, start_y, /* assumes hex is 175 radius */
-                            ctrl1_x, ctrl1_y,
-                            ctrl2_x, ctrl2_y, /* control point hits harder going in */
-                              end_x,   end_y, /* assumes hex is 175 radius */
-                            25, highlight_lines
-                        )
-
-                        {
-                            const    start = [start_x, start_y];
-                            const control1 = [ctrl1_x, ctrl1_y];
-                            const control2 = [ctrl2_x, ctrl2_y];
-                            const      end = [  end_x,   end_y];
-
-                            let arrow_back = [0, 0];
-                            if (Math.abs(in_y - out_y) > 0) {
-                                bezier4_sample(arrow_back, start, control1, control2, end, 0.98);
-                            } else {
-                                arrow_back = [ start_x, start_y ];
-                            }
-
-                            const dx = arrow_back[0] - end_x;
-                            const dy = arrow_back[1] - end_y;
-
-                            /* normalize */
-                            let tlen = Math.sqrt(dx*dx + dy*dy);
-                            if (tlen > 0) {
-                                const tx = dx/tlen;
-                                const ty = dy/tlen;
-
-                                const arrow_back_x  = end_x + tx*10;
-                                const arrow_back_y  = end_y + ty*10;
-                                const arrow_front_x = end_x - tx*(ARROWHEAD_BACK - 10);
-                                const arrow_front_y = end_y - ty*(ARROWHEAD_BACK - 10);
-
-                                const px = -ty * ARROWHEAD_WIDTH;
-                                const py =  tx * ARROWHEAD_WIDTH;
-
-                                drawTriangle(
-                                    arrow_back_x+px, arrow_back_y+py,
-                                    arrow_back_x-px, arrow_back_y-py,
-                                    arrow_front_x  , arrow_front_y  ,
-                                    highlight_lines
-                                );
-                            }
-                        }
-                    }
-                }
-            }
-
-            /* draw tables/hexes */
-            for (const key in tables) {
-                let expanded = expanded_tables.get(key);
-
-                const x = adjustedX(tables[key].x);
-                const y = adjustedY(tables[key].y);
-
-                // const size_x = expanded_show(expanded, timestamp) ? EXPANDED_SIZE_X : HEX_SIZE;
-                // const size_y = expanded_show(expanded, timestamp) ? EXPANDED_SIZE_Y : HEX_SIZE;
-                const expansion_progress = ease_out_elastic(expanded_progress(expanded, timestamp));
-                const size_x = lerp(HEX_SIZE, expanded_size_x(key), Math.min(1.0, expansion_progress));
-                const size_y = lerp(HEX_SIZE, expanded_size_y(key), Math.min(1.0, expansion_progress));
-
-                const min_x = x - size_x/2;
-                const min_y = y - size_y/2;
-                const max_x = x + size_x/2;
-                const max_y = y + size_y/2;
-                const hover = (mouse_world_x > min_x && mouse_world_x < max_x) &&
-                              (mouse_world_y > min_y && mouse_world_y < max_y);
-
-                if (mouse_clicked && hover) {
-                    if (expanded_tables.has(key)) {
-                        expanded_tables.delete(key);
-                    } else {
-                        expanded_tables.set(key, { scroll: 0, expanded_timestamp: timestamp });
-                    }
-                }
-
-                let i = 0;
-                if (expansion_progress >= 0.8) {
-                    const pad_x = 40;
-                    let pen_x = x - size_x/2 + pad_x;
-                    let pen_y = min_y;
-
-                    const outline_thickness = 6;
-                    const rect_size_y = labels.fontsize*3.15;
-                    const rect_space_y_padded = rect_size_y*1.2;
-
-                    const instance_count = (key in graph) ? graph[key].length : 0;
-                    const instance_columns = 1 + Math.min(2, instance_count-1);
-                    const instance_rows = Math.ceil(instance_count / instance_columns);
-                    const instance_width = 378;
-                    const instance_pad_x = 32;
-
-                    /* draw base outine */
-                    const color = hover ? [208+4, 208+4, 208, 255] : [215+4, 215+4, 215, 255];
-                    {
-                        const over = expansion_progress - 1.0;
-                        drawBox(
-                            min_x - over*0.25 * EXPANDED_SIZE_X,
-                            min_y - over*0.25 * EXPANDED_SIZE_Y,
-                            max_x + over*0.25 * EXPANDED_SIZE_X,
-                            max_y + over*0.25 * EXPANDED_SIZE_Y,
-                            color
-                        );
-                    }
-
-                    /* draw colorful top bar */
-                    {
-                        pen_y += 40;
-                        const bar_size_y = expanded_titles.fontsize*0.6;
-                        const bar_x = pen_x;
-                        const bar_y = pen_y;
-                        drawBox(
-                            bar_x,
-                            bar_y,
-                            max_x - pad_x*2,
-                            bar_y + bar_size_y,
-                            highlight
-                        )
-                        pen_y += bar_size_y * 2;
-                    }
-
-                    /* title */
-                    {
-                        const pad_x = 45;
-                        const text_x = pen_x;
-                        const text_y = pen_y + expanded_titles.fontsize*i++;
-                        expanded_titles.drawText(spaceCamel(key), text_x, text_y, ALIGN_LEFT);
-                        pen_y = text_y + expanded_titles.fontsize*2.5;
-                        pen_x = text_x;
-                    }
-
-                    /* instances */
-                    const scrollbox_bottom_pad = 45;
-                    const clampbox = {
-                        min_x: pen_x,
-                        min_y: pen_y,
-                        max_x: max_x,
-                        max_y: max_y - scrollbox_bottom_pad,
-                    };
-
-                    const instances_all_size_y = rect_space_y_padded*instance_rows;
-                    const visible_size_y = clampbox.max_y - clampbox.min_y;
-                    const instances_all_max_x = pen_x + instance_columns*(instance_width + instance_pad_x) - instance_pad_x;
-                    const instances_all_max_y = pen_y + instances_all_size_y;
-                    button_aspect_ratio = (instance_width - 2.0*outline_thickness) / (rect_size_y - 2.0*outline_thickness);
-
-                    if (hover) {
-                        scroll_captured = true;
-                    }
-
-                    if (scroll && hover) {
-
-                        expanded.scroll += scroll_delta;
-                        scroll_delta = 0;
-
-                        expanded.scroll = Math.max(expanded.scroll, 0);
-
-                        const max_scroll = instances_all_max_y - pen_y - visible_size_y;
-                        expanded.scroll = Math.min(expanded.scroll, max_scroll);
-                    }
-
-                    for (let column = 0; column < instance_columns; column++) {
-                        const view_top_row_index = Math.floor(expanded.scroll / rect_space_y_padded);
-                        const view_bottom_row_index = Math.ceil((expanded.scroll + visible_size_y) / rect_space_y_padded);
-                        for (let i = view_top_row_index; i < view_bottom_row_index; i++) {
-                            const graph_index = i*instance_columns + column;
-                            if (!(graph[key] && graph[key][graph_index])) continue;
-
-                            const rect_size_x = instance_width;
-                            const rect_x = pen_x + column*(rect_size_x + instance_pad_x);
-                            let rect_y = pen_y + i*rect_space_y_padded - expanded.scroll;
-                            drawBoxClamped(
-                                clampbox,
-                                rect_x,
-                                rect_y,
-                                rect_x + rect_size_x,
-                                rect_y + rect_size_y,
-                                [245, 245, 245, 255]
-                            );
-                            drawButtonClamped(
-                                clampbox,
-                                rect_x + outline_thickness,
-                                rect_y + outline_thickness,
-                                rect_x + rect_size_x - outline_thickness,
-                                rect_y + rect_size_y - outline_thickness
-                            );
-                            if (i == view_top_row_index && (rect_y - pen_y) < -20) continue;
-                            if (i == (view_bottom_row_index-1) && (rect_y + rect_size_y) - (pen_y + visible_size_y) > 20) continue;
-
-                            labels.drawText(
-                                (graph[key][graph_index].name ?? graph[key][graph_index].ID).substr(0, 14),
-                                rect_x + rect_size_x/2,
-                                rect_y + (rect_size_y - labels.fontsize)*0.6,
-                                ALIGN_CENTER
-                            );
-                        }
-                    }
-
-                    /* scrollbar */
-                    if (visible_size_y < instances_all_size_y) {
-                        const total_size_y = instances_all_max_y - pen_y;
-                        const visible_size_y = clampbox.max_y - clampbox.min_y;
-
-                        const scrollbar_size_y = (visible_size_y/total_size_y) * visible_size_y;
-
-                        const max_scroll = instances_all_max_y - pen_y - visible_size_y;
-                        const scrollbar_offset_y = (expanded.scroll / max_scroll) * (visible_size_y - scrollbar_size_y);
-
-                        const scrollbar_min_y = pen_y + scrollbar_offset_y;
-                        const scrollbar_max_y = pen_y + scrollbar_offset_y + scrollbar_size_y;
-
-                        drawBox(
-                            instances_all_max_x + 30,
-                            scrollbar_min_y,
-                            instances_all_max_x + 30 + 40,
-                            scrollbar_max_y,
-                            [140, 140, 140, 255]
-                        )
-                    }
-
-                } else {
-
-                    /* draw "hex" */
-                    const color = hover ? highlight_hover : highlight;
-                    drawHex(min_x-17, min_y-17, max_x+17, max_y+17, bone, false);
-                    drawHex(min_x   , min_y   , max_x   , max_y   , color, true);
-
-                    const words = spaceCamel(key).split(' ');
-                    const word_height = words.length * hex_titles.fontsize;
-                    for (const word of words) {
-                        const center = ((max_y - min_y) - word_height) * 0.5;
-                        hex_titles.drawText(word, x, min_y + center + hex_titles.fontsize*i++, ALIGN_CENTER);
-                    }
-                }
-            }
-        }
-
-        /* prepare input state for next frame */
-        {
-            mouse_released = false;
-        }
-
-        function geoPass(color) {
-            gl.useProgram(geo_shader.program);
-            gl.enableVertexAttribArray(geo_shader.a_pos);
-            gl.enableVertexAttribArray(geo_shader.a_color);
-
-            gl.uniformMatrix4fv(geo_shader.u_matrix, false, pixel_matrix);
-            gl.uniform4f(geo_shader.u_color, color[0], color[1], color[2], color[3]);
-
-            /* upload/bind geometry */
-
-            let vbuf_count = 3;
-            {
-                gl.bindBuffer(gl.ARRAY_BUFFER, geo_vbuf_pos);
-                gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(geo_pos), gl.STATIC_DRAW);
-                gl.vertexAttribPointer(geo_shader.a_pos, 3, gl.FLOAT, false, 0, 0);
-
-                gl.bindBuffer(gl.ARRAY_BUFFER, geo_vbuf_color);
-                gl.bufferData(gl.ARRAY_BUFFER, new Uint8Array(geo_color), gl.STATIC_DRAW);
-                gl.vertexAttribPointer(geo_shader.a_color, 4, gl.UNSIGNED_BYTE, true, 0, 0);
-
-                gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, geo_ibuf);
-                gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, new Uint16Array(geo_idx), gl.STATIC_DRAW);
-            }
-
-            gl.drawElements(gl.TRIANGLES, geo_idx.length, gl.UNSIGNED_SHORT, 0);
-        }
-
+        gl.enable(gl.DEPTH_TEST);
+        gl.depthFunc(gl.LEQUAL);
 
         /* shadow pass "pre-post-processing :)" */
         {
@@ -13951,7 +13421,7 @@ requestAnimationFrame(function frame(timestamp) {
             gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
 
             /* geo pass */
-            geoPass([0, 0, 0, 0.48]);
+            this.geoPass([0, 0, 0, 0.48]);
         }
 
         const passes = [
@@ -13993,7 +13463,7 @@ requestAnimationFrame(function frame(timestamp) {
             gl.clear(gl.DEPTH_BUFFER_BIT);
 
             /* geo pass */
-            geoPass([1, 1, 1, 1]);
+            this.geoPass([1, 1, 1, 1]);
 
             /* button pass */
             {
@@ -14002,7 +13472,7 @@ requestAnimationFrame(function frame(timestamp) {
                 gl.enableVertexAttribArray(button_shader.a_color);
 
                 gl.uniformMatrix4fv(button_shader.u_matrix, false, pixel_matrix);
-                gl.uniform1f(button_shader.u_aspect_ratio, button_aspect_ratio);
+                gl.uniform1f(button_shader.u_aspect_ratio, this.button_aspect_ratio);
                 {
                     const highlight = [0, 0, 0, 255];
                     hex_to_four_channel(highlight, DOMAIN_INFO[active_domain].color);
@@ -14020,23 +13490,23 @@ requestAnimationFrame(function frame(timestamp) {
                 let vbuf_count = 3;
                 {
                     gl.bindBuffer(gl.ARRAY_BUFFER, button_vbuf_pos);
-                    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(button_pos), gl.STATIC_DRAW);
+                    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(this.button_pos), gl.STATIC_DRAW);
                     gl.vertexAttribPointer(button_shader.a_pos, 3, gl.FLOAT, false, 0, 0);
 
                     gl.bindBuffer(gl.ARRAY_BUFFER, button_vbuf_uv);
-                    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(button_uv), gl.STATIC_DRAW);
+                    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(this.button_uv), gl.STATIC_DRAW);
                     gl.vertexAttribPointer(button_shader.a_uv, 2, gl.FLOAT, false, 0, 0);
 
                     gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, button_ibuf);
-                    gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, new Uint16Array(button_idx), gl.STATIC_DRAW);
+                    gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, new Uint16Array(this.button_idx), gl.STATIC_DRAW);
                 }
 
-                gl.drawElements(gl.TRIANGLES, button_idx.length, gl.UNSIGNED_SHORT, 0);
+                gl.drawElements(gl.TRIANGLES, this.button_idx.length, gl.UNSIGNED_SHORT, 0);
             }
 
 
             /* text pass */
-            for (const font_buf of [labels, expanded_titles, hex_titles]) {
+            for (const font_buf of this.font_bufs) {
                 gl.useProgram(text_shader.program);
                 gl.enableVertexAttribArray(text_shader.a_pos);
                 gl.enableVertexAttribArray(text_shader.a_uv);
@@ -14083,8 +13553,696 @@ requestAnimationFrame(function frame(timestamp) {
                 gl.drawArrays(gl.TRIANGLES, 0, vbuf_count);
             }
         }
+    }
+}
+
+class Input {
+    constructor(element = window) {
+        this.mouse_world_x = 0;
+        this.mouse_world_y = 0;
+        this.mouse_clicked = false;
+
+        this.scroll_captured = false;
+
+        this.scroll = 0;
+        /* NOTE: scroll_delta is "consumed (set to 0)" by things that capture scroll */
+        this.scroll_delta = 0;
+
+        this.mouse_x = 0;
+        this.mouse_y = 0;
+
+        this.mouse_down_x = 0;
+        this.mouse_down_y = 0;
+
+        this.mouse_down = 0;
+        this.mouse_released = false;
+
+        this.view_matrix = mat4_create();
+        {
+            /* scale view_matrix to fit 5000 logical pixels */
+            const aspect_ratio = window.innerHeight/window.innerWidth;
+            const width = 5500;
+            const x = 3100;
+            const y = 3100;
+            mat4_ortho(this.view_matrix, x-width, x+width, y+width*aspect_ratio, y-width*aspect_ratio, 1, -1)
+            mat4_mul(this.view_matrix, mat4_invert(mat4_create(), pixel_matrix), this.view_matrix);
+        }
+
+        let wheelTimeout;
+        element.addEventListener('wheel', e => {
+            if (this.mouse_down) return;
+            this.scroll = Math.sign(e.deltaY);
+            this.scroll_delta = e.deltaY;
+
+            clearTimeout(wheelTimeout)
+            wheelTimeout = setTimeout(() => this.scroll = 0, 100)
+        });
+        element.addEventListener('mousedown', e => {
+            this.mouse_down = true;
+            this.mouse_down_x = e.clientX*window.devicePixelRatio;
+            this.mouse_down_y = e.clientY*window.devicePixelRatio;
+        });
+        element.addEventListener('mousemove', e => {
+            this.mouse_x = e.clientX*window.devicePixelRatio;
+            this.mouse_y = e.clientY*window.devicePixelRatio;
+        });
+        element.addEventListener('mouseup', e => {
+            this.mouse_released = true;
+            this.mouse_x = e.clientX*window.devicePixelRatio;
+            this.mouse_y = e.clientY*window.devicePixelRatio;
+        });
 
     }
+
+    updateCamera() {
+        const { mouse_x, mouse_down_x,
+                mouse_y, mouse_down_y,
+                view_matrix } = this;
+
+        /* handle mouse click state; e.g. this is where you would handle double click */
+        {
+            const mouse_moved = Math.sqrt((mouse_x - mouse_down_x)*(mouse_x - mouse_down_x) +
+                                          (mouse_y - mouse_down_y)*(mouse_y - mouse_down_y)) > 2;
+            this.mouse_clicked = this.mouse_released && !mouse_moved;
+        }
+
+        /* create frame.view for this frame */
+        let view;
+        {
+            /* zoom toward mouse */
+            if (this.scroll && !this.scroll_captured) {
+                const zoom = 1.0 + 0.03*this.scroll;
+
+                const focal = [mouse_x, mouse_y, 0, 1];
+                const tl = [-1, -1, -1,  1]
+                const br = [ 1,  1,  1,  1]
+                const inv = mat4_invert(mat4_create(), view_matrix);
+                mat4_transform_vec4(tl, tl, inv);
+                mat4_transform_vec4(br, br, inv);
+                mat4_transform_vec4(focal, focal, inv);
+
+                mat4_ortho(
+                    view_matrix,
+                    (tl[0] - focal[0])*zoom + focal[0],
+                    (br[0] - focal[0])*zoom + focal[0],
+                    (tl[1] - focal[1])*zoom + focal[1],
+                    (br[1] - focal[1])*zoom + focal[1],
+                    br[2],
+                    tl[2]
+                )
+            }
+
+            /* mouse drag */
+            let drag_x = 0, drag_y = 0;
+            if (this.mouse_down) {
+                drag_x += (mouse_x - mouse_down_x)
+                drag_y += (mouse_y - mouse_down_y)
+
+                if (this.mouse_released) {
+                    this.mouse_down = false;
+
+                    mat4_mul(view_matrix, mat4_create_translate(drag_x, drag_y), view_matrix);
+
+                    drag_x = drag_y = 0;
+                }
+            }
+
+            /* text rendering wants the pen pixel-aligned, so scale here */
+            /* our pixel_matrix puts things in 0..1, but everything before that is in pixels */
+            view = mat4_create_translate(drag_x, drag_y)
+            mat4_mul(view, view, view_matrix);
+        }
+
+        /* now that we have the world -> screen camera transform for the frame,
+         * we can invert it to get where the mouse is (screen -> world) */
+        {
+            const inv = mat4_invert(mat4_create(), view);
+            const p = [mouse_x, mouse_y, 0, 1];
+            mat4_transform_vec4(p, p, inv);
+            this.mouse_world_x = p[0];
+            this.mouse_world_y = p[1];
+        }
+
+        /* prepare for coming frame of input */
+        {
+            input.scroll_captured = false;
+        }
+
+        return view;
+    }
+
+    endFrame() {
+        /* end this frame of input */
+        {
+            this.mouse_released = false;
+        }
+    }
+}
+
+
+let active_domain = "Equipment";
+let table_state = new Map();
+let expanded_tables = new Map([["Model", { scroll: 0, expanded_timestamp: 0 }]]);
+
+/* fonts */
+const FONT_SIZE_LABELS          = 34; /* the text you see on buttons */
+const FONT_SIZE_EXPANDED_TITLE  = 50; /* the black text at the top of the window you get when you expand a hex */
+const FONT_SIZE_HEX_TITLE       = 58; /* the font size for the white titles on the hexes */
+const FONT_COLOR_LABELS         = [1, 1, 1, 1];
+const FONT_COLOR_EXPANDED_TITLE = [0, 0, 0, 1];
+const FONT_COLOR_HEX_TITLE      = [1, 1, 1, 1];
+const FONT_EXTRA_LETTER_SPACING_LABELS = 2;
+
+const EXPANDED_SIZE_X = 1350;
+const EXPANDED_SIZE_Y = 2970;
+const HEX_SIZE = 450;
+
+/* graph layouting sizes */
+const LAYOUT_SPACE_HEX_X      = 600;
+const LAYOUT_SPACE_HEX_Y      = 500;
+const LAYOUT_SPACE_EXPANDED_X = 1000; /* this is really treated as a minimum bound; changing EXPANDED_SIZE_X has more of an effect */
+const LAYOUT_SPACE_EXPANDED_Y = 2000; /* this is really treated as a minimum bound; changing EXPANDED_SIZE_Y has more of an effect */
+
+/* expanded window paddings, margins, widths, thicknesses etc. */
+const SCROLLBAR_OFFSET                    =  30;
+const SCROLLBAR_WIDTH                     =  40;
+const SCROLLBOX_BOTTOM_PAD                =  45;                          /* distance between bottom of expanded window and the beginning of the scrollable instance area */
+const EXPANDED_WINDOW_INNER_PAD_X         =  40;                          /* distance between the side of the expanded window and any of the content */
+const EXPANDED_WINDOW_TITLE_BOTTOM_MARGIN = FONT_SIZE_EXPANDED_TITLE*2.5; /* distance between the top of the expanded window title and the content below */
+const EXPANDED_WINDOW_TOP_BAR_MARGIN      =  40;                          /* distance between the top of the expanded window and the top of the colorful bar */
+const EXPANDED_WINDOW_TOP_BAR_HEIGHT      = FONT_SIZE_EXPANDED_TITLE*0.6;
+const EXPANDED_WINDOW_BOUNCE_EXAGGERATION =   0.25;
+const EXPANDED_WINDOW_INSTANCE_WIDTH      = 378;                          /* size from left edge to right edge of button in expanded window */
+const EXPANDED_WINDOW_INSTANCE_PAD_X      =  32;                          /* horizontal size between adjacent buttons in expanded window */
+
+const BUTTON_TEXT_CHARACTERS_MAX = 14;
+const HEX_BORDER_THICKNESS       = 34;
+
+/* palette */
+const COLOR_HEX_BORDER               = [235, 235, 235, 255];
+const COLOR_BUTTON_BORDER            = [245, 245, 245, 255];
+const COLOR_SCROLLBAR                = [140, 140, 140, 255];
+const COLOR_EXPANDED_WINDOW_BG_HOVER = [212, 212, 208, 255];
+const COLOR_EXPANDED_WINDOW_BG       = [219, 219, 215, 255];
+
+/* lines/arrows connecting hexes/expanded windows */
+const ARROWHEAD_BACK    = 84.0;
+const ARROWHEAD_WIDTH   = 36.0;
+
+
+function expanded_show(expanded, timestamp) {
+    if (!expanded) return false;
+    if ((timestamp - expanded.expanded_timestamp) < 1000) return false;
+    return true;
+}
+function expanded_progress(expanded, timestamp) {
+    if (!expanded) return 0;
+
+    let t = (timestamp - expanded.expanded_timestamp) / 1000;
+    return clamp(0.0, t, 1.0);
+}
+function expanded_size_x(key) {
+    const instance_count = (key in graph) ? graph[key].length : 0;
+    const instance_columns = Math.max(1, 1 + Math.min(2, instance_count-1));
+    const EXPANDED_WINDOW_INSTANCE_WIDTH = 378;
+    const EXPANDED_WINDOW_INSTANCE_PAD_X = 32;
+    return EXPANDED_SIZE_X - ((3 - instance_columns) * EXPANDED_WINDOW_INSTANCE_WIDTH);
+}
+function expanded_size_y(key) {
+    const instance_count = (key in graph) ? graph[key].length : 0;
+    const rect_size_y = FONT_SIZE_LABELS*3.15;
+    const rect_space_y_padded = rect_size_y*1.2;
+
+    const instance_columns = Math.max(1, 1 + Math.min(2, instance_count-1));
+    const instance_rows_visible = Math.min(22, 1 + Math.ceil(instance_count/instance_columns));
+
+    return EXPANDED_SIZE_Y - ((22 - instance_rows_visible) * rect_space_y_padded);
+}
+
+window.onkeydown = e => {
+    if (e.key == " ") {
+        const categories = ["Asset", "Binding", "Building", "Event", "Environment", "Equipment", "Geometry", "People", "Property", "Quanta", "Site", "System"];
+        active_domain = categories[(categories.indexOf(active_domain) + 1) % categories.length];
+    }
+}
+
+function uiFrame(frame, input, timestamp) {
+    const labels          = frame.makeFontFace(FONT_COLOR_LABELS        , FONT_SIZE_LABELS        , gl_font_face_labels    );
+    const expanded_titles = frame.makeFontFace(FONT_COLOR_EXPANDED_TITLE, FONT_SIZE_EXPANDED_TITLE, gl_font_face_hex_titles);
+    const hex_titles      = frame.makeFontFace(FONT_COLOR_HEX_TITLE     , FONT_SIZE_HEX_TITLE     , gl_font_face_hex_titles);
+    labels.extra_letter_spacing = FONT_EXTRA_LETTER_SPACING_LABELS;
+
+    const spaceCamel = key =>
+        key
+            .split('')
+            .reduce(
+                (a, c) => {
+                    if (c == c.toUpperCase())
+                        a.push(' ');
+                    a.push(c);
+                    return a;
+                },
+                []
+            )
+            .join('')
+            .trim();
+
+    const tables = getZoomedHexagonPositions(active_domain).internal;
+    const edges = domain_edges.find(x => x.domain == active_domain).internal.map(x => [x.from.table, x.to.table])
+    const edgeSet = new Set(edges.map(x => x+''));
+
+    const layout_map_axis = (axis, hex_space_px, expanded_space_px) => {
+        let space_map_x_min = 0;
+        let space_map_x_max = 0;
+        const space_map_x = {};
+        for (const key in tables) {
+            const idx_x = Math.floor(tables[key][axis]*4);
+
+            space_map_x_min = Math.min(space_map_x_min, idx_x);
+            space_map_x_max = Math.max(space_map_x_max, idx_x);
+
+            let space_needed = hex_space_px;
+            if (expanded_tables.has(key)) {
+                const t = ease_out_elastic(expanded_progress(expanded_tables.get(key), timestamp));
+
+                let computed_space;
+                if (axis == 'x') computed_space = expanded_space_px + 0.5*(expanded_size_x(key) - EXPANDED_SIZE_X);
+                if (axis == 'y') computed_space = expanded_space_px + 0.5*(expanded_size_y(key) - EXPANDED_SIZE_Y);
+
+                space_needed = lerp(hex_space_px, computed_space, t);
+            }
+            space_needed *= 2;
+            space_map_x[idx_x] = Math.max(space_map_x[idx_x] ?? 0, space_needed);
+        }
+
+        return _x => {
+            /* the 4 here is the magic number for ensuring each hex in the layout gets its own slot;
+             * if that stops working, just sort the hexes on each axis and comb through to make the slots
+             *
+             * the + 0.5 just puts them in the center of their grid slot, for funsies (still works if you remove it) */
+            const x = _x*4 + 0.5;
+            const x_int = Math.floor(x);
+            const x_frac = x - x_int;
+
+            let ret = 0;
+            for (let i = space_map_x_min; i <= x_int; i++) {
+                ret += (space_map_x[i] ?? 0) * ((i == x_int) ? x_frac : 1);
+            }
+            return ret;
+        }
+    }
+    const adjustedX = layout_map_axis('x', LAYOUT_SPACE_HEX_X, LAYOUT_SPACE_EXPANDED_X); //1200);
+    const adjustedY = layout_map_axis('y', LAYOUT_SPACE_HEX_X, LAYOUT_SPACE_EXPANDED_Y); //2000);
+    /* palette */
+    const highlight = [0, 0, 0, 255];
+    hex_to_four_channel(highlight, DOMAIN_INFO[active_domain].color);
+    const highlight_hover = [
+        /* "boy i sure do hope these are in Linear, not SRGB" - ced
+         * ...
+         * "They are in SRGB." -- narrator */
+        Math.max(highlight[0] - 25, 0),
+        Math.max(highlight[1] - 25, 0),
+        Math.max(highlight[2] - 25, 0),
+        highlight[3]
+    ];
+    const highlight_lines = [
+        /* "boy i sure do hope these are in Linear, not SRGB" - ced
+         * ...
+         * "They are in SRGB." -- narrator */
+        Math.min(255, highlight[0] + 30),
+        Math.min(255, highlight[1] + 30),
+        Math.min(255, highlight[2] + 30),
+        highlight[3]
+    ];
+
+    /* draw lines connecting tables/hexes */
+    for (const from_key in tables) {
+        const from_x = adjustedX(tables[from_key].x);
+        const from_y = adjustedY(tables[from_key].y);
+        const from_expanded = expanded_tables.get(from_key);
+        const from_expanded_t = ease_out_elastic(expanded_progress(from_expanded, timestamp));
+
+        for (const edge of edges) {
+            if (edge[0] != from_key) continue;
+            if (!(edge[1] in tables)) continue;
+
+            /* TODO: support this */
+            if (edge[0] == edge[1]) continue;
+
+            const circular = edgeSet.has(''+[edge[1], edge[0]]);
+
+            const to_key = edge[1];
+            const to_x = adjustedX(tables[to_key].x);
+            const to_y = adjustedY(tables[to_key].y);
+            const to_expanded = expanded_tables.get(to_key);
+            const to_expanded_t = ease_out_elastic(expanded_progress(to_expanded, timestamp));
+
+            /* TO GENERATE AESTHETICALLY PLEASING CONTROL POINTS:
+             * - find the face of the hexagon we're coming out of
+             * - create a vector tangent to that hexagon face[0]
+             * - multiply it by some constant, add to point where we leave hex */
+
+            /* TO GET VECTOR TANGENT TO OUR HEXAGON FACE[0]
+             * - get vector delta pointing from US to THEM
+             * - get angle from (1, 0) to delta (atan2)
+             * - round to nearest multiple of (Math.PI*2)/6 */
+
+            /* NOTE: to match existing SVG-based renderer, I used to actually "round to nearest face"
+             * as if it were a hex/square ... stopped doing that because it was ugly, but left the code
+             * here commented out in case somebody changes their mind */
+
+            /* arrow starting point unit vector relative to origin hex */
+            let out_x, out_y;
+            {
+                const dx = to_x - from_x;
+                const dy = to_y - from_y;
+                const dlen = Math.sqrt(dx*dx + dy*dy); /* used to weight control point spacing */
+                // const hex = (Math.PI*2)/4; /* would be a sixth of a revolution in radians, but see note */
+                const adjust = 0;// lerp(hex/2, -0.3, from_expanded_t)
+                let angle = Math.atan2(dy, dx) - adjust;
+                // angle = Math.round(angle / hex) * hex + adjust;
+                // if (Math.abs(dy) < 1) /* make horizontal lines straight */
+                //     angle = (dx > 0) ? 0 : Math.PI;
+                out_x = Math.cos(angle);
+                out_y = Math.sin(angle);
+            }
+
+            /* arrow destination unit vector relative to target hex */
+            let in_x, in_y;
+            {
+                const dx = to_x - from_x;
+                const dy = to_y - from_y;
+                const dlen = Math.sqrt(dx*dx + dy*dy); /* used to weight control point spacing */
+                // const hex = (Math.PI*2)/lerp(6, 4, to_expanded_t); /* would be a sixth of a revolution in radians, but see note */
+                const adjust = 0;// lerp(hex/2, 0.3, to_expanded_t);
+                let angle = Math.atan2(dy, dx) - adjust;
+                // angle = Math.round(angle / hex) * hex + adjust;
+                // if (Math.abs(dy) < 1) /* make horizontal lines straight */
+                //     angle = (dx > 0) ? 0 : Math.PI;
+                in_x = -Math.cos(angle);
+                in_y = -Math.sin(angle);
+            }
+
+            {
+                /* the first argument to "lerp" here are points on the surface of a hexagon
+                 * (exaggerated for the TO so that the arrow doesn't poke into it) */
+                const FROM_SIZE_X = lerp(195,      expanded_size_x(from_key)*0.5, from_expanded_t);
+                const FROM_SIZE_Y = lerp(165,      expanded_size_y(from_key)*0.5, from_expanded_t);
+                const TO_SIZE_X   = lerp(195*1.05, expanded_size_x(  to_key)    ,   to_expanded_t);
+                const TO_SIZE_Y   = lerp(165*1.05, expanded_size_y(  to_key)    ,   to_expanded_t);
+
+                let   start_x = from_x+out_x*FROM_SIZE_X, start_y = from_y+out_y*FROM_SIZE_Y;
+                let     end_x =   to_x+ in_x*TO_SIZE_X  ,   end_y =   to_y+ in_y*  TO_SIZE_Y;
+
+                end_x = lerp(end_x, clamp(to_x-TO_SIZE_X/2, end_x, to_x+TO_SIZE_X/2), to_expanded_t);
+                end_y = lerp(end_y, clamp(to_y-TO_SIZE_Y/2, end_y, to_y+TO_SIZE_Y/2), to_expanded_t);
+
+                end_x += in_x*ARROWHEAD_BACK*1.5
+                end_y += in_y*ARROWHEAD_BACK*1.5
+
+                let len = Math.sqrt((start_x - end_x)*(start_x - end_x) + (start_y - end_y)*(start_y - end_y));
+                /* these numbers control how curvy the lines are. */
+                let ctrl1_x = start_x+out_x*0.04*len, ctrl1_y = start_y+out_y*0.20*len;
+                let ctrl2_x =   end_x+ in_x*0.08*len, ctrl2_y =   end_y+ in_y*0.35*len;
+
+                if (circular) {
+                    const px = -in_y;
+                    const py =  in_x;
+
+                    /* 150 here is how far out the middle of the arrow gets pushed
+                     * from the center to prevent the arrows from overlapping */
+                    ctrl1_x = lerp(start_x, end_x, 0.5) + 150*px;
+                    ctrl1_y = lerp(start_y, end_y, 0.5) + 150*py;
+                    ctrl2_x = lerp(start_x, end_x, 0.5) + 150*px;
+                    ctrl2_y = lerp(start_y, end_y, 0.5) + 150*py;
+
+                    /* we also move where the circular lines start/end for aesthetic reasons */
+                    end_x   += 50*px;
+                    end_y   += 50*py;
+                    start_x += 50*px;
+                    start_y += 50*py;
+                }
+
+                frame.drawBezier4(
+                    start_x, start_y, /* assumes hex is 175 radius */
+                    ctrl1_x, ctrl1_y,
+                    ctrl2_x, ctrl2_y, /* control point hits harder going in */
+                      end_x,   end_y, /* assumes hex is 175 radius */
+                    /* thickness, */ 25,
+                    /*     color, */ highlight_lines
+                )
+
+                {
+                    const    start = [start_x, start_y];
+                    const control1 = [ctrl1_x, ctrl1_y];
+                    const control2 = [ctrl2_x, ctrl2_y];
+                    const      end = [  end_x,   end_y];
+
+                    let arrow_back = [0, 0];
+                    if (Math.abs(in_y - out_y) > 0) {
+                        /* the 0.98 here is finicky; changing it can fix issues where the
+                         * arrow doesn't point in the direction you would expect it to. */
+                        bezier4_sample(arrow_back, start, control1, control2, end, 0.98);
+                    } else {
+                        arrow_back = [ start_x, start_y ];
+                    }
+
+                    const dx = arrow_back[0] - end_x;
+                    const dy = arrow_back[1] - end_y;
+
+                    /* normalize */
+                    let tlen = Math.sqrt(dx*dx + dy*dy);
+                    if (tlen > 0) {
+                        const tx = dx/tlen;
+                        const ty = dy/tlen;
+
+                        /* there is secretly an ARROWHEAD_FRONT, and it is 10 pixels
+                         * necessary to stop the end of the line from poking out */
+                        const arrow_back_x  = end_x + tx*10;
+                        const arrow_back_y  = end_y + ty*10;
+                        const arrow_front_x = end_x - tx*(ARROWHEAD_BACK - 10);
+                        const arrow_front_y = end_y - ty*(ARROWHEAD_BACK - 10);
+
+                        const px = -ty * ARROWHEAD_WIDTH;
+                        const py =  tx * ARROWHEAD_WIDTH;
+
+                        frame.drawTriangle(
+                            arrow_back_x+px, arrow_back_y+py,
+                            arrow_back_x-px, arrow_back_y-py,
+                            arrow_front_x  , arrow_front_y  ,
+                            highlight_lines
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    /* draw tables/hexes */
+    for (const key in tables) {
+        let expanded = expanded_tables.get(key);
+
+        const x = adjustedX(tables[key].x);
+        const y = adjustedY(tables[key].y);
+
+        const expansion_progress = ease_out_elastic(expanded_progress(expanded, timestamp));
+        const size_x = lerp(HEX_SIZE, expanded_size_x(key), Math.min(1.0, expansion_progress));
+        const size_y = lerp(HEX_SIZE, expanded_size_y(key), Math.min(1.0, expansion_progress));
+
+        const min_x = x - size_x/2;
+        const min_y = y - size_y/2;
+        const max_x = x + size_x/2;
+        const max_y = y + size_y/2;
+        const hover = (input.mouse_world_x > min_x && input.mouse_world_x < max_x) &&
+                      (input.mouse_world_y > min_y && input.mouse_world_y < max_y);
+
+        if (input.mouse_clicked && hover) {
+            if (expanded_tables.has(key)) {
+                expanded_tables.delete(key);
+            } else {
+                expanded_tables.set(key, { scroll: 0, expanded_timestamp: timestamp });
+            }
+        }
+
+        let i = 0;
+        if (expansion_progress >= 0.8) {
+            let pen_x = x - size_x/2 + EXPANDED_WINDOW_INNER_PAD_X;
+            let pen_y = min_y;
+
+            const outline_thickness = 6;
+            const rect_size_y = labels.fontsize*3.15;
+            const rect_space_y_padded = rect_size_y*1.2;
+
+            const instance_count = (key in graph) ? graph[key].length : 0;
+            const instance_columns = 1 + Math.min(2, instance_count-1);
+            const instance_rows = Math.ceil(instance_count / instance_columns);
+
+            /* draw base outine */
+            const color = hover ? COLOR_EXPANDED_WINDOW_BG_HOVER : COLOR_EXPANDED_WINDOW_BG;
+            {
+                const over = expansion_progress - 1.0;
+                frame.drawBox(
+                    min_x - over*EXPANDED_WINDOW_BOUNCE_EXAGGERATION * EXPANDED_SIZE_X,
+                    min_y - over*EXPANDED_WINDOW_BOUNCE_EXAGGERATION * EXPANDED_SIZE_Y,
+                    max_x + over*EXPANDED_WINDOW_BOUNCE_EXAGGERATION * EXPANDED_SIZE_X,
+                    max_y + over*EXPANDED_WINDOW_BOUNCE_EXAGGERATION * EXPANDED_SIZE_Y,
+                    color
+                );
+            }
+
+            /* draw colorful top bar */
+            {
+                pen_y += EXPANDED_WINDOW_TOP_BAR_MARGIN;
+                const bar_size_y = EXPANDED_WINDOW_TOP_BAR_HEIGHT;
+                const bar_x = pen_x;
+                const bar_y = pen_y;
+                frame.drawBox(
+                    bar_x,
+                    bar_y,
+                    max_x - EXPANDED_WINDOW_INNER_PAD_X*2, /* x2 for the left and right side */
+                    bar_y + bar_size_y,
+                    highlight
+                )
+                pen_y += bar_size_y * 2;
+            }
+
+            /* title */
+            {
+                const text_x = pen_x;
+                const text_y = pen_y + expanded_titles.fontsize*i++;
+                expanded_titles.drawText(spaceCamel(key), text_x, text_y, ALIGN_LEFT);
+                pen_y = text_y + EXPANDED_WINDOW_TITLE_BOTTOM_MARGIN;
+                pen_x = text_x;
+            }
+
+            /* instances */
+            const clampbox = {
+                min_x: pen_x,
+                min_y: pen_y,
+                max_x: max_x,
+                max_y: max_y - SCROLLBOX_BOTTOM_PAD,
+            };
+
+            const instances_all_size_y = rect_space_y_padded*instance_rows;
+            const visible_size_y = clampbox.max_y - clampbox.min_y;
+            const instances_all_max_x = pen_x + instance_columns*(EXPANDED_WINDOW_INSTANCE_WIDTH + EXPANDED_WINDOW_INSTANCE_PAD_X) - EXPANDED_WINDOW_INSTANCE_PAD_X;
+            const instances_all_max_y = pen_y + instances_all_size_y;
+            /* the shader uses the aspect_ratio to do things. this could be designed differently but it works well enough for this use case */
+            frame.button_aspect_ratio = (EXPANDED_WINDOW_INSTANCE_WIDTH - 2.0*outline_thickness) / (rect_size_y - 2.0*outline_thickness);
+
+            if (hover) {
+                input.scroll_captured = true;
+            }
+
+            if (input.scroll_delta && hover) {
+
+                expanded.scroll += input.scroll_delta;
+                input.scroll_delta = 0;
+
+                const max_scroll = instances_all_max_y - pen_y - visible_size_y;
+                expanded.scroll = Math.min(expanded.scroll, max_scroll);
+                expanded.scroll = Math.max(expanded.scroll, 0);
+            }
+
+            for (let column = 0; column < instance_columns; column++) {
+                const view_top_row_index = Math.floor(expanded.scroll / rect_space_y_padded);
+                const view_bottom_row_index = Math.ceil((expanded.scroll + visible_size_y) / rect_space_y_padded);
+                for (let i = view_top_row_index; i < view_bottom_row_index; i++) {
+                    const graph_index = i*instance_columns + column;
+                    if (!(graph[key] && graph[key][graph_index])) continue;
+
+                    const rect_size_x = EXPANDED_WINDOW_INSTANCE_WIDTH;
+                    const rect_x = pen_x + column*(rect_size_x + EXPANDED_WINDOW_INSTANCE_PAD_X);
+                    let rect_y = pen_y + i*rect_space_y_padded - expanded.scroll;
+                    frame.drawBoxClamped(
+                        clampbox,
+                        rect_x,
+                        rect_y,
+                        rect_x + rect_size_x,
+                        rect_y + rect_size_y,
+                        COLOR_BUTTON_BORDER
+                    );
+                    frame.drawButtonClamped(
+                        clampbox,
+                        rect_x + outline_thickness,
+                        rect_y + outline_thickness,
+                        rect_x + rect_size_x - outline_thickness,
+                        rect_y + rect_size_y - outline_thickness
+                    );
+
+                    /* these are cases where we need to clamp text, but for now I will just hide it */
+                    if (i == view_top_row_index && (rect_y - pen_y) < -20) continue;
+                    if (i == (view_bottom_row_index-1) && (rect_y + rect_size_y) - (pen_y + visible_size_y) > 20) continue;
+
+                    labels.drawText(
+                        (graph[key][graph_index].name ?? graph[key][graph_index].ID).substr(0, BUTTON_TEXT_CHARACTERS_MAX),
+                        rect_x + rect_size_x/2,
+                        rect_y + (rect_size_y - labels.fontsize)*0.6, /* the 0.6 just centers the text vertically, -ish */
+                        ALIGN_CENTER
+                    );
+                }
+            }
+
+            /* scrollbar */
+            if (visible_size_y < instances_all_size_y) {
+                const total_size_y = instances_all_max_y - pen_y;
+                const visible_size_y = clampbox.max_y - clampbox.min_y;
+
+                const scrollbar_size_y = (visible_size_y/total_size_y) * visible_size_y;
+
+                const max_scroll = instances_all_max_y - pen_y - visible_size_y;
+                const scrollbar_offset_y = (expanded.scroll / max_scroll) * (visible_size_y - scrollbar_size_y);
+
+                const scrollbar_min_y = pen_y + scrollbar_offset_y;
+                const scrollbar_max_y = pen_y + scrollbar_offset_y + scrollbar_size_y;
+
+                frame.drawBox(
+                    instances_all_max_x + SCROLLBAR_OFFSET,
+                    scrollbar_min_y,
+                    instances_all_max_x + SCROLLBAR_OFFSET + SCROLLBAR_WIDTH,
+                    scrollbar_max_y,
+                    COLOR_SCROLLBAR
+                )
+            }
+
+        } else {
+
+            /* draw "hex" */
+            const color = hover ? highlight_hover : highlight;
+            const n = HEX_BORDER_THICKNESS/2;
+            frame.drawHex(min_x-n, min_y-n, max_x+n, max_y+n, COLOR_HEX_BORDER, false);
+            frame.drawHex(min_x  , min_y  , max_x  , max_y  , color,            true);
+
+            /* we put each word in a hex title on a different line */
+            const words = spaceCamel(key).split(' ');
+            const word_height = words.length * hex_titles.fontsize;
+            for (const word of words) {
+                const center = ((max_y - min_y) - word_height) * 0.5;
+                hex_titles.drawText(word, x, min_y + center + hex_titles.fontsize*i++, ALIGN_CENTER);
+            }
+        }
+    }
+}
+
+const input = new Input();
+const frame = new Frame();
+
+requestAnimationFrame(function animationFrame(timestamp) {
+    requestAnimationFrame(animationFrame);
+
+    frame.clear();
+
+    {
+        frame.view = input.updateCamera();
+
+        /* put a frame's worth of UI into the buffers using the frame.draw* functions */
+        uiFrame(frame, input, timestamp);
+
+        /* rejiggers things like "mouse_released" which only lasts a single frame */
+        input.endFrame();
+    }
+
+    frame.render();
 
 })
 
