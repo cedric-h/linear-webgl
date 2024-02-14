@@ -35,11 +35,12 @@
  *
  * ### FOR THE MR ###
  *
- * [ ] function() { mat4_transform_vec4(p, p, view); this.geo_pos.push }
+ * [x] function() { mat4_transform_vec4(p, p, view); this.vertex_geo_pos.push }
  *
  * [x] prefer keywords everywhere (maybe just comments?)  (~hour)
  * [x] extracting ALL magic numbers/colors into CSS-like blocks (~hour)
  * [x] Renderer class which manages the buffers n' fonts (~2 hours)
+ * [ ] expanded_*() rework
  *
  * [ ] integration into existing app
  *   [ ] put WebGL context management in enyo/service (~2 hours)
@@ -12702,363 +12703,6 @@ function mat4_invert(out, a) {
   return out;
 }
 
-const graphCanvas = document.getElementById('inspectorGraphCanvas');
-const gl = graphCanvas.getContext('webgl2', {antialias: true});
-if (!gl) { alert('Failed to initialize WebGL'); }
-
-let pixel_matrix = mat4_create();
-const render_targets = [
-    { tex: null, fb: null },
-    { tex: null, fb: null },
-];
-(window.onresize = () => {
-    graphCanvas.width = window.innerWidth;
-    graphCanvas.height = window.innerHeight;
-
-    /* account for e.g. high-retina macbook screens */
-    if (window.devicePixelRatio > 1) {
-        graphCanvas.style.width = `${graphCanvas.width}px`;
-        graphCanvas.style.height = `${graphCanvas.height}px`;
-        graphCanvas.width *= window.devicePixelRatio;
-        graphCanvas.height *= window.devicePixelRatio;
-    }
-
-    pixel_matrix = mat4_ortho(pixel_matrix, 0, gl.canvas.width, gl.canvas.height, 0, 1, -1);
-    gl.viewport(
-        0,
-        0,
-        graphCanvas.width,
-        graphCanvas.height
-    );
-
-    /* create scene-sized render-target for post-processing fx (like shadows) */
-    for (const target of render_targets) {
-        if (target.tex) gl.deleteTexture(    target.tex);
-        if (target.fb ) gl.deleteFramebuffer(target.fb );
-
-        target.tex = gl.createTexture();
-        gl.bindTexture(gl.TEXTURE_2D, target.tex);
-
-        // define size and format of level 0
-        gl.texImage2D(
-            gl.TEXTURE_2D,
-            /* level,          */ 0,
-            /* internalFormat, */ gl.RGBA,
-            /* width,          */ graphCanvas.width,
-            /* height,         */ graphCanvas.height,
-            /* border,         */ 0,
-            /* format,         */ gl.RGBA,
-            /* type,           */ gl.UNSIGNED_BYTE,
-            /* data            */ null
-        );
-
-        // set the filtering so we don't need mips
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-
-        target.fb = gl.createFramebuffer();
-        gl.bindFramebuffer(gl.FRAMEBUFFER, target.fb);
-        gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, target.tex, 0);
-    }
-})();
-
-let text_shader, geo_shader, button_shader, fullscreen_shader;
-/* compile shaders */
-{
-    const vs_text = `
-        attribute vec2 a_pos;
-        attribute vec2 a_uv;
-
-        uniform mat4 u_matrix;
-        uniform vec2 u_texsize;
-
-        varying vec2 v_texcoord;
-
-        void main() {
-            gl_Position = u_matrix * vec4(a_pos.xy, 0, 1);
-            v_texcoord = a_uv / u_texsize;
-        }`;
-
-    const fs_text = `
-        precision mediump float;
-
-        uniform sampler2D u_texture;
-        uniform vec4 u_color;
-        uniform float u_buffer;
-        uniform float u_gamma;
-
-        varying vec2 v_texcoord;
-
-        void main() {
-            float dist = texture2D(u_texture, v_texcoord).r;
-            float alpha = smoothstep(u_buffer - u_gamma, u_buffer + u_gamma, dist);
-            gl_FragColor = vec4(u_color.rgb, alpha * u_color.a);
-        }`;
-
-    const vs_fullscreen = `#version 300 es
-        precision mediump float;
-
-        out vec2 v_texcoord;
-
-        void main(void) {
-            float x = float((gl_VertexID & 1) << 2);
-            float y = float((gl_VertexID & 2) << 1);
-            v_texcoord.x = x * 0.5;
-            v_texcoord.y = y * 0.5;
-            gl_Position = vec4(x - 1.0, y - 1.0, 0, 1);
-        }
-    `;
-
-    const fs_fullscreen = `#version 300 es
-        precision mediump float;
-
-        uniform sampler2D u_texture;
-        uniform vec2 u_direction;
-
-        in vec2 v_texcoord;
-
-        out vec4 frag_color;
-
-        void main(void) {
-            vec2 one_pixel = u_direction*(vec2(1) / vec2(textureSize(u_texture, 0)));
-
-            frag_color = texture(u_texture, v_texcoord) * 0.2270270270;
-
-            frag_color += texture(u_texture, v_texcoord + one_pixel    ) * 0.1945945946;
-            frag_color += texture(u_texture, v_texcoord - one_pixel    ) * 0.1945945946;
-
-            frag_color += texture(u_texture, v_texcoord + one_pixel*2.0) * 0.1216216216;
-            frag_color += texture(u_texture, v_texcoord - one_pixel*2.0) * 0.1216216216;
-
-            frag_color += texture(u_texture, v_texcoord + one_pixel*3.0) * 0.0540540541;
-            frag_color += texture(u_texture, v_texcoord - one_pixel*3.0) * 0.0540540541;
-
-            frag_color += texture(u_texture, v_texcoord + one_pixel*4.0) * 0.0162162162;
-            frag_color += texture(u_texture, v_texcoord - one_pixel*4.0) * 0.0162162162;
-        }
-    `;
-
-    const vs_button = `#version 300 es
-        precision mediump float;
-
-        in vec3 a_pos;
-        in vec2 a_uv;
-
-        out vec2 v_uv;
-
-        uniform mat4 u_matrix;
-        uniform float u_aspect_ratio;
-
-        void main() {
-            v_uv = a_uv * vec2(u_aspect_ratio, 1.0);
-            gl_Position = u_matrix * vec4(a_pos.xyz, 1);
-        }`;
-
-
-    const fs_button = `#version 300 es
-
-precision mediump float;
-
-uniform float u_aspect_ratio;
-uniform vec4 u_color;
-in vec2 v_uv;
-
-#define LIGHT_POSITION      vec2(-1.3, 2.2)
-#define DIFFUSE_INTENSITY   ( 0.35)
-#define DIFFUSE_LOWER_BOUND (-0.08)
-
-#define NORMAL_SDF_ROUND    (4.065)
-#define INSIDE_SDF_ROUND    (1.065)
-#define SIZE                (1.000)
-
-float sdRoundBox(in vec2 p, in vec2 b, in vec4 r, in vec2 ar) {
-    r.xy = (p.x>0.0)?r.xy : r.zw;
-    r.x  = (p.y>0.0)?r.x  : r.y;
-
-    r.xy /= ar;
-
-    vec2 q = abs(p)-b+r.x;
-    return min(max(q.x,q.y),0.0) + length(max(q,0.0)) - r.x;
-}
-
-vec4 fromLinear(vec4 linearRGB) {
-    bvec3 cutoff = lessThan(linearRGB.rgb, vec3(0.0031308));
-    vec3 higher = vec3(1.055)*pow(linearRGB.rgb, vec3(1.0/2.4)) - vec3(0.055);
-    vec3 lower = linearRGB.rgb * vec3(12.92);
-
-    return vec4(mix(higher, lower, cutoff), linearRGB.a);
-}
-vec3 toLinear(vec3 sRGB) {
-    bvec3 cutoff = lessThan(sRGB.rgb, vec3(0.04045));
-    vec3 higher = pow((sRGB.rgb + vec3(0.055))/vec3(1.055), vec3(2.4));
-    vec3 lower = sRGB.rgb/vec3(12.92);
-
-    return mix(higher, lower, cutoff);
-}
-
-float normalSDF(vec2 p) {  return sdRoundBox(p, SIZE*vec2(u_aspect_ratio, 1.0), vec4(NORMAL_SDF_ROUND), vec2(u_aspect_ratio, 1.0)); }
-float insideSDF(vec2 p) {  return sdRoundBox(p, SIZE*vec2(u_aspect_ratio, 1.0), vec4(INSIDE_SDF_ROUND), vec2(u_aspect_ratio, 1.0)); }
-
-vec3 normal(vec2 p){
-	vec2 e = vec2(-1,1) * 0.00001;
-	return vec3(
-        normalize(
-            e.xy * normalSDF(p + e.xy) +
-            e.yx * normalSDF(p + e.yx) +
-            e.yy * normalSDF(p + e.yy) +
-            e.xx * normalSDF(p + e.xx) ),
-        0.5*sqrt(1.0-normalSDF(p))
-    );
-}
-
-out vec4 frag_color;
-
-void main(void) {
-    vec3 col = toLinear(u_color.rgb);
-    float inside = smoothstep(-0.6, -0.05, insideSDF(v_uv));
-
-    vec2 ar = vec2(u_aspect_ratio, 1.0);
-
-    vec3 to_light = normalize(vec3(LIGHT_POSITION - v_uv, 3.0));
-    vec3 N = normal(v_uv);
-    float specular = 0.105*pow(clamp(dot(reflect(-to_light, N), normalize(vec3(-2000.0, 500.0, 4.0))), 0.0, 1.0), 10.0);
-    float diffuse = DIFFUSE_INTENSITY * max(DIFFUSE_LOWER_BOUND, dot(to_light, N));
-    col.xyz += vec3((specular + diffuse) * inside + 0.05*(1.0 - inside));
-
-	frag_color = fromLinear(vec4(col,1.0));
-}`
-
-
-    const vs_geo = `
-        attribute vec3 a_pos;
-        attribute vec4 a_color;
-
-        uniform mat4 u_matrix;
-        uniform vec4 u_color;
-
-        varying vec4 v_color;
-
-        void main() {
-            gl_Position = u_matrix * vec4(a_pos.xyz, 1);
-            v_color = u_color * a_color;
-        }`;
-
-    const fs_geo = `
-        precision mediump float;
-
-        varying vec4 v_color;
-
-        void main() {
-            gl_FragColor = v_color;
-        }`;
-
-    function createProgram(gl, vertexSource, fragmentSource) {
-        function createShader(gl, type, source) {
-            const shader = gl.createShader(type);
-            gl.shaderSource(shader, source);
-            gl.compileShader(shader);
-            if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
-                throw new Error(gl.getShaderInfoLog(shader));
-            }
-            return shader;
-        }
-
-        const program = gl.createProgram();
-
-        const vertex_shader = createShader(gl, gl.VERTEX_SHADER, vertexSource);
-        const fragment_shader = createShader(gl, gl.FRAGMENT_SHADER, fragmentSource);
-
-        gl.attachShader(program, vertex_shader);
-        gl.attachShader(program, fragment_shader);
-
-        gl.linkProgram(program);
-        if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
-            throw new Error(gl.getProgramInfoLog(program));
-        }
-
-        const wrapper = {program};
-
-        const numAttributes = gl.getProgramParameter(program, gl.ACTIVE_ATTRIBUTES);
-        for (let i = 0; i < numAttributes; i++) {
-            const attribute = gl.getActiveAttrib(program, i);
-            wrapper[attribute.name] = gl.getAttribLocation(program, attribute.name);
-        }
-        const numUniforms = gl.getProgramParameter(program, gl.ACTIVE_UNIFORMS);
-        for (let i = 0; i < numUniforms; i++) {
-            const uniform = gl.getActiveUniform(program, i);
-            wrapper[uniform.name] = gl.getUniformLocation(program, uniform.name);
-        }
-
-        return wrapper;
-    }
-
-
-    text_shader = createProgram(gl, vs_text, fs_text);
-    geo_shader = createProgram(gl, vs_geo, fs_geo);
-    button_shader = createProgram(gl, vs_button, fs_button);
-    fullscreen_shader = createProgram(gl, vs_fullscreen, fs_fullscreen);
-}
-
-const gl_font_face_labels = {
-    texture: gl.createTexture(),
-    sdfs: {},
-    font_image_dimensions: { width: 0, height: 0 }
-}
-
-const gl_font_face_hex_titles = {
-    texture: gl.createTexture(),
-    sdfs: {},
-    font_image_dimensions: { width: 0, height: 0 }
-}
-
-const text_vbuf = gl.createBuffer();
-const geo_vbuf_pos = gl.createBuffer();
-const geo_vbuf_color = gl.createBuffer();
-const geo_ibuf = gl.createBuffer();
-const button_vbuf_pos = gl.createBuffer();
-const button_vbuf_uv = gl.createBuffer();
-const button_ibuf = gl.createBuffer();
-
-/* upload new SDF to font_texture_* */
-{
-    gl.useProgram(text_shader.program);
-
-    function prepare_font(font_name, font, gl_font_face) {
-        update_sdf(gl_font_face.sdfs, font_name, font).then(sdf_image => {
-            const sdf_bytes = new Uint8Array(sdf_image.data)
-
-            gl_font_face.font_image_dimensions.width = sdf_image.width;
-            gl_font_face.font_image_dimensions.height = sdf_image.height;
-
-            gl.bindTexture(gl.TEXTURE_2D, gl_font_face.texture);
-            gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, sdf_image.width, sdf_image.height, 0, gl.RGBA, gl.UNSIGNED_BYTE, sdf_bytes);
-            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-        });
-    }
-
-    const font_hex_title = new FontFace(
-        "GraphCanvasFont",
-        "url(AvenirNext_Variable.ttf)",
-        {
-            stretch: "75%",
-            weight: "630"
-        }
-    );
-
-    const font_labels = new FontFace(
-        "GraphLabelFont",
-        "url(AvenirNext_Variable.ttf)",
-        { weight: "bold" }
-    );
-
-    prepare_font("GraphCanvasFont", font_hex_title, gl_font_face_hex_titles);
-    prepare_font("GraphLabelFont" , font_labels, gl_font_face_labels);
-}
-
 const ALIGN_LEFT = 0;
 const ALIGN_CENTER = 1;
 class FontBuf {
@@ -13141,16 +12785,18 @@ class FontBuf {
     }
 }
 
+
+
 class Frame {
-    constructor() {
-        this.geo_idx = [];
-        this.geo_pos = [];
-        this.geo_color = [];
+    constructor(graphCanvas) {
+        this.index_geo        = [];
+        this.vertex_geo_pos   = [];
+        this.vertex_geo_color = [];
 
         this.button_aspect_ratio = 0;
-        this.button_pos = [];
-        this.button_uv  = [];
-        this.button_idx = [];
+        this.vertex_button_pos   = [];
+        this.vertex_button_uv    = [];
+        this.index_button        = [];
 
         /* just a little cached vector used for matrix transforms */
         this.p = [0, 0, 0, 1];
@@ -13158,62 +12804,402 @@ class Frame {
         this.font_bufs = [];
 
         this.view = mat4_create();
+
+        const gl = this.gl = graphCanvas.getContext('webgl2', { antialias: true });
+        if (!gl) { alert('Failed to initialize WebGL'); }
+
+        const pixel_matrix = this.pixel_matrix = mat4_create();
+        const render_targets = this.render_targets = [
+            { tex: null, fb: null },
+            { tex: null, fb: null },
+        ];
+
+        /* keep pixel_matrix, render_targets, and GL valid */
+        graphCanvas.addEventListener('resize', resizeGraphCanvas);
+        resizeGraphCanvas();
+        function resizeGraphCanvas() {
+            graphCanvas.width = window.innerWidth;
+            graphCanvas.height = window.innerHeight;
+
+            /* account for e.g. high-retina macbook screens */
+            if (window.devicePixelRatio > 1) {
+                graphCanvas.style.width = `${graphCanvas.width}px`;
+                graphCanvas.style.height = `${graphCanvas.height}px`;
+                graphCanvas.width *= window.devicePixelRatio;
+                graphCanvas.height *= window.devicePixelRatio;
+            }
+
+            mat4_ortho(pixel_matrix, 0, gl.canvas.width, gl.canvas.height, 0, 1, -1);
+            gl.viewport(
+                0,
+                0,
+                graphCanvas.width,
+                graphCanvas.height
+            );
+
+            /* create scene-sized render-target for post-processing fx (like shadows) */
+            for (const target of render_targets) {
+                if (target.tex) gl.deleteTexture(    target.tex);
+                if (target.fb ) gl.deleteFramebuffer(target.fb );
+
+                target.tex = gl.createTexture();
+                gl.bindTexture(gl.TEXTURE_2D, target.tex);
+
+                // define size and format of level 0
+                gl.texImage2D(
+                    gl.TEXTURE_2D,
+                    /* level,          */ 0,
+                    /* internalFormat, */ gl.RGBA,
+                    /* width,          */ graphCanvas.width,
+                    /* height,         */ graphCanvas.height,
+                    /* border,         */ 0,
+                    /* format,         */ gl.RGBA,
+                    /* type,           */ gl.UNSIGNED_BYTE,
+                    /* data            */ null
+                );
+
+                // set the filtering so we don't need mips
+                gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+                gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+                gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+
+                target.fb = gl.createFramebuffer();
+                gl.bindFramebuffer(gl.FRAMEBUFFER, target.fb);
+                gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, target.tex, 0);
+            }
+        }
+
+        /* compile shaders */
+        {
+            const vs_text = `
+                attribute vec2 a_pos;
+                attribute vec2 a_uv;
+
+                uniform mat4 u_matrix;
+                uniform vec2 u_texsize;
+
+                varying vec2 v_texcoord;
+
+                void main() {
+                    gl_Position = u_matrix * vec4(a_pos.xy, 0, 1);
+                    v_texcoord = a_uv / u_texsize;
+                }`;
+
+            const fs_text = `
+                precision mediump float;
+
+                uniform sampler2D u_texture;
+                uniform vec4 u_color;
+                uniform float u_buffer;
+                uniform float u_gamma;
+
+                varying vec2 v_texcoord;
+
+                void main() {
+                    float dist = texture2D(u_texture, v_texcoord).r;
+                    float alpha = smoothstep(u_buffer - u_gamma, u_buffer + u_gamma, dist);
+                    gl_FragColor = vec4(u_color.rgb, alpha * u_color.a);
+                }`;
+
+            const vs_fullscreen = `#version 300 es
+                precision mediump float;
+
+                out vec2 v_texcoord;
+
+                void main(void) {
+                    float x = float((gl_VertexID & 1) << 2);
+                    float y = float((gl_VertexID & 2) << 1);
+                    v_texcoord.x = x * 0.5;
+                    v_texcoord.y = y * 0.5;
+                    gl_Position = vec4(x - 1.0, y - 1.0, 0, 1);
+                }
+            `;
+
+            const fs_fullscreen = `#version 300 es
+                precision mediump float;
+
+                uniform sampler2D u_texture;
+                uniform vec2 u_direction;
+
+                in vec2 v_texcoord;
+
+                out vec4 frag_color;
+
+                void main(void) {
+                    vec2 one_pixel = u_direction*(vec2(1) / vec2(textureSize(u_texture, 0)));
+
+                    frag_color = texture(u_texture, v_texcoord) * 0.2270270270;
+
+                    frag_color += texture(u_texture, v_texcoord + one_pixel    ) * 0.1945945946;
+                    frag_color += texture(u_texture, v_texcoord - one_pixel    ) * 0.1945945946;
+
+                    frag_color += texture(u_texture, v_texcoord + one_pixel*2.0) * 0.1216216216;
+                    frag_color += texture(u_texture, v_texcoord - one_pixel*2.0) * 0.1216216216;
+
+                    frag_color += texture(u_texture, v_texcoord + one_pixel*3.0) * 0.0540540541;
+                    frag_color += texture(u_texture, v_texcoord - one_pixel*3.0) * 0.0540540541;
+
+                    frag_color += texture(u_texture, v_texcoord + one_pixel*4.0) * 0.0162162162;
+                    frag_color += texture(u_texture, v_texcoord - one_pixel*4.0) * 0.0162162162;
+                }
+            `;
+
+            const vs_button = `#version 300 es
+                precision mediump float;
+
+                in vec3 a_pos;
+                in vec2 a_uv;
+
+                out vec2 v_uv;
+
+                uniform mat4 u_matrix;
+                uniform float u_aspect_ratio;
+
+                void main() {
+                    v_uv = a_uv * vec2(u_aspect_ratio, 1.0);
+                    gl_Position = u_matrix * vec4(a_pos.xyz, 1);
+                }`;
+
+
+            const fs_button = `#version 300 es
+
+        precision mediump float;
+
+        uniform float u_aspect_ratio;
+        uniform vec4 u_color;
+        in vec2 v_uv;
+
+#define LIGHT_POSITION      vec2(-1.3, 2.2)
+#define DIFFUSE_INTENSITY   ( 0.35)
+#define DIFFUSE_LOWER_BOUND (-0.08)
+
+#define NORMAL_SDF_ROUND    (4.065)
+#define INSIDE_SDF_ROUND    (1.065)
+#define SIZE                (1.000)
+
+        float sdRoundBox(in vec2 p, in vec2 b, in vec4 r, in vec2 ar) {
+            r.xy = (p.x>0.0)?r.xy : r.zw;
+            r.x  = (p.y>0.0)?r.x  : r.y;
+
+            r.xy /= ar;
+
+            vec2 q = abs(p)-b+r.x;
+            return min(max(q.x,q.y),0.0) + length(max(q,0.0)) - r.x;
+        }
+
+        vec4 fromLinear(vec4 linearRGB) {
+            bvec3 cutoff = lessThan(linearRGB.rgb, vec3(0.0031308));
+            vec3 higher = vec3(1.055)*pow(linearRGB.rgb, vec3(1.0/2.4)) - vec3(0.055);
+            vec3 lower = linearRGB.rgb * vec3(12.92);
+
+            return vec4(mix(higher, lower, cutoff), linearRGB.a);
+        }
+        vec3 toLinear(vec3 sRGB) {
+            bvec3 cutoff = lessThan(sRGB.rgb, vec3(0.04045));
+            vec3 higher = pow((sRGB.rgb + vec3(0.055))/vec3(1.055), vec3(2.4));
+            vec3 lower = sRGB.rgb/vec3(12.92);
+
+            return mix(higher, lower, cutoff);
+        }
+
+        float normalSDF(vec2 p) {  return sdRoundBox(p, SIZE*vec2(u_aspect_ratio, 1.0), vec4(NORMAL_SDF_ROUND), vec2(u_aspect_ratio, 1.0)); }
+        float insideSDF(vec2 p) {  return sdRoundBox(p, SIZE*vec2(u_aspect_ratio, 1.0), vec4(INSIDE_SDF_ROUND), vec2(u_aspect_ratio, 1.0)); }
+
+        vec3 normal(vec2 p){
+            vec2 e = vec2(-1,1) * 0.00001;
+            return vec3(
+                normalize(
+                    e.xy * normalSDF(p + e.xy) +
+                    e.yx * normalSDF(p + e.yx) +
+                    e.yy * normalSDF(p + e.yy) +
+                    e.xx * normalSDF(p + e.xx) ),
+                0.5*sqrt(1.0-normalSDF(p))
+            );
+        }
+
+        out vec4 frag_color;
+
+        void main(void) {
+            vec3 col = toLinear(u_color.rgb);
+            float inside = smoothstep(-0.6, -0.05, insideSDF(v_uv));
+
+            vec2 ar = vec2(u_aspect_ratio, 1.0);
+
+            vec3 to_light = normalize(vec3(LIGHT_POSITION - v_uv, 3.0));
+            vec3 N = normal(v_uv);
+            float specular = 0.105*pow(clamp(dot(reflect(-to_light, N), normalize(vec3(-2000.0, 500.0, 4.0))), 0.0, 1.0), 10.0);
+            float diffuse = DIFFUSE_INTENSITY * max(DIFFUSE_LOWER_BOUND, dot(to_light, N));
+            col.xyz += vec3((specular + diffuse) * inside + 0.05*(1.0 - inside));
+
+            frag_color = fromLinear(vec4(col,1.0));
+        }`
+
+
+            const vs_geo = `
+                attribute vec3 a_pos;
+                attribute vec4 a_color;
+
+                uniform mat4 u_matrix;
+                uniform vec4 u_color;
+
+                varying vec4 v_color;
+
+                void main() {
+                    gl_Position = u_matrix * vec4(a_pos.xyz, 1);
+                    v_color = u_color * a_color;
+                }`;
+
+            const fs_geo = `
+                precision mediump float;
+
+                varying vec4 v_color;
+
+                void main() {
+                    gl_FragColor = v_color;
+                }`;
+
+            function createProgram(gl, vertexSource, fragmentSource) {
+                function createShader(gl, type, source) {
+                    const shader = gl.createShader(type);
+                    gl.shaderSource(shader, source);
+                    gl.compileShader(shader);
+                    if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+                        throw new Error(gl.getShaderInfoLog(shader));
+                    }
+                    return shader;
+                }
+
+                const program = gl.createProgram();
+
+                const vertex_shader = createShader(gl, gl.VERTEX_SHADER, vertexSource);
+                const fragment_shader = createShader(gl, gl.FRAGMENT_SHADER, fragmentSource);
+
+                gl.attachShader(program, vertex_shader);
+                gl.attachShader(program, fragment_shader);
+
+                gl.linkProgram(program);
+                if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+                    throw new Error(gl.getProgramInfoLog(program));
+                }
+
+                const wrapper = {program};
+
+                const numAttributes = gl.getProgramParameter(program, gl.ACTIVE_ATTRIBUTES);
+                for (let i = 0; i < numAttributes; i++) {
+                    const attribute = gl.getActiveAttrib(program, i);
+                    wrapper[attribute.name] = gl.getAttribLocation(program, attribute.name);
+                }
+                const numUniforms = gl.getProgramParameter(program, gl.ACTIVE_UNIFORMS);
+                for (let i = 0; i < numUniforms; i++) {
+                    const uniform = gl.getActiveUniform(program, i);
+                    wrapper[uniform.name] = gl.getUniformLocation(program, uniform.name);
+                }
+
+                return wrapper;
+            }
+
+
+            this.shaders = {
+                text       : createProgram(gl, vs_text, fs_text),
+                geo        : createProgram(gl, vs_geo, fs_geo),
+                button     : createProgram(gl, vs_button, fs_button),
+                fullscreen : createProgram(gl, vs_fullscreen, fs_fullscreen),
+            };
+        }
+
+        this.buf = {
+            vertex_text       : gl.createBuffer(),
+            vertex_geo_pos    : gl.createBuffer(),
+            vertex_geo_color  : gl.createBuffer(),
+            index_geo         : gl.createBuffer(),
+            vertex_button_pos : gl.createBuffer(),
+            vertex_button_uv  : gl.createBuffer(),
+            index_button      : gl.createBuffer(),
+        };
     }
 
     clear() {
         /* (possible) TODO: pool/reuse memory here */
-        this.geo_idx = [];
-        this.geo_pos = [];
-        this.geo_color = [];
+        this.index_geo = [];
+        this.vertex_geo_pos = [];
+        this.vertex_geo_color = [];
 
         this.button_aspect_ratio = 0;
-        this.button_pos = [];
-        this.button_uv  = [];
-        this.button_idx = [];
+        this.vertex_button_pos = [];
+        this.vertex_button_uv  = [];
+        this.index_button = [];
 
         this.font_bufs = [];
     }
 
-    makeFontFace(color, fontsize, gl_font_face) {
+    prepareFont(font_name, font) {
+        const { gl } = this;
+
+        gl.useProgram(this.shaders.text.program);
+
+        const gl_font_face = {
+            texture: this.gl.createTexture(),
+            sdfs: {},
+            font_image_dimensions: { width: 0, height: 0 }
+        }
+
+        update_sdf(gl_font_face.sdfs, font_name, font).then(sdf_image => {
+            const sdf_bytes = new Uint8Array(sdf_image.data)
+
+            gl_font_face.font_image_dimensions.width = sdf_image.width;
+            gl_font_face.font_image_dimensions.height = sdf_image.height;
+
+            gl.bindTexture(gl.TEXTURE_2D, gl_font_face.texture);
+            gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, sdf_image.width, sdf_image.height, 0, gl.RGBA, gl.UNSIGNED_BYTE, sdf_bytes);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+        });
+
+        return gl_font_face;
+    }
+
+    useFontFace(color, fontsize, gl_font_face) {
         const font_buf = new FontBuf(color, fontsize, this.view, gl_font_face);
         this.font_bufs.push(font_buf);
         return font_buf;
     }
 
     drawBox( min_x, min_y,   max_x, max_y,   color ) {
-        this.geo_color.push(
+        this.vertex_geo_color.push(
             color[0], color[1], color[2], color[3],
             color[0], color[1], color[2], color[3],
             color[0], color[1], color[2], color[3],
             color[0], color[1], color[2], color[3]
         )
 
-        const vbuf_i = this.geo_pos.length / 3;
+        const vbuf_i = this.vertex_geo_pos.length / 3;
         const p = [0, 0, 0, 1];
         this.posPush(max_x, min_y);
         this.posPush(min_x, min_y);
         this.posPush(min_x, max_y);
         this.posPush(max_x, max_y);
 
-        this.geo_idx.push(vbuf_i + 0, vbuf_i + 1, vbuf_i + 2, vbuf_i + 2, vbuf_i + 3, vbuf_i + 0);
+        this.index_geo.push(vbuf_i + 0, vbuf_i + 1, vbuf_i + 2, vbuf_i + 2, vbuf_i + 3, vbuf_i + 0);
     }
 
     drawButton( min_x, min_y,   max_x, max_y) {
-        const vbuf_i = this.button_pos.length / 3;
+        const vbuf_i = this.vertex_button_pos.length / 3;
         const p = [0, 0, 0, 1];
         this.buttonPosPush(max_x, min_y);
         this.buttonPosPush(min_x, min_y);
         this.buttonPosPush(min_x, max_y);
         this.buttonPosPush(max_x, max_y);
 
-        this.button_uv.push(
+        this.vertex_button_uv.push(
              1.0,  1.0,
             -1.0,  1.0,
             -1.0, -1.0,
              1.0, -1.0
          );
 
-        this.button_idx.push(vbuf_i + 0, vbuf_i + 1, vbuf_i + 2, vbuf_i + 2, vbuf_i + 3, vbuf_i + 0);
+        this.index_button.push(vbuf_i + 0, vbuf_i + 1, vbuf_i + 2, vbuf_i + 2, vbuf_i + 3, vbuf_i + 0);
     }
 
     drawBoxClamped(clampbox, min_x, min_y,   max_x, max_y,   color) {
@@ -13239,7 +13225,7 @@ class Frame {
         {
             const g = +(!!gradient);
             if (1) {
-                this.geo_color.push(
+                this.vertex_geo_color.push(
                     Math.min(255, color[0] + 15*g), Math.min(255, color[1] + 15*g), Math.min(255, color[2] + 15*g), color[3],
                     Math.min(255, color[0] +  0*g), Math.min(255, color[1] +  0*g), Math.min(255, color[2] +  0*g), color[3],
                     Math.min(255, color[0] + 30*g), Math.min(255, color[1] + 30*g), Math.min(255, color[2] + 30*g), color[3],
@@ -13250,7 +13236,7 @@ class Frame {
                 );
             } else {
                 /* sometimes i just don't want to look at those gawd-awful gradients */
-                this.geo_color.push(
+                this.vertex_geo_color.push(
                     color[0], color[1], color[2], color[3],
                     color[0], color[1], color[2], color[3],
                     color[0], color[1], color[2], color[3],
@@ -13262,7 +13248,7 @@ class Frame {
             }
         }
 
-        const vbuf_i = this.geo_pos.length / 3;
+        const vbuf_i = this.vertex_geo_pos.length / 3;
         const p = [0, 0, 0, 1];
         this.posPush(lerp(min_x, max_x, 0.50), lerp(min_y, max_y, 0.500000));
         this.posPush(lerp(min_x, max_x, 0.25), lerp(min_y, max_y, 0.933013));
@@ -13272,7 +13258,7 @@ class Frame {
         this.posPush(lerp(min_x, max_x, 1.00), lerp(min_y, max_y, 0.500000));
         this.posPush(lerp(min_x, max_x, 0.75), lerp(min_y, max_y, 0.933013));
 
-        this.geo_idx.push(
+        this.index_geo.push(
             vbuf_i + 0, vbuf_i + 1, vbuf_i + 2,
             vbuf_i + 0, vbuf_i + 2, vbuf_i + 3,
             vbuf_i + 0, vbuf_i + 3, vbuf_i + 4,
@@ -13292,21 +13278,21 @@ class Frame {
         const tx = nx/tlen;
         const ty = ny/tlen;
 
-        this.geo_color.push(
+        this.vertex_geo_color.push(
             color[0], color[1], color[2], color[3],
             color[0], color[1], color[2], color[3],
             color[0], color[1], color[2], color[3],
             color[0], color[1], color[2], color[3]
         )
 
-        const vbuf_i = this.geo_pos.length / 3;
+        const vbuf_i = this.vertex_geo_pos.length / 3;
         const p = [0, 0, 0, 1];
         this.posPush(a_x + tx, a_y + ty);
         this.posPush(a_x - tx, a_y - ty);
         this.posPush(b_x + tx, b_y + ty);
         this.posPush(b_x - tx, b_y - ty);
 
-        this.geo_idx.push(vbuf_i + 0, vbuf_i + 1, vbuf_i + 2, vbuf_i + 2, vbuf_i + 1, vbuf_i + 3);
+        this.index_geo.push(vbuf_i + 0, vbuf_i + 1, vbuf_i + 2, vbuf_i + 2, vbuf_i + 1, vbuf_i + 3);
     }
 
     drawBezier3( a_x, a_y,   control_x, control_y,   b_x, b_y,  thickness,  color ) {
@@ -13324,8 +13310,8 @@ class Frame {
             this.drawLine(last[0], last[1], out[0], out[1], thickness, color);
 
             if (i > 1) {
-                const vbuf_i = geo_pos.length / 3 - 6;
-                this.geo_idx.push(vbuf_i + 0, vbuf_i + 1, vbuf_i + 2, vbuf_i + 2, vbuf_i + 1, vbuf_i + 3);
+                const vbuf_i = vertex_geo_pos.length / 3 - 6;
+                this.index_geo.push(vbuf_i + 0, vbuf_i + 1, vbuf_i + 2, vbuf_i + 2, vbuf_i + 1, vbuf_i + 3);
             }
 
             last[0] = out[0];
@@ -13349,8 +13335,8 @@ class Frame {
             this.drawLine(last[0], last[1], out[0], out[1], thickness, color);
 
             if (i > 1) {
-                const vbuf_i = this.geo_pos.length / 3 - 6;
-                this.geo_idx.push(vbuf_i + 0, vbuf_i + 1, vbuf_i + 2, vbuf_i + 2, vbuf_i + 1, vbuf_i + 3);
+                const vbuf_i = this.vertex_geo_pos.length / 3 - 6;
+                this.index_geo.push(vbuf_i + 0, vbuf_i + 1, vbuf_i + 2, vbuf_i + 2, vbuf_i + 1, vbuf_i + 3);
             }
 
             last[0] = out[0];
@@ -13364,18 +13350,18 @@ class Frame {
         c_x, c_y,
         color
     ) {
-        this.geo_color.push(
+        this.vertex_geo_color.push(
             color[0], color[1], color[2], color[3],
             color[0], color[1], color[2], color[3],
             color[0], color[1], color[2], color[3]
         )
 
-        const vbuf_i = this.geo_pos.length / 3;
+        const vbuf_i = this.vertex_geo_pos.length / 3;
         this.posPush(a_x, a_y);
         this.posPush(b_x, b_y);
         this.posPush(c_x, c_y);
 
-        this.geo_idx.push(vbuf_i + 0, vbuf_i + 1, vbuf_i + 2);
+        this.index_geo.push(vbuf_i + 0, vbuf_i + 1, vbuf_i + 2);
     }
 
     buttonPosPush(x, y) {
@@ -13384,7 +13370,7 @@ class Frame {
         this.p[2] = 0;
         this.p[3] = 1;
         mat4_transform_vec4(this.p, this.p, this.view);
-        this.button_pos.push(this.p[0], this.p[1], 0.1);
+        this.vertex_button_pos.push(this.p[0], this.p[1], 0.1);
     }
 
     posPush(x, y) {
@@ -13393,37 +13379,40 @@ class Frame {
         this.p[2] = 0;
         this.p[3] = 1;
         mat4_transform_vec4(this.p, this.p, this.view);
-        this.geo_pos.push(this.p[0], this.p[1], 0.1);
+        this.vertex_geo_pos.push(this.p[0], this.p[1], 0.1);
     }
 
     geoPass(color) {
-        gl.useProgram(geo_shader.program);
-        gl.enableVertexAttribArray(geo_shader.a_pos);
-        gl.enableVertexAttribArray(geo_shader.a_color);
+        const { gl } = this;
 
-        gl.uniformMatrix4fv(geo_shader.u_matrix, false, pixel_matrix);
-        gl.uniform4f(geo_shader.u_color, color[0], color[1], color[2], color[3]);
+        gl.useProgram(this.shaders.geo.program);
+        gl.enableVertexAttribArray(this.shaders.geo.a_pos);
+        gl.enableVertexAttribArray(this.shaders.geo.a_color);
+
+        gl.uniformMatrix4fv(this.shaders.geo.u_matrix, false, this.pixel_matrix);
+        gl.uniform4f(this.shaders.geo.u_color, color[0], color[1], color[2], color[3]);
 
         /* upload/bind geometry */
 
         let vbuf_count = 3;
         {
-            gl.bindBuffer(gl.ARRAY_BUFFER, geo_vbuf_pos);
-            gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(this.geo_pos), gl.STATIC_DRAW);
-            gl.vertexAttribPointer(geo_shader.a_pos, 3, gl.FLOAT, false, 0, 0);
+            gl.bindBuffer(gl.ARRAY_BUFFER, this.buf.vertex_geo_pos);
+            gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(this.vertex_geo_pos), gl.STATIC_DRAW);
+            gl.vertexAttribPointer(this.shaders.geo.a_pos, 3, gl.FLOAT, false, 0, 0);
 
-            gl.bindBuffer(gl.ARRAY_BUFFER, geo_vbuf_color);
-            gl.bufferData(gl.ARRAY_BUFFER, new Uint8Array(this.geo_color), gl.STATIC_DRAW);
-            gl.vertexAttribPointer(geo_shader.a_color, 4, gl.UNSIGNED_BYTE, true, 0, 0);
+            gl.bindBuffer(gl.ARRAY_BUFFER, this.buf.vertex_geo_color);
+            gl.bufferData(gl.ARRAY_BUFFER, new Uint8Array(this.vertex_geo_color), gl.STATIC_DRAW);
+            gl.vertexAttribPointer(this.shaders.geo.a_color, 4, gl.UNSIGNED_BYTE, true, 0, 0);
 
-            gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, geo_ibuf);
-            gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, new Uint16Array(this.geo_idx), gl.STATIC_DRAW);
+            gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, this.buf.index_geo);
+            gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, new Uint16Array(this.index_geo), gl.STATIC_DRAW);
         }
 
-        gl.drawElements(gl.TRIANGLES, this.geo_idx.length, gl.UNSIGNED_SHORT, 0);
+        gl.drawElements(gl.TRIANGLES, this.index_geo.length, gl.UNSIGNED_SHORT, 0);
     }
 
     render() {
+        const { gl, render_targets } = this;
 
         /* set up premultiplied alpha */
         gl.blendFuncSeparate(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA, gl.ONE, gl.ONE);
@@ -13461,15 +13450,15 @@ class Frame {
             gl.clearColor(0.95, 0.0, 0.95, 1);
             gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
 
-            gl.useProgram(fullscreen_shader.program);
+            gl.useProgram(this.shaders.fullscreen.program);
 
-            gl.uniform2fv(fullscreen_shader.u_direction, dir);
+            gl.uniform2fv(this.shaders.fullscreen.u_direction, dir);
 
             /* bind tex */
             {
                 gl.activeTexture(gl.TEXTURE0);
                 gl.bindTexture(gl.TEXTURE_2D, src_tex);
-                gl.uniform1i(fullscreen_shader.u_texture, 0);
+                gl.uniform1i(this.shaders.fullscreen.u_texture, 0);
             }
 
             gl.drawArrays(gl.TRIANGLE_FAN, 0, 3);
@@ -13487,17 +13476,17 @@ class Frame {
 
             /* button pass */
             {
-                gl.useProgram(button_shader.program);
-                gl.enableVertexAttribArray(button_shader.a_pos);
-                gl.enableVertexAttribArray(button_shader.a_color);
+                gl.useProgram(this.shaders.button.program);
+                gl.enableVertexAttribArray(this.shaders.button.a_pos);
+                gl.enableVertexAttribArray(this.shaders.button.a_color);
 
-                gl.uniformMatrix4fv(button_shader.u_matrix, false, pixel_matrix);
-                gl.uniform1f(button_shader.u_aspect_ratio, this.button_aspect_ratio);
+                gl.uniformMatrix4fv(this.shaders.button.u_matrix, false, this.pixel_matrix);
+                gl.uniform1f(this.shaders.button.u_aspect_ratio, this.button_aspect_ratio);
                 {
                     const highlight = [0, 0, 0, 255];
                     hex_to_four_channel(highlight, DOMAIN_INFO[active_domain].color);
                     gl.uniform4f(
-                        button_shader.u_color,
+                        this.shaders.button.u_color,
                         highlight[0] / 255,
                         highlight[1] / 255,
                         highlight[2] / 255,
@@ -13509,51 +13498,51 @@ class Frame {
 
                 let vbuf_count = 3;
                 {
-                    gl.bindBuffer(gl.ARRAY_BUFFER, button_vbuf_pos);
-                    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(this.button_pos), gl.STATIC_DRAW);
-                    gl.vertexAttribPointer(button_shader.a_pos, 3, gl.FLOAT, false, 0, 0);
+                    gl.bindBuffer(gl.ARRAY_BUFFER, this.buf.vertex_button_pos);
+                    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(this.vertex_button_pos), gl.STATIC_DRAW);
+                    gl.vertexAttribPointer(this.shaders.button.a_pos, 3, gl.FLOAT, false, 0, 0);
 
-                    gl.bindBuffer(gl.ARRAY_BUFFER, button_vbuf_uv);
-                    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(this.button_uv), gl.STATIC_DRAW);
-                    gl.vertexAttribPointer(button_shader.a_uv, 2, gl.FLOAT, false, 0, 0);
+                    gl.bindBuffer(gl.ARRAY_BUFFER, this.buf.vertex_button_uv);
+                    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(this.vertex_button_uv), gl.STATIC_DRAW);
+                    gl.vertexAttribPointer(this.shaders.button.a_uv, 2, gl.FLOAT, false, 0, 0);
 
-                    gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, button_ibuf);
-                    gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, new Uint16Array(this.button_idx), gl.STATIC_DRAW);
+                    gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, this.buf.index_button);
+                    gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, new Uint16Array(this.index_button), gl.STATIC_DRAW);
                 }
 
-                gl.drawElements(gl.TRIANGLES, this.button_idx.length, gl.UNSIGNED_SHORT, 0);
+                gl.drawElements(gl.TRIANGLES, this.index_button.length, gl.UNSIGNED_SHORT, 0);
             }
 
 
             /* text pass */
             for (const font_buf of this.font_bufs) {
-                gl.useProgram(text_shader.program);
-                gl.enableVertexAttribArray(text_shader.a_pos);
-                gl.enableVertexAttribArray(text_shader.a_uv);
+                gl.useProgram(this.shaders.text.program);
+                gl.enableVertexAttribArray(this.shaders.text.a_pos);
+                gl.enableVertexAttribArray(this.shaders.text.a_uv);
 
                 const gamma = 2;
-                gl.uniformMatrix4fv(text_shader.u_matrix, false, pixel_matrix);
-                gl.uniform4fv(text_shader.u_color, font_buf.color);
-                gl.uniform1f(text_shader.u_buffer, 0.75);
-                gl.uniform1f(text_shader.u_gamma, gamma * 1.4142 / font_buf.fontscale);
-                gl.uniform2f(text_shader.u_texsize, font_buf.font_image_dimensions.width, font_buf.font_image_dimensions.height);
+                gl.uniformMatrix4fv(this.shaders.text.u_matrix, false, this.pixel_matrix);
+                gl.uniform4fv(this.shaders.text.u_color, font_buf.color);
+                gl.uniform1f(this.shaders.text.u_buffer, 0.75);
+                gl.uniform1f(this.shaders.text.u_gamma, gamma * 1.4142 / font_buf.fontscale);
+                gl.uniform2f(this.shaders.text.u_texsize, font_buf.font_image_dimensions.width, font_buf.font_image_dimensions.height);
 
                 /* bind tex */
                 {
                     gl.activeTexture(gl.TEXTURE0);
                     gl.bindTexture(gl.TEXTURE_2D, font_buf.gl_texture);
-                    gl.uniform1i(text_shader.u_texture, 0);
+                    gl.uniform1i(this.shaders.text.u_texture, 0);
                 }
 
                 /* upload/bind geometry */
                 const vbuf_count = font_buf.text_verts.length / 4;
                 {
-                    gl.bindBuffer(gl.ARRAY_BUFFER, text_vbuf);
+                    gl.bindBuffer(gl.ARRAY_BUFFER, this.buf.vertex_text);
                     gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(font_buf.text_verts), gl.STATIC_DRAW);
 
-                    gl.bindBuffer(gl.ARRAY_BUFFER, text_vbuf);
+                    gl.bindBuffer(gl.ARRAY_BUFFER, this.buf.vertex_text);
                     gl.vertexAttribPointer(
-                        text_shader.a_pos,
+                        this.shaders.text.a_pos,
                         /* numComponents, */ 2,
                         /* type,          */ gl.FLOAT,
                         /* normalize,     */ false,
@@ -13561,7 +13550,7 @@ class Frame {
                         /* offset         */ 0
                     );
                     gl.vertexAttribPointer(
-                        text_shader.a_uv,
+                        this.shaders.text.a_uv,
                         /* numComponents, */ 2,
                         /* type,          */ gl.FLOAT,
                         /* normalize,     */ false,
@@ -13577,7 +13566,7 @@ class Frame {
 }
 
 class Input {
-    constructor(element = window) {
+    constructor(frame, element = window) {
         this.mouse_world_x = 0;
         this.mouse_world_y = 0;
         this.mouse_clicked = false;
@@ -13605,7 +13594,7 @@ class Input {
             const x = 3100;
             const y = 3100;
             mat4_ortho(this.view_matrix, x-width, x+width, y+width*aspect_ratio, y-width*aspect_ratio, 1, -1)
-            mat4_mul(this.view_matrix, mat4_invert(mat4_create(), pixel_matrix), this.view_matrix);
+            mat4_mul(this.view_matrix, mat4_invert(mat4_create(), frame.pixel_matrix), this.view_matrix);
         }
 
         let wheelTimeout;
@@ -13769,6 +13758,24 @@ const COLOR_EXPANDED_WINDOW_BG       = [219, 219, 215, 255];
 const ARROWHEAD_BACK    = 84.0;
 const ARROWHEAD_WIDTH   = 36.0;
 
+/* unfortunately is not a camel wearing an astronaut helmet,
+ * actually takes something CamelCased and makes it "Camel Spaced" */
+function spaceCamel(key) {
+    return key
+        .split('')
+        .reduce(
+            (a, c) => {
+                if (c == c.toUpperCase())
+                    a.push(' ');
+                a.push(c);
+                return a;
+            },
+            []
+        )
+        .join('')
+        .trim();
+}
+
 
 function expanded_show(expanded, timestamp) {
     if (!expanded) return false;
@@ -13806,26 +13813,38 @@ window.onkeydown = e => {
     }
 }
 
+let gl_font_face_hex_titles, gl_font_face_labels;
 function uiFrame(frame, input, timestamp) {
-    const labels          = frame.makeFontFace(FONT_COLOR_LABELS        , FONT_SIZE_LABELS        , gl_font_face_labels    );
-    const expanded_titles = frame.makeFontFace(FONT_COLOR_EXPANDED_TITLE, FONT_SIZE_EXPANDED_TITLE, gl_font_face_hex_titles);
-    const hex_titles      = frame.makeFontFace(FONT_COLOR_HEX_TITLE     , FONT_SIZE_HEX_TITLE     , gl_font_face_hex_titles);
-    labels.extra_letter_spacing = FONT_EXTRA_LETTER_SPACING_LABELS;
+    /* FontFaces are expensive to create (network request + ~10ms processing depending on resolution),
+     * and don't show any text until they finish loading.
+     *
+     * if all you need is a different color/size/letter spacing, re-use the glFontFace and simply call useFont,
+     * which is cheap so you can do it every frame as often as you like. */
+    gl_font_face_hex_titles ??= frame.prepareFont(
+        "GraphCanvasFont",
+        new FontFace(
+            "GraphCanvasFont",
+            "url(AvenirNext_Variable.ttf)",
+            {
+                stretch: "75%",
+                weight: "630"
+            }
+        )
+    );
 
-    const spaceCamel = key =>
-        key
-            .split('')
-            .reduce(
-                (a, c) => {
-                    if (c == c.toUpperCase())
-                        a.push(' ');
-                    a.push(c);
-                    return a;
-                },
-                []
-            )
-            .join('')
-            .trim();
+    gl_font_face_labels ??= frame.prepareFont(
+        "GraphLabelFont",
+        new FontFace(
+            "GraphLabelFont",
+            "url(AvenirNext_Variable.ttf)",
+            { weight: "bold" }
+        )
+    );
+
+    const labels          = frame.useFontFace(FONT_COLOR_LABELS        , FONT_SIZE_LABELS        , gl_font_face_labels    );
+    const expanded_titles = frame.useFontFace(FONT_COLOR_EXPANDED_TITLE, FONT_SIZE_EXPANDED_TITLE, gl_font_face_hex_titles);
+    const hex_titles      = frame.useFontFace(FONT_COLOR_HEX_TITLE     , FONT_SIZE_HEX_TITLE     , gl_font_face_hex_titles);
+    labels.extra_letter_spacing = FONT_EXTRA_LETTER_SPACING_LABELS;
 
     const tables = getZoomedHexagonPositions(active_domain).internal;
     const edges = domain_edges.find(x => x.domain == active_domain).internal.map(x => [x.from.table, x.to.table])
@@ -14258,8 +14277,8 @@ function uiFrame(frame, input, timestamp) {
     }
 }
 
-const input = new Input();
-const frame = new Frame();
+const frame = new Frame(document.getElementById('inspectorGraphCanvas'));
+const input = new Input(frame);
 
 requestAnimationFrame(function animationFrame(timestamp) {
     requestAnimationFrame(animationFrame);
