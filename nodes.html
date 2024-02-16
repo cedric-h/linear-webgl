@@ -13926,7 +13926,51 @@ function uiFrame(frame, input, timestamp) {
             if (!(edge[1] in tables)) continue;
 
             /* TODO: support this */
-            if (edge[0] == edge[1]) continue;
+            if (edge[0] == edge[1]) {
+                const FROM_SIZE_X = lerp(445, expanded_size_x(from_key), from_expanded_t);
+                const FROM_SIZE_Y = lerp(385, expanded_size_y(from_key), from_expanded_t);
+                const edge_x = from_x - FROM_SIZE_X*0.5;
+                const edge_y = from_y - FROM_SIZE_Y*0.5;
+
+                const circle_radius = 230;
+                drawCircle(edge_x, edge_y, circle_radius, 1.9, 25, highlight_lines);
+                function drawCircle(center_x, center_y, circle_radius, arc, thickness, color) {
+                    const circle_vertices = 40;
+                    for (let i = 0; i < circle_vertices; i++) {
+                        const x0 = center_x + Math.cos(i/circle_vertices * Math.PI*arc) * circle_radius;
+                        const y0 = center_y + Math.sin(i/circle_vertices * Math.PI*arc) * circle_radius;
+
+                        const j = i + 1;
+                        const x1 = center_x + Math.cos(j/circle_vertices * Math.PI*arc) * circle_radius;
+                        const y1 = center_y + Math.sin(j/circle_vertices * Math.PI*arc) * circle_radius;
+
+                        frame.drawLine(
+                            x0, y0,
+                            x1, y1,
+                            thickness,
+                            color
+                        );
+
+                        if (i > 1) {
+                            const vbuf_i = frame.vertex_geo_pos.length / 3 - 6;
+                            frame.index_geo.push(vbuf_i + 0, vbuf_i + 1, vbuf_i + 2, vbuf_i + 2, vbuf_i + 1, vbuf_i + 3);
+                        }
+                    }
+                }
+
+                {
+                    const tri_x = edge_x + circle_radius - 15;
+                    const tri_y = edge_y - 18;
+                    frame.drawTriangle(
+                        /* point a, */ tri_x-40, tri_y - 70,
+                        /* point b, */ tri_x+40, tri_y - 70,
+                        /* point c, */ tri_x, tri_y,
+                        /*   color  */ highlight_lines
+                    );
+                }
+
+                continue;
+            }
 
             const circular = edgeSet.has(''+[edge[1], edge[0]]);
 
