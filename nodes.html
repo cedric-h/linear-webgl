@@ -13572,10 +13572,12 @@ class Input {
         this.mouse_clicked = false;
 
         this.scroll_captured = false;
+        this.mouse_captured  = false;
 
         this.scroll = 0;
-        /* NOTE: scroll_delta is "consumed (set to 0)" by things that capture scroll */
+        /* NOTE: mouse_delta & scroll_delta are "consumed (set to 0)" by things that capture scroll/mouse */
         this.scroll_delta = 0;
+        this.mouse_delta = 0;
 
         this.mouse_x = 0;
         this.mouse_y = 0;
@@ -13601,17 +13603,24 @@ class Input {
         element.addEventListener('wheel', e => {
             if (this.mouse_down) return;
             this.scroll = Math.sign(e.deltaY);
-            this.scroll_delta = e.deltaY;
+            if (this.scroll_captured) {
+                this.scroll_delta = e.deltaY;
+            }
 
             clearTimeout(wheelTimeout)
             wheelTimeout = setTimeout(() => this.scroll = 0, 100)
         });
         element.addEventListener('mousedown', e => {
             this.mouse_down = true;
-            this.mouse_down_x = e.clientX*window.devicePixelRatio;
-            this.mouse_down_y = e.clientY*window.devicePixelRatio;
+            if (!this.mouse_captured) {
+                this.mouse_down_x = e.clientX*window.devicePixelRatio;
+                this.mouse_down_y = e.clientY*window.devicePixelRatio;
+            }
         });
         element.addEventListener('mousemove', e => {
+            if (this.mouse_captured) {
+                this.mouse_delta = e.movementY;
+            }
             this.mouse_x = e.clientX*window.devicePixelRatio;
             this.mouse_y = e.clientY*window.devicePixelRatio;
         });
@@ -13663,7 +13672,7 @@ class Input {
 
             /* mouse drag */
             let drag_x = 0, drag_y = 0;
-            if (this.mouse_down) {
+            if (this.mouse_down && !this.mouse_captured) {
                 drag_x += (mouse_x - mouse_down_x)
                 drag_y += (mouse_y - mouse_down_y)
 
@@ -13695,6 +13704,7 @@ class Input {
         /* prepare for coming frame of input */
         {
             input.scroll_captured = false;
+            input.mouse_captured = false;
         }
 
         return view;
@@ -13751,6 +13761,7 @@ const HEX_BORDER_THICKNESS       = 34;
 const COLOR_HEX_BORDER               = [235, 235, 235, 255];
 const COLOR_BUTTON_BORDER            = [245, 245, 245, 255];
 const COLOR_SCROLLBAR                = [140, 140, 140, 255];
+const COLOR_SCROLLBAR_HOVERED        = [120, 120, 120, 255];
 const COLOR_EXPANDED_WINDOW_BG_HOVER = [212, 212, 208, 255];
 const COLOR_EXPANDED_WINDOW_BG       = [219, 219, 215, 255];
 
@@ -13781,6 +13792,11 @@ function expanded_show(expanded, timestamp) {
     if (!expanded) return false;
     if ((timestamp - expanded.expanded_timestamp) < 1000) return false;
     return true;
+}
+function expandedScroll(expanded, scroll_delta, max_scroll) {
+    expanded.scroll += scroll_delta;
+    expanded.scroll = Math.min(expanded.scroll, max_scroll);
+    expanded.scroll = Math.max(expanded.scroll, 0);
 }
 function expanded_progress(expanded, timestamp) {
     if (!expanded) return 0;
@@ -14222,14 +14238,10 @@ function uiFrame(frame, input, timestamp) {
                 input.scroll_captured = true;
             }
 
+            const max_scroll = instances_all_max_y - pen_y - visible_size_y;
             if (input.scroll_delta && hover) {
-
-                expanded.scroll += input.scroll_delta;
+                expandedScroll(expanded, input.scroll_delta, max_scroll);
                 input.scroll_delta = 0;
-
-                const max_scroll = instances_all_max_y - pen_y - visible_size_y;
-                expanded.scroll = Math.min(expanded.scroll, max_scroll);
-                expanded.scroll = Math.max(expanded.scroll, 0);
             }
 
             for (let column = 0; column < instance_columns; column++) {
@@ -14284,12 +14296,30 @@ function uiFrame(frame, input, timestamp) {
                 const scrollbar_min_y = pen_y + scrollbar_offset_y;
                 const scrollbar_max_y = pen_y + scrollbar_offset_y + scrollbar_size_y;
 
+                const scrollbar_min_x = instances_all_max_x + SCROLLBAR_OFFSET;
+                const scrollbar_max_x = instances_all_max_x + SCROLLBAR_OFFSET + SCROLLBAR_WIDTH;
+
+                const hover = (input.mouse_world_x > scrollbar_min_x && input.mouse_world_x < scrollbar_max_x) &&
+                              (input.mouse_world_y > scrollbar_min_y && input.mouse_world_y < scrollbar_max_y);
+
+                if (hover) {
+                    input.mouse_captured = true;
+
+                    if (input.mouse_down) {
+                        expandedScroll(expanded, input.mouse_delta, max_scroll);
+                        input.mouse_delta = 0;
+
+                        input.mouse_down_x = input.mouse_x;
+                        input.mouse_down_y = input.mouse_y;
+                    }
+                }
+
                 frame.drawBox(
-                    /* box min_x */ instances_all_max_x + SCROLLBAR_OFFSET,
+                    /* box min_x */ scrollbar_min_x,
                     /* box min_y */ scrollbar_min_y,
-                    /* box max_x */ instances_all_max_x + SCROLLBAR_OFFSET + SCROLLBAR_WIDTH,
+                    /* box max_x */ scrollbar_max_x,
                     /* box max_y */ scrollbar_max_y,
-                    /*     color */ COLOR_SCROLLBAR
+                    /*     color */ hover ? COLOR_SCROLLBAR_HOVERED : COLOR_SCROLLBAR
                 )
             }
 
