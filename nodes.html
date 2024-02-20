@@ -12793,10 +12793,16 @@ class Frame {
         this.vertex_geo_pos   = [];
         this.vertex_geo_color = [];
 
+
         this.button_aspect_ratio = 0;
         this.vertex_button_pos   = [];
         this.vertex_button_uv    = [];
         this.index_button        = [];
+
+        this.z                          = 0.1;
+        this.shadow_layer               = SHADOW_LAYER_NONE;
+        this.vertex_geo_shadow_layer    = [];
+        this.vertex_button_shadow_layer = [];
 
         /* just a little cached vector used for matrix transforms */
         this.p = [0, 0, 0, 1];
@@ -12881,7 +12887,7 @@ class Frame {
                 varying vec2 v_texcoord;
 
                 void main() {
-                    gl_Position = u_matrix * vec4(a_pos.xy, 0, 1);
+                    gl_Position = u_matrix * vec4(a_pos.xy, -0.2, 1);
                     v_texcoord = a_uv / u_texsize;
                 }`;
 
@@ -13058,6 +13064,65 @@ class Frame {
                     gl_FragColor = v_color;
                 }`;
 
+            const vs_shadow = `#version 300 es
+
+                in vec3 a_pos;
+                in uint a_shadow_layer;
+
+                uniform mat4 u_matrix;
+
+                out vec4 v_color;
+
+                void main() {
+                    gl_Position = u_matrix * vec4(a_pos.xyz, 1);
+                    v_color = vec4(a_shadow_layer & 1u, a_shadow_layer & 2u, a_shadow_layer & 4u, a_shadow_layer > 0u);
+                }`;
+
+            const fs_shadow = `#version 300 es
+                precision mediump float;
+
+                in vec4 v_color;
+
+                out vec4 frag_color;
+
+                void main() {
+                    frag_color = v_color;
+                }`;
+
+            const vs_fullscreen_shadow_layer = `#version 300 es
+                precision mediump float;
+
+                uniform float u_depth;
+
+                out vec2 v_texcoord;
+
+                void main(void) {
+                    float x = float((gl_VertexID & 1) << 2);
+                    float y = float((gl_VertexID & 2) << 1);
+                    v_texcoord.x = x * 0.5;
+                    v_texcoord.y = y * 0.5;
+                    gl_Position = vec4(x - 1.0, y - 1.0, u_depth, 1);
+                }
+            `;
+
+            const fs_fullscreen_shadow_layer = `#version 300 es
+                precision mediump float;
+
+                uniform sampler2D u_texture;
+                uniform vec4 u_mask;
+
+                in vec2 v_texcoord;
+
+                out vec4 frag_color;
+
+                void main(void) {
+                    vec4 col = texture(u_texture, v_texcoord) * u_mask;
+                    float val = max(max(col.x, col.y), max(col.z, col.w));
+                    frag_color = vec4(0.0, 0.0, 0.0, val);
+                }
+            `;
+
+
             function createProgram(gl, vertexSource, fragmentSource) {
                 function createShader(gl, type, source) {
                     const shader = gl.createShader(type);
@@ -13100,10 +13165,12 @@ class Frame {
 
 
             this.shaders = {
-                text       : createProgram(gl, vs_text, fs_text),
-                geo        : createProgram(gl, vs_geo, fs_geo),
-                button     : createProgram(gl, vs_button, fs_button),
-                fullscreen : createProgram(gl, vs_fullscreen, fs_fullscreen),
+                text                    : createProgram(gl, vs_text                   , fs_text                   ),
+                geo                     : createProgram(gl, vs_geo                    , fs_geo                    ),
+                button                  : createProgram(gl, vs_button                 , fs_button                 ),
+                fullscreen              : createProgram(gl, vs_fullscreen             , fs_fullscreen             ),
+                shadow                  : createProgram(gl, vs_shadow                 , fs_shadow                 ),
+                fullscreen_shadow_layer : createProgram(gl, vs_fullscreen_shadow_layer, fs_fullscreen_shadow_layer),
             };
         }
 
@@ -13115,6 +13182,9 @@ class Frame {
             vertex_button_pos : gl.createBuffer(),
             vertex_button_uv  : gl.createBuffer(),
             index_button      : gl.createBuffer(),
+
+            vertex_button_shadow_layer : gl.createBuffer(),
+            vertex_geo_shadow_layer    : gl.createBuffer(),
         };
     }
 
@@ -13128,6 +13198,9 @@ class Frame {
         this.vertex_button_pos = [];
         this.vertex_button_uv  = [];
         this.index_button = [];
+
+        this.vertex_geo_shadow_layer    = [];
+        this.vertex_button_shadow_layer = [];
 
         this.font_bufs = [];
     }
@@ -13370,7 +13443,8 @@ class Frame {
         this.p[2] = 0;
         this.p[3] = 1;
         mat4_transform_vec4(this.p, this.p, this.view);
-        this.vertex_button_pos.push(this.p[0], this.p[1], 0.1);
+        this.vertex_button_pos.push(this.p[0], this.p[1], this.z);
+        this.vertex_button_shadow_layer.push(this.shadow_layer);
     }
 
     posPush(x, y) {
@@ -13379,7 +13453,47 @@ class Frame {
         this.p[2] = 0;
         this.p[3] = 1;
         mat4_transform_vec4(this.p, this.p, this.view);
-        this.vertex_geo_pos.push(this.p[0], this.p[1], 0.1);
+        this.vertex_geo_pos.push(this.p[0], this.p[1], this.z);
+        this.vertex_geo_shadow_layer.push(this.shadow_layer);
+    }
+
+    uploadCpuBuffers() {
+        const { gl } = this;
+
+        /* only exception are the FontBufs -- not uploaded here */
+
+        /* normal geometry */
+        {
+            gl.bindBuffer(gl.ARRAY_BUFFER, this.buf.vertex_geo_pos);
+            gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(this.vertex_geo_pos), gl.STATIC_DRAW);
+
+            gl.bindBuffer(gl.ARRAY_BUFFER, this.buf.vertex_geo_color);
+            gl.bufferData(gl.ARRAY_BUFFER, new Uint8Array(this.vertex_geo_color), gl.STATIC_DRAW);
+
+            gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, this.buf.index_geo);
+            gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, new Uint16Array(this.index_geo), gl.STATIC_DRAW);
+        }
+
+        /* buttons */
+        {
+            gl.bindBuffer(gl.ARRAY_BUFFER, this.buf.vertex_button_pos);
+            gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(this.vertex_button_pos), gl.STATIC_DRAW);
+
+            gl.bindBuffer(gl.ARRAY_BUFFER, this.buf.vertex_button_uv);
+            gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(this.vertex_button_uv), gl.STATIC_DRAW);
+
+            gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, this.buf.index_button);
+            gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, new Uint16Array(this.index_button), gl.STATIC_DRAW);
+        }
+
+        /* shadow layer buffers (normal geometry + buttons) */
+        {
+            gl.bindBuffer(gl.ARRAY_BUFFER, this.buf.vertex_button_shadow_layer);
+            gl.bufferData(gl.ARRAY_BUFFER, new Uint8Array(this.vertex_button_shadow_layer), gl.STATIC_DRAW);
+
+            gl.bindBuffer(gl.ARRAY_BUFFER, this.buf.vertex_geo_shadow_layer);
+            gl.bufferData(gl.ARRAY_BUFFER, new Uint8Array(this.vertex_geo_shadow_layer), gl.STATIC_DRAW);
+        }
     }
 
     geoPass(color) {
@@ -13394,44 +13508,93 @@ class Frame {
 
         /* upload/bind geometry */
 
-        let vbuf_count = 3;
         {
             gl.bindBuffer(gl.ARRAY_BUFFER, this.buf.vertex_geo_pos);
-            gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(this.vertex_geo_pos), gl.STATIC_DRAW);
             gl.vertexAttribPointer(this.shaders.geo.a_pos, 3, gl.FLOAT, false, 0, 0);
 
             gl.bindBuffer(gl.ARRAY_BUFFER, this.buf.vertex_geo_color);
-            gl.bufferData(gl.ARRAY_BUFFER, new Uint8Array(this.vertex_geo_color), gl.STATIC_DRAW);
             gl.vertexAttribPointer(this.shaders.geo.a_color, 4, gl.UNSIGNED_BYTE, true, 0, 0);
 
             gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, this.buf.index_geo);
-            gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, new Uint16Array(this.index_geo), gl.STATIC_DRAW);
         }
 
         gl.drawElements(gl.TRIANGLES, this.index_geo.length, gl.UNSIGNED_SHORT, 0);
     }
 
+    shadowPass() {
+        const { gl } = this;
+
+        gl.useProgram(this.shaders.shadow.program);
+        gl.enableVertexAttribArray(this.shaders.shadow.a_pos);
+        gl.enableVertexAttribArray(this.shaders.shadow.a_shadow_layer);
+
+        gl.uniformMatrix4fv(this.shaders.shadow.u_matrix, false, this.pixel_matrix);
+
+        /* normal geometry pass */
+        {
+            {
+                gl.bindBuffer(gl.ARRAY_BUFFER, this.buf.vertex_geo_pos);
+                gl.vertexAttribPointer(this.shaders.shadow.a_pos, 3, gl.FLOAT, false, 0, 0);
+
+                gl.bindBuffer(gl.ARRAY_BUFFER, this.buf.vertex_geo_shadow_layer);
+                gl.vertexAttribIPointer(this.shaders.shadow.a_shadow_layer, 1, gl.UNSIGNED_BYTE, 0, 0);
+
+                gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, this.buf.index_geo);
+            }
+
+            gl.drawElements(gl.TRIANGLES, this.index_geo.length, gl.UNSIGNED_SHORT, 0);
+        }
+
+        /* button geometry pass */
+        {
+            {
+                gl.bindBuffer(gl.ARRAY_BUFFER, this.buf.vertex_button_pos);
+                gl.vertexAttribPointer(this.shaders.shadow.a_pos, 3, gl.FLOAT, false, 0, 0);
+
+                gl.bindBuffer(gl.ARRAY_BUFFER, this.buf.vertex_button_shadow_layer);
+                gl.vertexAttribIPointer(this.shaders.shadow.a_shadow_layer, 1, gl.UNSIGNED_BYTE, 0, 0);
+
+                gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, this.buf.index_button);
+            }
+
+            gl.drawElements(gl.TRIANGLES, this.index_button.length, gl.UNSIGNED_SHORT, 0);
+        }
+    }
+
     render() {
         const { gl, render_targets } = this;
 
-        /* set up premultiplied alpha */
-        gl.blendFuncSeparate(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA, gl.ONE, gl.ONE);
-        gl.enable(gl.BLEND);
+        this.uploadCpuBuffers();
 
         gl.enable(gl.DEPTH_TEST);
         gl.depthFunc(gl.LEQUAL);
 
+        for (const rt of render_targets) {
+            gl.bindFramebuffer(gl.FRAMEBUFFER, rt.fb);
+
+            /* clear all */
+            gl.clearColor(1.0, 1.0, 1.0, 1.0);
+            gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+        }
+
         /* shadow pass "pre-post-processing :)" */
         {
+            gl.blendFuncSeparate(gl.SRC_ALPHA, gl.ONE, gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
+            gl.enable(gl.BLEND);
+
             gl.bindFramebuffer(gl.FRAMEBUFFER, render_targets[0].fb);
 
             /* clear all */
-            gl.clearColor(0.95, 0.95, 0.95, 1);
+            gl.clearColor(0.0, 0.0, 0.0, 1.0);
             gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
 
             /* geo pass */
-            this.geoPass([0, 0, 0, 0.48]);
+            this.shadowPass();
         }
+
+        /* set up premultiplied alpha */
+        gl.blendFuncSeparate(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA, gl.ONE, gl.ONE);
+        gl.enable(gl.BLEND);
 
         const passes = [
             [render_targets[1].fb, render_targets[0].tex, [0, 8]],
@@ -13445,10 +13608,6 @@ class Frame {
         ];
         for (const [dst_fb, src_tex, dir] of passes) {
             gl.bindFramebuffer(gl.FRAMEBUFFER, dst_fb);
-
-            /* clear all */
-            gl.clearColor(0.95, 0.0, 0.95, 1);
-            gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
 
             gl.useProgram(this.shaders.fullscreen.program);
 
@@ -13464,15 +13623,44 @@ class Frame {
             gl.drawArrays(gl.TRIANGLE_FAN, 0, 3);
         }
 
+        /* layered shadows */
+        const shadowLayer = (depth, mask_x, mask_y) => {
+            gl.useProgram(this.shaders.fullscreen_shadow_layer.program);
+
+            gl.uniform4f(this.shaders.fullscreen_shadow_layer.u_mask, mask_x, mask_y, 0, 0);
+            gl.uniform1f(this.shaders.fullscreen_shadow_layer.u_depth, depth);
+
+            /* bind tex */
+            {
+                gl.activeTexture(gl.TEXTURE0);
+                gl.bindTexture(gl.TEXTURE_2D, render_targets[0].tex);
+                gl.uniform1i(this.shaders.fullscreen_shadow_layer.u_texture, 0);
+            }
+
+            gl.drawArrays(gl.TRIANGLE_FAN, 0, 3);
+        }
+
+        {
+            gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+
+            gl.clearColor(1, 1, 1, 1);
+            gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+
+            shadowLayer(0.99, 0.65, 0.0);
+        }
+
+
         {
             // gl.bindFramebuffer(gl.FRAMEBUFFER, render_targets[0].fb);
 
             /* clear all */
             // gl.clearColor(0.95, 0.95, 0.95, 1);
-            gl.clear(gl.DEPTH_BUFFER_BIT);
+            // gl.clear(gl.DEPTH_BUFFER_BIT);
 
             /* geo pass */
             this.geoPass([1, 1, 1, 1]);
+
+            shadowLayer(0, 0.0, 0.4);
 
             /* button pass */
             {
@@ -13496,18 +13684,14 @@ class Frame {
 
                 /* upload/bind geometry */
 
-                let vbuf_count = 3;
                 {
                     gl.bindBuffer(gl.ARRAY_BUFFER, this.buf.vertex_button_pos);
-                    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(this.vertex_button_pos), gl.STATIC_DRAW);
                     gl.vertexAttribPointer(this.shaders.button.a_pos, 3, gl.FLOAT, false, 0, 0);
 
                     gl.bindBuffer(gl.ARRAY_BUFFER, this.buf.vertex_button_uv);
-                    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(this.vertex_button_uv), gl.STATIC_DRAW);
                     gl.vertexAttribPointer(this.shaders.button.a_uv, 2, gl.FLOAT, false, 0, 0);
 
                     gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, this.buf.index_button);
-                    gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, new Uint16Array(this.index_button), gl.STATIC_DRAW);
                 }
 
                 gl.drawElements(gl.TRIANGLES, this.index_button.length, gl.UNSIGNED_SHORT, 0);
@@ -13565,6 +13749,9 @@ class Frame {
     }
 }
 
+const MOUSE_DOWN_TARGET_NONE      = 0;
+const MOUSE_DOWN_TARGET_CANVAS    = 1;
+const MOUSE_DOWN_TARGET_SCROLLBAR = 2;
 class Input {
     constructor(frame, element = window) {
         this.mouse_world_x = 0;
@@ -13572,21 +13759,22 @@ class Input {
         this.mouse_clicked = false;
 
         this.scroll_captured = false;
-        this.mouse_captured  = false;
 
         this.scroll = 0;
-        /* NOTE: mouse_delta & scroll_delta are "consumed (set to 0)" by things that capture scroll/mouse */
+        /* NOTE: scroll_delta is "consumed (set to 0)" by things that capture scroll */
         this.scroll_delta = 0;
-        this.mouse_delta = 0;
 
         this.mouse_x = 0;
         this.mouse_y = 0;
 
         this.mouse_down_x = 0;
         this.mouse_down_y = 0;
+        this.mouse_down_world_x = 0;
+        this.mouse_down_world_y = 0;
 
         this.mouse_down = 0;
         this.mouse_released = false;
+        this.mouse_down_target = MOUSE_DOWN_TARGET_NONE;
 
         this.view_matrix = mat4_create();
         {
@@ -13603,24 +13791,17 @@ class Input {
         element.addEventListener('wheel', e => {
             if (this.mouse_down) return;
             this.scroll = Math.sign(e.deltaY);
-            if (this.scroll_captured) {
-                this.scroll_delta = e.deltaY;
-            }
+            this.scroll_delta = e.deltaY;
 
             clearTimeout(wheelTimeout)
             wheelTimeout = setTimeout(() => this.scroll = 0, 100)
         });
         element.addEventListener('mousedown', e => {
             this.mouse_down = true;
-            if (!this.mouse_captured) {
-                this.mouse_down_x = e.clientX*window.devicePixelRatio;
-                this.mouse_down_y = e.clientY*window.devicePixelRatio;
-            }
+            this.mouse_down_x = e.clientX*window.devicePixelRatio;
+            this.mouse_down_y = e.clientY*window.devicePixelRatio;
         });
         element.addEventListener('mousemove', e => {
-            if (this.mouse_captured) {
-                this.mouse_delta = e.movementY;
-            }
             this.mouse_x = e.clientX*window.devicePixelRatio;
             this.mouse_y = e.clientY*window.devicePixelRatio;
         });
@@ -13672,7 +13853,7 @@ class Input {
 
             /* mouse drag */
             let drag_x = 0, drag_y = 0;
-            if (this.mouse_down && !this.mouse_captured) {
+            if (this.mouse_down && this.mouse_down_target == MOUSE_DOWN_TARGET_CANVAS) {
                 drag_x += (mouse_x - mouse_down_x)
                 drag_y += (mouse_y - mouse_down_y)
 
@@ -13685,6 +13866,11 @@ class Input {
                 }
             }
 
+            if (!this.mouse_down) {
+                /* this will get overriden later on by things in the frame that are more specific, if applicable */
+                this.mouse_down_target = MOUSE_DOWN_TARGET_CANVAS;
+            }
+
             /* text rendering wants the pen pixel-aligned, so scale here */
             /* our pixel_matrix puts things in 0..1, but everything before that is in pixels */
             view = mat4_create_translate(drag_x, drag_y)
@@ -13694,17 +13880,23 @@ class Input {
         /* now that we have the world -> screen camera transform for the frame,
          * we can invert it to get where the mouse is (screen -> world) */
         {
+            let p;
             const inv = mat4_invert(mat4_create(), view);
-            const p = [mouse_x, mouse_y, 0, 1];
+
+            p = [mouse_x, mouse_y, 0, 1];
             mat4_transform_vec4(p, p, inv);
             this.mouse_world_x = p[0];
             this.mouse_world_y = p[1];
+
+            p = [mouse_down_x, mouse_down_y, 0, 1];
+            mat4_transform_vec4(p, p, inv);
+            this.mouse_down_world_x = p[0];
+            this.mouse_down_world_y = p[1];
         }
 
         /* prepare for coming frame of input */
         {
             input.scroll_captured = false;
-            input.mouse_captured = false;
         }
 
         return view;
@@ -13721,6 +13913,7 @@ class Input {
 
 let active_domain = "Equipment";
 let table_state = new Map();
+let scroll_drag_start = 0;
 let expanded_tables = new Map([["Model", { scroll: 0, expanded_timestamp: 0 }]]);
 
 /* fonts */
@@ -13793,11 +13986,6 @@ function expanded_show(expanded, timestamp) {
     if ((timestamp - expanded.expanded_timestamp) < 1000) return false;
     return true;
 }
-function expandedScroll(expanded, scroll_delta, max_scroll) {
-    expanded.scroll += scroll_delta;
-    expanded.scroll = Math.min(expanded.scroll, max_scroll);
-    expanded.scroll = Math.max(expanded.scroll, 0);
-}
 function expanded_progress(expanded, timestamp) {
     if (!expanded) return 0;
 
@@ -13828,6 +14016,10 @@ window.onkeydown = e => {
         active_domain = categories[(categories.indexOf(active_domain) + 1) % categories.length];
     }
 }
+
+const SHADOW_LAYER_NONE   = 0;
+const SHADOW_LAYER_BASE   = 1;
+const SHADOW_LAYER_BUTTON = 2;
 
 let gl_font_face_hex_titles, gl_font_face_labels;
 function uiFrame(frame, input, timestamp) {
@@ -14180,6 +14372,7 @@ function uiFrame(frame, input, timestamp) {
             const color = hover ? COLOR_EXPANDED_WINDOW_BG_HOVER : COLOR_EXPANDED_WINDOW_BG;
             {
                 const over = expansion_progress - 1.0;
+                frame.shadow_layer = SHADOW_LAYER_BASE;
                 frame.drawBox(
                     /* box min_x */ min_x - over*EXPANDED_WINDOW_BOUNCE_EXAGGERATION * EXPANDED_SIZE_X,
                     /* box min_y */ min_y - over*EXPANDED_WINDOW_BOUNCE_EXAGGERATION * EXPANDED_SIZE_Y,
@@ -14187,6 +14380,7 @@ function uiFrame(frame, input, timestamp) {
                     /* box max_y */ max_y + over*EXPANDED_WINDOW_BOUNCE_EXAGGERATION * EXPANDED_SIZE_Y,
                     /*     color */ color
                 );
+                frame.shadow_layer = SHADOW_LAYER_NONE;
             }
 
             /* draw colorful top bar */
@@ -14238,11 +14432,15 @@ function uiFrame(frame, input, timestamp) {
                 input.scroll_captured = true;
             }
 
-            const max_scroll = instances_all_max_y - pen_y - visible_size_y;
             if (input.scroll_delta && hover) {
-                expandedScroll(expanded, input.scroll_delta, max_scroll);
+
+                expanded.scroll += input.scroll_delta;
                 input.scroll_delta = 0;
             }
+
+            const max_scroll = instances_all_max_y - pen_y - visible_size_y;
+            expanded.scroll = Math.min(expanded.scroll, max_scroll);
+            expanded.scroll = Math.max(expanded.scroll, 0);
 
             for (let column = 0; column < instance_columns; column++) {
                 const view_top_row_index = Math.floor(expanded.scroll / rect_space_y_padded);
@@ -14254,6 +14452,9 @@ function uiFrame(frame, input, timestamp) {
                     const rect_size_x = EXPANDED_WINDOW_INSTANCE_WIDTH;
                     const rect_x = pen_x + column*(rect_size_x + EXPANDED_WINDOW_INSTANCE_PAD_X);
                     let rect_y = pen_y + i*rect_space_y_padded - expanded.scroll;
+
+                    frame.shadow_layer = SHADOW_LAYER_BUTTON;
+                    frame.z = -0.1;
                     frame.drawBoxClamped(
                         /* clamping box */ clampbox,
                         /*    box min_x */ rect_x,
@@ -14262,6 +14463,7 @@ function uiFrame(frame, input, timestamp) {
                         /*    box max_y */ rect_y + rect_size_y,
                         /*        color */ COLOR_BUTTON_BORDER
                     );
+
                     frame.drawButtonClamped(
                         /* clamping box */ clampbox,
                         /* button min_x */ rect_x + outline_thickness,
@@ -14269,6 +14471,8 @@ function uiFrame(frame, input, timestamp) {
                         /* button max_x */ rect_x + rect_size_x - outline_thickness,
                         /* button max_y */ rect_y + rect_size_y - outline_thickness
                     );
+                    frame.shadow_layer = SHADOW_LAYER_NONE;
+                    frame.z = 0.1;
 
                     /* these are cases where we need to clamp text, but for now I will just hide it */
                     if (i == view_top_row_index && (rect_y - pen_y) < -20) continue;
@@ -14302,22 +14506,30 @@ function uiFrame(frame, input, timestamp) {
                 const hover = (input.mouse_world_x > scrollbar_min_x && input.mouse_world_x < scrollbar_max_x) &&
                               (input.mouse_world_y > scrollbar_min_y && input.mouse_world_y < scrollbar_max_y);
 
-                if (hover) {
-                    input.mouse_captured = true;
+                /* register us as the mouse_down target so we can capture the mouse if they start dragging */
+                if (hover && !input.mouse_down) {
+                    input.mouse_down_target = MOUSE_DOWN_TARGET_SCROLLBAR;
+                    scroll_drag_start = expanded.scroll;
+                }
 
-                    if (input.mouse_down) {
-                        expandedScroll(expanded, input.mouse_delta, max_scroll);
-                        input.mouse_delta = 0;
-
+                if (input.mouse_down_target == MOUSE_DOWN_TARGET_SCROLLBAR) {
+                    if (input.mouse_released) {
+                        input.mouse_down_target = MOUSE_DOWN_TARGET_NONE;
                         input.mouse_down_x = input.mouse_x;
                         input.mouse_down_y = input.mouse_y;
+                        input.mouse_down = false;
+                    }
+
+                    if (input.mouse_down) {
+                        expanded.scroll = scroll_drag_start + (input.mouse_world_y - input.mouse_down_world_y)*2;
+                        expanded.scroll = Math.min(expanded.scroll, max_scroll);
+                        expanded.scroll = Math.max(expanded.scroll, 0);
                     }
                 }
 
                 frame.drawBox(
                     /* box min_x */ scrollbar_min_x,
-                    /* box min_y */ scrollbar_min_y,
-                    /* box max_x */ scrollbar_max_x,
+                    /* box min_y */ scrollbar_min_y, /* box max_x */ scrollbar_max_x,
                     /* box max_y */ scrollbar_max_y,
                     /*     color */ hover ? COLOR_SCROLLBAR_HOVERED : COLOR_SCROLLBAR
                 )
@@ -14330,9 +14542,11 @@ function uiFrame(frame, input, timestamp) {
                 const color = hover ? highlight_hover : highlight;
                 const n = HEX_BORDER_THICKNESS/2;
 
+                frame.shadow_layer = SHADOW_LAYER_BASE;
                 /*            min_x,   min_y,   max_x,   max_y,   color,            gradient */
                 frame.drawHex(min_x-n, min_y-n, max_x+n, max_y+n, COLOR_HEX_BORDER, false);
                 frame.drawHex(min_x  , min_y  , max_x  , max_y  , color,            true);
+                frame.shadow_layer = SHADOW_LAYER_NONE;
             }
 
             /* we put each word in a hex title on a different line */
