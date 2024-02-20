@@ -12802,7 +12802,6 @@ class Frame {
         this.z                          = 0.1;
         this.shadow_layer               = SHADOW_LAYER_NONE;
         this.vertex_geo_shadow_layer    = [];
-        this.vertex_button_shadow_layer = [];
 
         /* just a little cached vector used for matrix transforms */
         this.p = [0, 0, 0, 1];
@@ -13175,16 +13174,14 @@ class Frame {
         }
 
         this.buf = {
-            vertex_text       : gl.createBuffer(),
-            vertex_geo_pos    : gl.createBuffer(),
-            vertex_geo_color  : gl.createBuffer(),
-            index_geo         : gl.createBuffer(),
-            vertex_button_pos : gl.createBuffer(),
-            vertex_button_uv  : gl.createBuffer(),
-            index_button      : gl.createBuffer(),
-
-            vertex_button_shadow_layer : gl.createBuffer(),
-            vertex_geo_shadow_layer    : gl.createBuffer(),
+            vertex_text              : gl.createBuffer(),
+            vertex_geo_pos           : gl.createBuffer(),
+            vertex_geo_color         : gl.createBuffer(),
+            index_geo                : gl.createBuffer(),
+            vertex_button_pos        : gl.createBuffer(),
+            vertex_button_uv         : gl.createBuffer(),
+            index_button             : gl.createBuffer(),
+            vertex_geo_shadow_layer  : gl.createBuffer(),
         };
     }
 
@@ -13200,7 +13197,6 @@ class Frame {
         this.index_button = [];
 
         this.vertex_geo_shadow_layer    = [];
-        this.vertex_button_shadow_layer = [];
 
         this.font_bufs = [];
     }
@@ -13444,7 +13440,6 @@ class Frame {
         this.p[3] = 1;
         mat4_transform_vec4(this.p, this.p, this.view);
         this.vertex_button_pos.push(this.p[0], this.p[1], this.z);
-        this.vertex_button_shadow_layer.push(this.shadow_layer);
     }
 
     posPush(x, y) {
@@ -13488,9 +13483,6 @@ class Frame {
 
         /* shadow layer buffers (normal geometry + buttons) */
         {
-            gl.bindBuffer(gl.ARRAY_BUFFER, this.buf.vertex_button_shadow_layer);
-            gl.bufferData(gl.ARRAY_BUFFER, new Uint8Array(this.vertex_button_shadow_layer), gl.STATIC_DRAW);
-
             gl.bindBuffer(gl.ARRAY_BUFFER, this.buf.vertex_geo_shadow_layer);
             gl.bufferData(gl.ARRAY_BUFFER, new Uint8Array(this.vertex_geo_shadow_layer), gl.STATIC_DRAW);
         }
@@ -13530,7 +13522,7 @@ class Frame {
 
         gl.uniformMatrix4fv(this.shaders.shadow.u_matrix, false, this.pixel_matrix);
 
-        /* normal geometry pass */
+        /* normal geometry shadow pass */
         {
             {
                 gl.bindBuffer(gl.ARRAY_BUFFER, this.buf.vertex_geo_pos);
@@ -13543,21 +13535,6 @@ class Frame {
             }
 
             gl.drawElements(gl.TRIANGLES, this.index_geo.length, gl.UNSIGNED_SHORT, 0);
-        }
-
-        /* button geometry pass */
-        {
-            {
-                gl.bindBuffer(gl.ARRAY_BUFFER, this.buf.vertex_button_pos);
-                gl.vertexAttribPointer(this.shaders.shadow.a_pos, 3, gl.FLOAT, false, 0, 0);
-
-                gl.bindBuffer(gl.ARRAY_BUFFER, this.buf.vertex_button_shadow_layer);
-                gl.vertexAttribIPointer(this.shaders.shadow.a_shadow_layer, 1, gl.UNSIGNED_BYTE, 0, 0);
-
-                gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, this.buf.index_button);
-            }
-
-            gl.drawElements(gl.TRIANGLES, this.index_button.length, gl.UNSIGNED_SHORT, 0);
         }
     }
 
