@@ -43,7 +43,5 @@ I've tried a lot of different mechanisms for doing text and this one works the b
 
 also: example of how to clip text without scissor rects, useful for doing a lot of text with few drawcalls
 
-TODO: oops i accidentally commited text_clipped over text, will fix later 😅
-
 <img width="400" alt="Screenshot 2024-03-08 at 2 54 36 PM" src="https://github.com/cedric-h/linear-webgl/assets/25539554/b2b341c6-8abb-47b1-abda-5edf6d4fda09">
 

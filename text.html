@@ -219,7 +219,6 @@ const updateSDF = (() => {
 })()
 
 function lerp(v0, v1, t) { return (1 - t) * v0 + t * v1; }
-function clamp(min, a, max) { return Math.min(max, Math.max(min, a)); }
 function inv_lerp(min, max, p) { return (p - min) / (max - min); }
 function mat4_create() {
     let out = new Float32Array(16);
@@ -549,11 +548,6 @@ requestAnimationFrame(function frame(timestamp) {
     const ALIGN_LEFT = 0;
     const ALIGN_CENTER = 1;
     function drawText(str, worldX, worldY, view, size, align = ALIGN_LEFT) {
-        const clamp_min = [0, Math.sin(Date.now() * 0.001)*1600 - 100, 0, 1]
-        const clamp_max = [0, Math.sin(Date.now() * 0.001)*1600 + 350, 0, 1]
-        mat4_transform_vec4(clamp_min, clamp_min, view);
-        mat4_transform_vec4(clamp_max, clamp_max, view);
-
         const pos = [worldX, worldY, 0, 1]
         mat4_transform_vec4(pos, pos, view);
         const x = Math.round(pos[0]);
@@ -578,55 +572,23 @@ requestAnimationFrame(function frame(timestamp) {
             const advance = sdfs[str[i]].glyph.glyphAdvance;
             const by = sdfs[str[i]].glyph.glyphTop - (fontsize / 2 + buf); // bearing y
 
-            let min_x = pen.x + ((bx - buf +     0) * scale);
-            let max_x = pen.x + ((bx - buf + width) * scale);
-            let min_y = pen.y - (     0 + by) * scale;
-            let max_y = pen.y + (height - by) * scale;
-
-            let min_u = posX +      0;
-            let max_u = posX +  width;
-            let min_v = posY +      0;
-            let max_v = posY + height;
-
-            {
-                const cut_max_y_t = clamp(1.0, inv_lerp(min_y, max_y, clamp_max[1]), 0.0);
-                const cut_min_y_t = clamp(0.0, inv_lerp(max_y, min_y, clamp_max[1]), 1.0);
-
-                min_y = lerp(min_y, max_y, cut_max_y_t);
-                max_y = lerp(max_y, min_y, cut_min_y_t);
-
-                min_v = lerp(min_v, max_v, cut_max_y_t);
-                max_v = lerp(max_v, min_v, cut_min_y_t);
-            }
-
-            {
-                const cut_max_y_t = clamp(0.0, inv_lerp(min_y, max_y, clamp_min[1]), 1.0);
-                const cut_min_y_t = clamp(1.0, inv_lerp(max_y, min_y, clamp_min[1]), 0.0);
-
-                min_y = lerp(min_y, max_y, cut_max_y_t);
-                max_y = lerp(max_y, min_y, cut_min_y_t);
-
-                min_v = lerp(min_v, max_v, cut_max_y_t);
-                max_v = lerp(max_v, min_v, cut_min_y_t);
-            }
-
             vertexElements.push(
-                min_x, min_y,
-                max_x, min_y,
-                min_x, max_y,
+                pen.x + ((bx - buf) * scale), pen.y - by * scale,
+                pen.x + ((bx - buf + width) * scale), pen.y - by * scale,
+                pen.x + ((bx - buf) * scale), pen.y + (height - by) * scale,
 
-                max_x, min_y,
-                min_x, max_y,
-                max_x, max_y
+                pen.x + ((bx - buf + width) * scale), pen.y - by * scale,
+                pen.x + ((bx - buf) * scale), pen.y + (height - by) * scale,
+                pen.x + ((bx - buf + width) * scale), pen.y + (height - by) * scale
             );
 
             textureElements.push(
-                min_u, min_v,
-                max_u, min_v,
-                min_u, max_v,
-                max_u, min_v,
-                min_u, max_v,
-                max_u, max_v
+                posX, posY,
+                posX + width, posY,
+                posX, posY + height,
+                posX + width, posY,
+                posX, posY + height,
+                posX + width, posY + height
             );
 
             pen.x = pen.x + advance * scale;
