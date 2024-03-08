@@ -35,7 +35,7 @@ also: nodes-rpi, a WebGL 1 version that works (~25 fps) at low resolutions on a 
 simple text demo, based on mapbox's TinySDF
 
 [text](https://cedric-h.github.io/linear-webgl/text),
-[text](https://cedric-h.github.io/linear-webgl/text_clipped)
+[text_clipped](https://cedric-h.github.io/linear-webgl/text_clipped)
 
 also: example of how to clip text without scissor rects, useful for doing a lot of text with few drawcalls
 
