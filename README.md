@@ -1,11 +1,18 @@
 # webgl demos in a single file, the way god intended
 
-^.^
+If you ask me, any attempt to make an abstraction over WebGL ... only makes it more difficult to use.
 
-This probably isn't useful to you unless you already hack on graphics programming enough to know the APIs by sight and just need to see the calls flat, without abstraction, so that you can quickly prototype something, and then see the best abstractions afterwards.
+But don't take it from me, let's look at the numbers:
 
-The exception here, for me, is matrix math, a blob of functions for which I simply paste into the top of each script. I've internalized a lot of CG relevant matrix math to the point where I can recite it from memory where necessary, but I'm not hacking on the primitives of matrix math so much as I'm trying to find really efficient ways to render :sparkles: quirky things :sparkles:. So each file just has a blob of matrix functions at the top.
+- Higher level abstractions [suffer from performance issues](benchmarks.slaylines.io)
 
+- Lower level abstractions like [picogl](https://tsherif.github.io/picogl.js/), [twgl](https://twgljs.org/) and [regl](https://regl-project.github.io/regl/) hardly offer enough to be worth the marginally larger bundle size. (coming in at 67k, 52k, and 86k respectively ... i fit a minimal minecraft clone in under 96kb and [you should really only send 650kb max, ever](https://infrequently.org/2024/01/performance-inequality-gap-2024/))
+
+WebGPU will be nice, but [I've been waiting for it since 2018.](https://github.com/cedric-h/stockRPG/blob/master/src/wgpu/game_renderer.rs). It's only just been rolled out in a single browser, it will be forever before it makes it to low-end mobile devices, and that's where performance (and therefore clever graphics programming) matters the most.
+
+So raw, unadulterated WebGL it is. [Webglfundamentals.org](https://webglfundamentals.org) is great, but it's just that: fundamentals. I want scrollbars and dropshadows and examples where those "fundamentals" are used to do __real shit__.
+
+Ergo: flat, linear WebGL.
 
 ## simple 3D
 
