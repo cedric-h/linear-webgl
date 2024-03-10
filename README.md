@@ -8,7 +8,7 @@ But don't take it from me, let's look at the numbers:
 
 - Lower level abstractions like [picogl](https://tsherif.github.io/picogl.js/), [twgl](https://twgljs.org/) and [regl](https://regl-project.github.io/regl/) hardly offer enough to be worth the marginally larger bundle size. (coming in at 67k, 52k, and 86k respectively ... [i fit a minimal minecraft clone in under 96kb](https://github.com/cedric-h/cedcraft) and [you should really only send 650kb max, ever](https://infrequently.org/2024/01/performance-inequality-gap-2024/))
 
-WebGPU will be nice, but [I've been waiting for it since 2018.](https://github.com/cedric-h/stockRPG/blob/master/src/wgpu/game_renderer.rs). It's only just been rolled out in a single browser, it will be forever before it makes it to low-end mobile devices, and that's where performance (and therefore clever graphics programming) matters the most.
+WebGPU will be nice, but [I've been waiting for it since 2018](https://github.com/cedric-h/stockRPG/blob/master/src/wgpu/game_renderer.rs). It's only just been rolled out in a single browser, it will be forever before it makes it to low-end mobile devices, and that's where performance (and therefore clever graphics programming) matters the most.
 
 So raw, unadulterated WebGL it is. [Webglfundamentals.org](https://webglfundamentals.org) is great, but it's just that: fundamentals. I want scrollbars and dropshadows and examples where those "fundamentals" are used to do __real shit__.
 
