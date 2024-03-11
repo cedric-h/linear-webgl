@@ -1,0 +1,273 @@
+<!-- vim: sw=4 ts=4 expandtab smartindent ft=javascript
+-->
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>WebGL Demo</title>
+    <style> document, body { margin: 0px; padding: 0px; overflow: hidden; } </style>
+  </head>
+
+  <body>
+    <canvas id="inspectorGraphCanvas"></canvas>
+    <script>
+function lerp(v0, v1, t) { return (1 - t) * v0 + t * v1; }
+function inv_lerp(min, max, p) { return (p - min) / (max - min); }
+function mat4_create() {
+    let out = new Float32Array(16);
+    out[0] = 1;
+    out[5] = 1;
+    out[10] = 1;
+    out[15] = 1;
+    return out;
+}
+function mat4_ortho(out, left, right, bottom, top, near, far) {
+    let lr = 1 / (left - right);
+    let bt = 1 / (bottom - top);
+    let nf = 1 / (near - far);
+    out[0] = -2 * lr;
+    out[1] = 0;
+    out[2] = 0;
+    out[3] = 0;
+    out[4] = 0;
+    out[5] = -2 * bt;
+    out[6] = 0;
+    out[7] = 0;
+    out[8] = 0;
+    out[9] = 0;
+    out[10] = 2 * nf;
+    out[11] = 0;
+    out[12] = (left + right) * lr;
+    out[13] = (top + bottom) * bt;
+    out[14] = (far + near) * nf;
+    out[15] = 1;
+    return out;
+}
+function mat4_transform_vec4(out, a, m) {
+    let x = a[0], y = a[1], z = a[2], w = a[3];
+    out[0] = m[0] * x + m[4] * y + m[8] * z + m[12] * w;
+    out[1] = m[1] * x + m[5] * y + m[9] * z + m[13] * w;
+    out[2] = m[2] * x + m[6] * y + m[10] * z + m[14] * w;
+    out[3] = m[3] * x + m[7] * y + m[11] * z + m[15] * w;
+    return out;
+}
+
+const graphCanvas = document.getElementById('inspectorGraphCanvas');
+const gl = graphCanvas.getContext('webgl', {antialias: true});
+if (!gl) { alert('Failed to initialize WebGL'); }
+
+let pMatrix = mat4_create();
+let viewMatrix = mat4_create();
+(window.onresize = () => {
+    graphCanvas.width = window.innerWidth;
+    graphCanvas.height = window.innerHeight;
+
+    /* account for e.g. high-retina macbook screens */
+    if (window.devicePixelRatio > 1) {
+        graphCanvas.style.width = `${graphCanvas.width}px`;
+        graphCanvas.style.height = `${graphCanvas.height}px`;
+        graphCanvas.width *= window.devicePixelRatio;
+        graphCanvas.height *= window.devicePixelRatio;
+    }
+
+    pMatrix = mat4_ortho(pMatrix, 0, gl.canvas.width, gl.canvas.height, 0, 1, -1);
+    gl.viewport(
+        0,
+        0,
+        graphCanvas.width,
+        graphCanvas.height
+    );
+})();
+
+const geo_vbuf_pos = gl.createBuffer();
+const geo_vbuf_color = gl.createBuffer();
+const geo_ibuf = gl.createBuffer();
+
+
+let textShader, geoShader;
+/* compile shaders */
+{
+    const vsGeo = `
+        attribute vec3 a_pos;
+        attribute vec4 a_color;
+
+        uniform mat4 u_matrix;
+
+        varying vec4 v_color;
+
+        void main() {
+            gl_Position = u_matrix * vec4(a_pos.xyz, 1);
+            v_color = a_color;
+        }`;
+
+    const fsGeo = `
+        precision mediump float;
+
+        varying vec4 v_color;
+
+        void main() {
+            gl_FragColor = v_color;
+        }`;
+
+    function createProgram(gl, vertexSource, fragmentSource) {
+        function createShader(gl, type, source) {
+            const shader = gl.createShader(type);
+            gl.shaderSource(shader, source);
+            gl.compileShader(shader);
+            if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+                throw new Error(gl.getShaderInfoLog(shader));
+            }
+            return shader;
+        }
+
+        const program = gl.createProgram();
+
+        const vertexShader = createShader(gl, gl.VERTEX_SHADER, vertexSource);
+        const fragmentShader = createShader(gl, gl.FRAGMENT_SHADER, fragmentSource);
+
+        gl.attachShader(program, vertexShader);
+        gl.attachShader(program, fragmentShader);
+
+        gl.linkProgram(program);
+        if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+            throw new Error(gl.getProgramInfoLog(program));
+        }
+
+        const wrapper = {program};
+
+        const numAttributes = gl.getProgramParameter(program, gl.ACTIVE_ATTRIBUTES);
+        for (let i = 0; i < numAttributes; i++) {
+            const attribute = gl.getActiveAttrib(program, i);
+            wrapper[attribute.name] = gl.getAttribLocation(program, attribute.name);
+        }
+        const numUniforms = gl.getProgramParameter(program, gl.ACTIVE_UNIFORMS);
+        for (let i = 0; i < numUniforms; i++) {
+            const uniform = gl.getActiveUniform(program, i);
+            wrapper[uniform.name] = gl.getUniformLocation(program, uniform.name);
+        }
+
+        return wrapper;
+    }
+
+
+    geoShader = createProgram(gl, vsGeo, fsGeo);
+}
+
+requestAnimationFrame(function frame(timestamp) {
+    requestAnimationFrame(frame);
+
+    const geo_idx = [];
+    const geo_pos = [];
+    const geo_color = [];
+    const text_verts = [];
+
+    let view = viewMatrix;
+
+    function drawSquare( min_x, min_y,   max_x, max_y,   z,   color ) {
+        geo_color.push(
+            color[0], color[1], color[2], color[3],
+            color[0], color[1], color[2], color[3],
+            color[0], color[1], color[2], color[3],
+            color[0], color[1], color[2], color[3]
+        )
+
+        const vbuf_i = geo_pos.length / 3;
+        const p = [0, 0, 0, 1];
+        p[0] = max_x; p[1] = min_y; mat4_transform_vec4(p, p, view); geo_pos.push(p[0], p[1], z);
+        p[0] = min_x; p[1] = min_y; mat4_transform_vec4(p, p, view); geo_pos.push(p[0], p[1], z);
+        p[0] = min_x; p[1] = max_y; mat4_transform_vec4(p, p, view); geo_pos.push(p[0], p[1], z);
+        p[0] = max_x; p[1] = max_y; mat4_transform_vec4(p, p, view); geo_pos.push(p[0], p[1], z);
+
+        geo_idx.push(vbuf_i + 0, vbuf_i + 1, vbuf_i + 2, vbuf_i + 2, vbuf_i + 3, vbuf_i + 0);
+    }
+
+    /* set up premultiplied alpha */
+    gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
+    gl.enable(gl.BLEND);
+
+    gl.enable(gl.DEPTH_TEST);
+    gl.depthFunc(gl.LEQUAL);
+
+    /* clear all */
+    gl.clearColor(1, 1, 1, 1);
+    gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+
+    {
+        const rainbow = [
+            /* red,    */ [255,   0,   0, 255],
+            /* orange, */ [255, 100,   0, 255],
+            /* yellow, */ [255, 255,   0, 255],
+            /* green,  */ [  0, 255,   0, 255],
+            /* blue,   */ [  0,   0, 255, 255],
+            /* purple  */ [255,   0, 255, 255]
+        ];
+
+        /* desaturate */
+        for (const color of rainbow) {
+            color[0] = (color[0] + 255*2) * 0.33;
+            color[1] = (color[1] + 255*2) * 0.33;
+            color[2] = (color[2] + 255*2) * 0.33;
+
+            color[0] *= 0.8;
+            color[1] *= 0.8;
+            color[2] *= 0.8;
+            color[3] *= 0.8;
+        }
+
+        if (1) {
+            /* front to back */
+            for (let _i = 0; _i < rainbow.length; _i++) {
+                const i = rainbow.length - 1 - _i;
+
+                const min_x = 500 + i* 75;
+                const min_y = 500 + i* 75;
+                const max_x = min_x + 200;
+                const max_y = min_y + 200;
+                const z = (i/rainbow.length)*2 - 1;
+                drawSquare(min_x, min_y, max_x, max_y, z, rainbow[i]);
+            }
+        } else {
+            /* back to font */
+            for (let i = 0; i < rainbow.length; i++) {
+                const min_x = 500 + i* 75;
+                const min_y = 500 + i* 75;
+                const max_x = min_x + 200;
+                const max_y = min_y + 200;
+                const z = (1 - i/rainbow.length)*2 - 1;
+                drawSquare(min_x, min_y, max_x, max_y, z, rainbow[i]);
+            }
+        }
+
+        /* geo pass */
+        {
+            gl.useProgram(geoShader.program);
+            gl.enableVertexAttribArray(geoShader.a_pos);
+            gl.enableVertexAttribArray(geoShader.a_color);
+
+            gl.uniformMatrix4fv(geoShader.u_matrix, false, pMatrix);
+
+            /* upload/bind geometry */
+
+            let vbuf_count = 3;
+            {
+                gl.bindBuffer(gl.ARRAY_BUFFER, geo_vbuf_pos);
+                gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(geo_pos), gl.STATIC_DRAW);
+                gl.vertexAttribPointer(geoShader.a_pos, 3, gl.FLOAT, false, 0, 0);
+
+                gl.bindBuffer(gl.ARRAY_BUFFER, geo_vbuf_color);
+                gl.bufferData(gl.ARRAY_BUFFER, new Uint8Array(geo_color), gl.STATIC_DRAW);
+                gl.vertexAttribPointer(geoShader.a_color, 4, gl.UNSIGNED_BYTE, true, 0, 0);
+
+                gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, geo_ibuf);
+                gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, new Uint16Array(geo_idx), gl.STATIC_DRAW);
+            }
+
+            gl.drawElements(gl.TRIANGLES, geo_idx.length, gl.UNSIGNED_SHORT, 0);
+        }
+    }
+})
+
+
+    </script>
+  </body>
+</html>

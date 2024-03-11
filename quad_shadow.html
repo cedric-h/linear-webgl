@@ -1,0 +1,516 @@
+<!-- vim: sw=4 ts=4 expandtab smartindent ft=javascript
+-->
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>WebGL Demo</title>
+    <style> document, body { margin: 0px; padding: 0px; overflow: hidden; } </style>
+  </head>
+
+  <body>
+    <canvas id="inspectorGraphCanvas"></canvas>
+    <script>
+function lerp(v0, v1, t) { return (1 - t) * v0 + t * v1; }
+function inv_lerp(min, max, p) { return (p - min) / (max - min); }
+function mat4_create() {
+    let out = new Float32Array(16);
+    out[0] = 1;
+    out[5] = 1;
+    out[10] = 1;
+    out[15] = 1;
+    return out;
+}
+function mat4_ortho(out, left, right, bottom, top, near, far) {
+    let lr = 1 / (left - right);
+    let bt = 1 / (bottom - top);
+    let nf = 1 / (near - far);
+    out[0] = -2 * lr;
+    out[1] = 0;
+    out[2] = 0;
+    out[3] = 0;
+    out[4] = 0;
+    out[5] = -2 * bt;
+    out[6] = 0;
+    out[7] = 0;
+    out[8] = 0;
+    out[9] = 0;
+    out[10] = 2 * nf;
+    out[11] = 0;
+    out[12] = (left + right) * lr;
+    out[13] = (top + bottom) * bt;
+    out[14] = (far + near) * nf;
+    out[15] = 1;
+    return out;
+}
+function mat4_transform_vec4(out, a, m) {
+    let x = a[0], y = a[1], z = a[2], w = a[3];
+    out[0] = m[0] * x + m[4] * y + m[8] * z + m[12] * w;
+    out[1] = m[1] * x + m[5] * y + m[9] * z + m[13] * w;
+    out[2] = m[2] * x + m[6] * y + m[10] * z + m[14] * w;
+    out[3] = m[3] * x + m[7] * y + m[11] * z + m[15] * w;
+    return out;
+}
+
+const graphCanvas = document.getElementById('inspectorGraphCanvas');
+const gl = graphCanvas.getContext('webgl2', {antialias: true});
+if (!gl) { alert('Failed to initialize WebGL'); }
+
+let pMatrix = mat4_create();
+(window.onresize = () => {
+    graphCanvas.width = window.innerWidth;
+    graphCanvas.height = window.innerHeight;
+
+    /* account for e.g. high-retina macbook screens */
+    if (window.devicePixelRatio > 1) {
+        graphCanvas.style.width = `${graphCanvas.width}px`;
+        graphCanvas.style.height = `${graphCanvas.height}px`;
+        graphCanvas.width *= window.devicePixelRatio;
+        graphCanvas.height *= window.devicePixelRatio;
+    }
+
+    pMatrix = mat4_ortho(pMatrix, 0, gl.canvas.width, gl.canvas.height, 0, 1, -1);
+    gl.viewport(
+        0,
+        0,
+        graphCanvas.width,
+        graphCanvas.height
+    );
+})();
+
+const geo_vbuf_pos = gl.createBuffer();
+const geo_vbuf_color = gl.createBuffer();
+const geo_ibuf = gl.createBuffer();
+
+const img_vbuf_pos = gl.createBuffer();
+const img_vbuf_uv = gl.createBuffer();
+const img_ibuf = gl.createBuffer();
+
+
+let shaders;
+/* compile shaders */
+{
+    const vsImg = `
+        attribute vec3 a_pos;
+        attribute vec2 a_uv;
+
+        uniform mat4 u_matrix;
+
+        varying vec2 v_uv;
+
+        void main() {
+            gl_Position = u_matrix * vec4(a_pos.xyz, 1);
+            v_uv = a_uv;
+        }`;
+
+    const fsImg = `
+        precision mediump float;
+
+        varying vec2 v_uv;
+
+        uniform sampler2D u_texture;
+
+        void main() {
+            gl_FragColor = texture2D(u_texture, v_uv);
+        }`;
+
+    const vsGeo = `
+        attribute vec3 a_pos;
+        attribute vec4 a_color;
+
+        uniform mat4 u_matrix;
+        uniform vec4 u_color_mask;
+
+        varying vec4 v_color;
+
+        void main() {
+            gl_Position = u_matrix * vec4(a_pos.xyz, 1);
+            v_color = a_color * u_color_mask;
+        }`;
+
+    const fsGeo = `
+        precision mediump float;
+
+        varying vec4 v_color;
+
+        void main() {
+            gl_FragColor = v_color;
+        }`;
+
+    const vsFullscreenBlur = `#version 300 es
+        precision mediump float;
+
+        out vec2 v_texcoord;
+
+        void main(void) {
+            float x = float((gl_VertexID & 1) << 2);
+            float y = float((gl_VertexID & 2) << 1);
+            v_texcoord.x = x * 0.5;
+            v_texcoord.y = y * 0.5;
+            gl_Position = vec4(x - 1.0, y - 1.0, 0, 1);
+        }
+    `;
+
+    const fsFullscreenBlur = `#version 300 es
+        precision mediump float;
+
+        uniform sampler2D u_texture;
+        uniform vec2 u_direction;
+
+        in vec2 v_texcoord;
+
+        out vec4 frag_color;
+
+        void main(void) {
+            vec2 one_pixel = u_direction*(vec2(1) / vec2(textureSize(u_texture, 0)));
+
+            frag_color = texture(u_texture, v_texcoord) * 0.2270270270;
+
+            frag_color += texture(u_texture, v_texcoord + one_pixel    ) * 0.1945945946;
+            frag_color += texture(u_texture, v_texcoord - one_pixel    ) * 0.1945945946;
+
+            frag_color += texture(u_texture, v_texcoord + one_pixel*2.0) * 0.1216216216;
+            frag_color += texture(u_texture, v_texcoord - one_pixel*2.0) * 0.1216216216;
+
+            frag_color += texture(u_texture, v_texcoord + one_pixel*3.0) * 0.0540540541;
+            frag_color += texture(u_texture, v_texcoord - one_pixel*3.0) * 0.0540540541;
+
+            frag_color += texture(u_texture, v_texcoord + one_pixel*4.0) * 0.0162162162;
+            frag_color += texture(u_texture, v_texcoord - one_pixel*4.0) * 0.0162162162;
+        }
+    `;
+
+    function createProgram(gl, vertexSource, fragmentSource) {
+        function createShader(gl, type, source) {
+            const shader = gl.createShader(type);
+            gl.shaderSource(shader, source);
+            gl.compileShader(shader);
+            if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+                throw new Error(gl.getShaderInfoLog(shader));
+            }
+            return shader;
+        }
+
+        const program = gl.createProgram();
+
+        const vertexShader = createShader(gl, gl.VERTEX_SHADER, vertexSource);
+        const fragmentShader = createShader(gl, gl.FRAGMENT_SHADER, fragmentSource);
+
+        gl.attachShader(program, vertexShader);
+        gl.attachShader(program, fragmentShader);
+
+        gl.linkProgram(program);
+        if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+            throw new Error(gl.getProgramInfoLog(program));
+        }
+
+        const wrapper = {program};
+
+        const numAttributes = gl.getProgramParameter(program, gl.ACTIVE_ATTRIBUTES);
+        for (let i = 0; i < numAttributes; i++) {
+            const attribute = gl.getActiveAttrib(program, i);
+            wrapper[attribute.name] = gl.getAttribLocation(program, attribute.name);
+        }
+        const numUniforms = gl.getProgramParameter(program, gl.ACTIVE_UNIFORMS);
+        for (let i = 0; i < numUniforms; i++) {
+            const uniform = gl.getActiveUniform(program, i);
+            wrapper[uniform.name] = gl.getUniformLocation(program, uniform.name);
+        }
+
+        return wrapper;
+    }
+
+    shaders = {
+        img: createProgram(gl, vsImg, fsImg),
+        geo: createProgram(gl, vsGeo, fsGeo),
+        fullscreenBlur: createProgram(gl, vsFullscreenBlur, fsFullscreenBlur),
+    };
+}
+
+let prebaked;
+{
+  const canvas_width  = 256;
+  const canvas_height = 256;
+
+  const pad = 100;
+  const world_width  = 575;
+  const world_height = 575;
+  gl.viewport(
+      0,
+      0,
+      canvas_width,
+      canvas_height
+  );
+
+  const pMatrix = mat4_ortho(mat4_create(), -pad, world_width+pad, -pad, world_height+pad, 1, -1);
+
+  const render_targets = [
+    { tex: gl.createTexture(), fb: gl.createFramebuffer() },
+    { tex: gl.createTexture(), fb: gl.createFramebuffer() },
+  ];
+ 
+  for (const rt of render_targets) {
+      gl.bindTexture(gl.TEXTURE_2D, rt.tex);
+
+      // Upload the image into the texture.
+      gl.texImage2D(
+          /* target         */ gl.TEXTURE_2D,
+          /* level          */ 0,
+          /* internalformat */ gl.RGBA,
+          /* width          */ canvas_width ,
+          /* height         */ canvas_height,
+          /* border,        */ 0,
+          /* format,        */ gl.RGBA,
+          /* type,          */ gl.UNSIGNED_BYTE,
+          /* data           */ null
+      );
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+
+      gl.bindFramebuffer(gl.FRAMEBUFFER, rt.fb);
+      gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, rt.tex, 0);
+  }
+
+  /* prebaked rt is bound */
+
+  {
+    const geo_idx = [];
+    const geo_pos = [];
+    const geo_color = [];
+
+    function drawSquare( min_x, min_y,   max_x, max_y,   color ) {
+        geo_color.push(
+            color[0], color[1], color[2], color[3],
+            color[0], color[1], color[2], color[3],
+            color[0], color[1], color[2], color[3],
+            color[0], color[1], color[2], color[3]
+        )
+
+        const vbuf_i = geo_pos.length / 3;
+        geo_pos.push(max_x, min_y, 0.1);
+        geo_pos.push(min_x, min_y, 0.1);
+        geo_pos.push(min_x, max_y, 0.1);
+        geo_pos.push(max_x, max_y, 0.1);
+
+        geo_idx.push(vbuf_i + 0, vbuf_i + 1, vbuf_i + 2, vbuf_i + 2, vbuf_i + 3, vbuf_i + 0);
+    }
+
+    const rainbow = [
+        /* red,    */ [255,   0,   0, 255],
+        /* orange, */ [255, 100,   0, 255],
+        /* yellow, */ [255, 255,   0, 255],
+        /* green,  */ [  0, 255,   0, 255],
+        /* blue,   */ [  0,   0, 255, 255],
+        /* purple  */ [255,   0, 255, 255]
+    ];
+
+    /* desaturate */
+    for (const color of rainbow) {
+        color[0] = (color[0] + 255*2) * 0.33;
+        color[1] = (color[1] + 255*2) * 0.33;
+        color[2] = (color[2] + 255*2) * 0.33;
+    }
+
+    for (let i = 0; i < rainbow.length; i++) {
+        const min_x =       i* 75;
+        const min_y =       i* 75;
+        const max_x = min_x + 200;
+        const max_y = min_y + 200;
+        drawSquare(min_x, min_y, max_x, max_y, rainbow[i]);
+    }
+
+    /* set up premultiplied alpha */
+    gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
+    gl.enable(gl.BLEND);
+
+    gl.enable(gl.DEPTH_TEST);
+    gl.depthFunc(gl.LEQUAL);
+
+    /* clear all */
+    gl.clearColor(0, 0, 0, 0);
+    gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+
+    /* geo pass */
+    {
+        gl.useProgram(shaders.geo.program);
+        gl.enableVertexAttribArray(shaders.geo.a_pos);
+        gl.enableVertexAttribArray(shaders.geo.a_color);
+
+        gl.uniformMatrix4fv(shaders.geo.u_matrix, false, pMatrix);
+        gl.uniform4fv(shaders.geo.u_color_mask, [0, 0, 0, 15/255]);
+
+        /* upload/bind geometry */
+
+        {
+            gl.bindBuffer(gl.ARRAY_BUFFER, geo_vbuf_pos);
+            gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(geo_pos), gl.STATIC_DRAW);
+            gl.vertexAttribPointer(shaders.geo.a_pos, 3, gl.FLOAT, false, 0, 0);
+
+            gl.bindBuffer(gl.ARRAY_BUFFER, geo_vbuf_color);
+            gl.bufferData(gl.ARRAY_BUFFER, new Uint8Array(geo_color), gl.STATIC_DRAW);
+            gl.vertexAttribPointer(shaders.geo.a_color, 4, gl.UNSIGNED_BYTE, true, 0, 0);
+
+            gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, geo_ibuf);
+            gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, new Uint16Array(geo_idx), gl.STATIC_DRAW);
+        }
+
+        gl.drawElements(gl.TRIANGLES, geo_idx.length, gl.UNSIGNED_SHORT, 0);
+    }
+
+    /* blur time */
+    {
+        const passes = [
+            [render_targets[1].fb, render_targets[0].tex, [ 0, 10]],
+            [render_targets[0].fb, render_targets[1].tex, [ 9,  0]],
+            [render_targets[1].fb, render_targets[0].tex, [ 0,  8]],
+            [render_targets[0].fb, render_targets[1].tex, [ 7,  0]],
+            [render_targets[1].fb, render_targets[0].tex, [ 0,  6]],
+            [render_targets[0].fb, render_targets[1].tex, [ 5,  0]],
+            [render_targets[1].fb, render_targets[0].tex, [ 0,  4]],
+            [render_targets[0].fb, render_targets[1].tex, [ 3,  0]],
+            [render_targets[1].fb, render_targets[0].tex, [ 0,  2]],
+            [render_targets[0].fb, render_targets[1].tex, [ 1,  0]]
+        ];
+        for (const [dst_fb, src_tex, dir] of passes) {
+            gl.bindFramebuffer(gl.FRAMEBUFFER, dst_fb);
+
+            gl.useProgram(shaders.fullscreenBlur.program);
+
+            gl.uniform2fv(shaders.fullscreenBlur.u_direction, dir);
+
+            /* bind tex */
+            {
+                gl.activeTexture(gl.TEXTURE0);
+                gl.bindTexture(gl.TEXTURE_2D, src_tex);
+                gl.uniform1i(shaders.fullscreenBlur.u_texture, 0);
+            }
+
+            gl.drawArrays(gl.TRIANGLE_FAN, 0, 3);
+        }
+    }
+
+    /* non-shadow thing time */
+    {
+        gl.useProgram(shaders.geo.program);
+        gl.enableVertexAttribArray(shaders.geo.a_pos);
+        gl.enableVertexAttribArray(shaders.geo.a_color);
+
+        gl.uniformMatrix4fv(shaders.geo.u_matrix, false, pMatrix);
+        gl.uniform4fv(shaders.geo.u_color_mask, [1, 1, 1, 1]);
+
+        /* upload/bind geometry */
+
+        {
+            gl.bindBuffer(gl.ARRAY_BUFFER, geo_vbuf_pos);
+            gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(geo_pos), gl.STATIC_DRAW);
+            gl.vertexAttribPointer(shaders.geo.a_pos, 3, gl.FLOAT, false, 0, 0);
+
+            gl.bindBuffer(gl.ARRAY_BUFFER, geo_vbuf_color);
+            gl.bufferData(gl.ARRAY_BUFFER, new Uint8Array(geo_color), gl.STATIC_DRAW);
+            gl.vertexAttribPointer(shaders.geo.a_color, 4, gl.UNSIGNED_BYTE, true, 0, 0);
+
+            gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, geo_ibuf);
+            gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, new Uint16Array(geo_idx), gl.STATIC_DRAW);
+        }
+
+        gl.drawElements(gl.TRIANGLES, geo_idx.length, gl.UNSIGNED_SHORT, 0);
+    }
+  }
+
+  gl.deleteFramebuffer(render_targets[0].fb);
+  gl.deleteFramebuffer(render_targets[1].fb);
+  gl.deleteTexture(render_targets[1].tex);
+  prebaked = render_targets[0].tex;
+
+  gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+  gl.viewport(
+      0,
+      0,
+      gl.canvas.width,
+      gl.canvas.height
+  );
+}
+
+requestAnimationFrame(function frame(timestamp) {
+    requestAnimationFrame(frame);
+
+    const img_idx = [];
+    const img_pos = [];
+    const img_uv = [];
+
+    function drawSquare(
+        min_x, min_y,
+        max_x, max_y,
+
+        min_u, min_v,
+        max_u, max_v
+    ) {
+        const vbuf_i = img_pos.length / 3;
+        img_pos.push(max_x, min_y, 0.1);
+        img_pos.push(min_x, min_y, 0.1);
+        img_pos.push(min_x, max_y, 0.1);
+        img_pos.push(max_x, max_y, 0.1);
+
+        img_uv .push(max_u, min_v);
+        img_uv .push(min_u, min_v);
+        img_uv .push(min_u, max_v);
+        img_uv .push(max_u, max_v);
+
+        img_idx.push(vbuf_i + 0, vbuf_i + 1, vbuf_i + 2, vbuf_i + 2, vbuf_i + 3, vbuf_i + 0);
+    }
+
+    for (let x = 0; x < 6; x++)
+        for (let y = 0; y < 6; y++)
+            drawSquare(300*x, 300*y, 300*x+300, 300*y+300, 0, 0, 1, 1);
+
+    /* set up premultiplied alpha */
+    gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
+    gl.enable(gl.BLEND);
+
+    gl.enable(gl.DEPTH_TEST);
+    gl.depthFunc(gl.LEQUAL);
+
+    /* clear all */
+    gl.clearColor(0.2, 0.2, 0.2, 1);
+    gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+
+    {
+
+        /* geo pass */
+        {
+            gl.useProgram(shaders.img.program);
+            gl.enableVertexAttribArray(shaders.img.a_pos);
+            gl.enableVertexAttribArray(shaders.img.a_uv);
+
+            gl.uniformMatrix4fv(shaders.img.u_matrix, false, pMatrix);
+            {
+                gl.activeTexture(gl.TEXTURE0);
+                gl.bindTexture(gl.TEXTURE_2D, prebaked);
+                gl.uniform1i(shaders.img.u_texture, 0);
+            }
+
+            /* upload/bind geometry */
+
+            {
+                gl.bindBuffer(gl.ARRAY_BUFFER, img_vbuf_pos);
+                gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(img_pos), gl.STATIC_DRAW);
+                gl.vertexAttribPointer(shaders.img.a_pos, 3, gl.FLOAT, false, 0, 0);
+
+                gl.bindBuffer(gl.ARRAY_BUFFER, img_vbuf_uv);
+                gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(img_uv), gl.STATIC_DRAW);
+                gl.vertexAttribPointer(shaders.img.a_uv, 2, gl.FLOAT, false, 0, 0);
+
+                gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, img_ibuf);
+                gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, new Uint16Array(img_idx), gl.STATIC_DRAW);
+            }
+
+            gl.drawElements(gl.TRIANGLES, img_idx.length, gl.UNSIGNED_SHORT, 0);
+        }
+    }
+})
+
+
+    </script>
+  </body>
+</html>
