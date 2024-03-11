@@ -52,3 +52,15 @@ also: example of how to clip text without scissor rects, useful for doing a lot 
 
 <img width="400" alt="Screenshot 2024-03-08 at 2 54 36 PM" src="https://github.com/cedric-h/linear-webgl/assets/25539554/b2b341c6-8abb-47b1-abda-5edf6d4fda09">
 
+
+## quad squad
+
+<img width="400" alt="Screenshot 2024-03-10 at 11 34 47 PM" src="https://github.com/cedric-h/linear-webgl/assets/25539554/9b6be17c-e290-4ac5-8dc9-2e483ac13545">
+
+| **link**                                                                       | **desc**                                                                                                                       |
+|--------------------------------------------------------------------------------|--------------------------------------------------------------------------------------------------------------------------------|
+| [quad           ](https://cedric-h.github.io/linear-webgl/quad)                | premultiplied alpha                                                                                                            |
+| [quad-blur      ](https://cedric-h.github.io/linear-webgl/quad_blur)           | separable gaussian blur                                                                                                        |
+| [quad-blur-depth](https://cedric-h.github.io/linear-webgl/quad_blur_depth)     | separable gaussian blur + depth texture attached to rendertarget                                                               |
+| [quad-shadow    ](https://cedric-h.github.io/linear-webgl/quad_shadow)         | demonstrates prebaking shadow for static geometry so you don't need to redo every frame -- can be easier for layering as well. |
+| [quad-woosh     ](https://cedric-h.github.io/linear-webgl/quad_woosh)          | some fun with feedback transforms                                                                                              |
