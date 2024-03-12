@@ -547,9 +547,11 @@ requestAnimationFrame(function frame(timestamp) {
 
     const ALIGN_LEFT = 0;
     const ALIGN_CENTER = 1;
-    function drawText(str, worldX, worldY, size, align = ALIGN_LEFT) {
-        const x = worldX;
-        const y = worldY;
+    function drawText(str, worldX, worldY, view, size, align = ALIGN_LEFT) {
+        const pos = [worldX, worldY, 0, 1]
+        mat4_transform_vec4(pos, pos, view);
+        const x = Math.round(pos[0]);
+        const y = Math.round(pos[1]);
 
         const fontsize = SDF_FONT_SIZE;
         const buf = fontsize / 8;
@@ -602,9 +604,62 @@ requestAnimationFrame(function frame(timestamp) {
     gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
 
     {
+        /* zoom toward mouse */
+        if (scroll) {
+            const zoom = 1.0 + 0.03*scroll;
+
+            const focal = [mouseX, mouseY, 0, 1];
+            const tl = [-1, -1, -1,  1]
+            const br = [ 1,  1,  1,  1]
+            const inv = mat4_invert(mat4_create(), viewMatrix);
+            mat4_transform_vec4(tl, tl, inv);
+            mat4_transform_vec4(br, br, inv);
+            mat4_transform_vec4(focal, focal, inv);
+
+            mat4_ortho(
+                viewMatrix,
+                (tl[0] - focal[0])*zoom + focal[0],
+                (br[0] - focal[0])*zoom + focal[0],
+                (tl[1] - focal[1])*zoom + focal[1],
+                (br[1] - focal[1])*zoom + focal[1],
+                br[2],
+                tl[2]
+            )
+        }
+
+        /* mouse drag */
+        let dragX = 0, dragY = 0;
+        if (mouseDown) {
+            dragX += (mouseX - mouseDownX)
+            dragY += (mouseY - mouseDownY)
+
+            if (mouseReleased) {
+                mouseReleased = mouseDown = false;
+
+                mat4_mul(viewMatrix, mat4_create_translate(dragX, dragY), viewMatrix);
+
+                dragX = dragY = 0;
+            }
+        }
+
         /* text rendering wants the pen pixel-aligned, so scale here */
-        const fontscale = 50;
-        drawText('accelerated instance graph', 0, 0, fontscale, ALIGN_LEFT);
+        /* our pMatrix puts things in 0..1, but everything before that is in pixels */ 
+        // const view = mat4_create_translate(dragX + mouseX, dragY + mouseY)
+        const view = mat4_create_translate(dragX, dragY)
+        mat4_mul(view, view, viewMatrix);
+
+        const fontscale = 256 * Math.sqrt(view[0]*view[0] + view[1]*view[1]);
+
+        for (let i = 0; i < 40; i++) {
+            const theta = i/40 * Math.PI*2;
+            const radius = 1800;
+            const circleX = Math.cos(theta) * radius;
+            const circleY = Math.sin(theta) * radius;
+
+            drawText('x', circleX, circleY, view, fontscale, ALIGN_CENTER);
+        }
+        drawText('accelerated instance graph', 0, 0, view, fontscale, ALIGN_CENTER);
+
 
         gl.bindBuffer(gl.ARRAY_BUFFER, vertexBuffer);
         gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(vertexElements), gl.STATIC_DRAW);
@@ -628,6 +683,10 @@ requestAnimationFrame(function frame(timestamp) {
 
         gl.bindBuffer(gl.ARRAY_BUFFER, textureBuffer);
         gl.vertexAttribPointer(shader.a_texcoord, 2, gl.FLOAT, false, 0, 0);
+
+        gl.uniform4fv(shader.u_color, [1, 1, 1, 1]);
+        gl.uniform1f(shader.u_buffer, 0.55);
+        gl.drawArrays(gl.TRIANGLES, 0, vertexBuffer.numItems);
 
         gl.uniform4fv(shader.u_color, [0, 0, 0, 1]);
         gl.uniform1f(shader.u_buffer, 0.75);

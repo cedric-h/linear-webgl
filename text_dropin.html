@@ -1,0 +1,563 @@
+<!-- vim: sw=4 ts=4 expandtab smartindent ft=javascript
+-->
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>WebGL Demo</title>
+    <style> document, body { margin: 0px; padding: 0px; overflow: hidden; } </style>
+  </head>
+
+  <body>
+    <canvas id="glcanvas"></canvas>
+    <script>
+/*
+ * [ ] reuse gpu buffers 'cross frames
+ * [ ] don't invert mat4 in drawText
+ * [ ] have frame ring buffer for scratch mats
+ */
+
+function lerp(v0, v1, t) { return (1 - t) * v0 + t * v1; }
+function inv_lerp(min, max, p) { return (p - min) / (max - min); }
+function mat4_create() {
+    let out = new Float32Array(16);
+    out[0] = 1;
+    out[5] = 1;
+    out[10] = 1;
+    out[15] = 1;
+    return out;
+}
+function mat4_ortho(out, left, right, bottom, top, near, far) {
+    let lr = 1 / (left - right);
+    let bt = 1 / (bottom - top);
+    let nf = 1 / (near - far);
+    out[0] = -2 * lr;
+    out[1] = 0;
+    out[2] = 0;
+    out[3] = 0;
+    out[4] = 0;
+    out[5] = -2 * bt;
+    out[6] = 0;
+    out[7] = 0;
+    out[8] = 0;
+    out[9] = 0;
+    out[10] = 2 * nf;
+    out[11] = 0;
+    out[12] = (left + right) * lr;
+    out[13] = (top + bottom) * bt;
+    out[14] = (far + near) * nf;
+    out[15] = 1;
+    return out;
+}
+
+const ALIGN_LEFT = 0;
+const ALIGN_CENTER = 1;
+
+/* higher number = prettier text using more VRAM */
+const SDF_FONT_SIZE = 48;
+
+/* one draw call's worth of font data (text geometry, scale, color) */
+class FontBuf {
+    /**
+     * @param {AtlasSDF} sdfs  font atlas data associated with this font's SDFs
+     */
+    constructor(sdfs, dynamic_scale, color) {
+        this.sdfs = sdfs;
+        this.dynamic_scale = dynamic_scale;
+        this.color = color;
+
+        this.z = -0.2;
+
+        this.text_vbuf_pos = [];
+        this.text_vbuf_uv  = [];
+    }
+
+    drawText(str, x, y, align) {
+        const { sdfs } = this;
+
+        const fontsize = SDF_FONT_SIZE;
+        const buf = fontsize / 8;
+        const width = fontsize + buf * 2; // glyph width
+        const height = fontsize + buf * 2; // glyph height
+        const bx = 0; // bearing x
+
+        const scale = this.dynamic_scale / fontsize;
+        const lineWidth = str.length * fontsize * scale;
+
+        const pen = { x, y };
+        if (align == ALIGN_CENTER) {
+            pen.x -= (str.split('').reduce((a, c) => a + sdfs[c].glyph.glyphAdvance, 0) / 2) * scale;
+        }
+        for (let i = 0; i < str.length; i++) {
+            const posX = sdfs[str[i]].x; // pos in sprite x
+            const posY = sdfs[str[i]].y; // pos in sprite y
+            const advance = sdfs[str[i]].glyph.glyphAdvance;
+            const by = sdfs[str[i]].glyph.glyphTop - (fontsize / 2 + buf); // bearing y
+
+            this.text_vbuf_pos.push(
+                pen.x + ((bx - buf) * scale)        , pen.y - by * scale           , this.z,
+                pen.x + ((bx - buf + width) * scale), pen.y - by * scale           , this.z,
+                pen.x + ((bx - buf) * scale)        , pen.y + (height - by) * scale, this.z,
+
+                pen.x + ((bx - buf + width) * scale), pen.y - by * scale           , this.z,
+                pen.x + ((bx - buf) * scale)        , pen.y + (height - by) * scale, this.z,
+                pen.x + ((bx - buf + width) * scale), pen.y + (height - by) * scale, this.z
+            );
+
+            this.text_vbuf_uv.push(
+                posX, posY,
+                posX + width, posY,
+                posX, posY + height,
+                posX + width, posY,
+                posX, posY + height,
+                posX + width, posY + height
+            );
+
+            pen.x = pen.x + advance * scale;
+        }
+
+    }
+
+    clear() {
+        this.text_vbuf_pos = [];
+        this.text_vbuf_uv  = [];
+    }
+
+}
+
+class TextRenderer {
+    constructor() {
+        this.pMatrix = mat4_create();
+
+        /* maps character to location in spritesheet/font_atlas */
+        this.sdfs = {};
+        this.font_atlas = gl.createTexture();
+        this.font_bufs = [];
+
+        this.buf = {
+            text_vbuf_pos: gl.createBuffer(),
+            text_vbuf_uv:  gl.createBuffer()
+        };
+
+        /* compile shaders */
+        {
+            const vs_text = `
+                attribute vec3 a_pos;
+                attribute vec2 a_texcoord;
+
+                uniform mat4 u_matrix;
+                uniform vec2 u_texsize;
+
+                varying vec2 v_texcoord;
+
+                void main() {
+                    gl_Position = u_matrix * vec4(a_pos.xyz, 1);
+                    v_texcoord = a_texcoord / u_texsize;
+                }`;
+
+            const fs_text = `
+                precision mediump float;
+
+                uniform sampler2D u_texture;
+                uniform vec4 u_color;
+                uniform float u_buffer;
+                uniform float u_gamma;
+
+                varying vec2 v_texcoord;
+
+                void main() {
+                    float dist = texture2D(u_texture, v_texcoord).r;
+                    float alpha = smoothstep(u_buffer - u_gamma, u_buffer + u_gamma, dist);
+                    gl_FragColor = vec4(u_color.rgb, alpha * u_color.a);
+                }`;
+
+            function createProgram(gl, vertexSource, fragmentSource) {
+                function createShader(gl, type, source) {
+                    const shader = gl.createShader(type);
+                    gl.shaderSource(shader, source);
+                    gl.compileShader(shader);
+                    if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+                        throw new Error(gl.getShaderInfoLog(shader));
+                    }
+                    return shader;
+                }
+
+                const program = gl.createProgram();
+
+                const vertexShader = createShader(gl, gl.VERTEX_SHADER, vertexSource);
+                const fragmentShader = createShader(gl, gl.FRAGMENT_SHADER, fragmentSource);
+
+                gl.attachShader(program, vertexShader);
+                gl.attachShader(program, fragmentShader);
+
+                gl.linkProgram(program);
+                if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+                    throw new Error(gl.getProgramInfoLog(program));
+                }
+
+                const wrapper = {program};
+
+                const numAttributes = gl.getProgramParameter(program, gl.ACTIVE_ATTRIBUTES);
+                for (let i = 0; i < numAttributes; i++) {
+                    const attribute = gl.getActiveAttrib(program, i);
+                    wrapper[attribute.name] = gl.getAttribLocation(program, attribute.name);
+                }
+                const numUniforms = gl.getProgramParameter(program, gl.ACTIVE_UNIFORMS);
+                for (let i = 0; i < numUniforms; i++) {
+                    const uniform = gl.getActiveUniform(program, i);
+                    wrapper[uniform.name] = gl.getUniformLocation(program, uniform.name);
+                }
+
+                return wrapper;
+            }
+
+
+            this.shaders = {
+                text: createProgram(gl, vs_text, fs_text),
+            }
+        }
+
+
+        /* mapbox's TinySDF - https://github.com/mapbox/tiny-sdf */
+        let TinySDF;
+        {
+            const INF = 1e20;
+
+            class _TinySDF {
+                constructor({
+                    fontSize = 24,
+                    buffer = 3,
+                    radius = 8,
+                    cutoff = 0.25,
+                    fontFamily = 'sans-serif',
+                    fontWeight = 'normal',
+                    fontStyle = 'normal'
+                } = {}) {
+                    this.buffer = buffer;
+                    this.cutoff = cutoff;
+                    this.radius = radius;
+
+                    // make the canvas size big enough to both have the specified buffer around the glyph
+                    // for "halo", and account for some glyphs possibly being larger than their font size
+                    const size = this.size = fontSize + buffer * 4;
+
+                    const canvas = this._createCanvas(size);
+                    const ctx = this.ctx = canvas.getContext('2d', {willReadFrequently: true});
+                    ctx.font = `${fontStyle} ${fontWeight} ${fontSize}px ${fontFamily}`;
+
+                    ctx.textBaseline = 'alphabetic';
+                    ctx.textAlign = 'left'; // Necessary so that RTL text doesn't have different alignment
+                    ctx.fillStyle = 'black';
+
+                    // temporary arrays for the distance transform
+                    this.gridOuter = new Float64Array(size * size);
+                    this.gridInner = new Float64Array(size * size);
+                    this.f = new Float64Array(size);
+                    this.z = new Float64Array(size + 1);
+                    this.v = new Uint16Array(size);
+                }
+
+                _createCanvas(size) {
+                    const canvas = document.createElement('canvas');
+                    canvas.width = canvas.height = size;
+                    return canvas;
+                }
+
+                draw(char) {
+                    const {
+                        width: glyphAdvance,
+                        actualBoundingBoxAscent,
+                        actualBoundingBoxDescent,
+                        actualBoundingBoxLeft,
+                        actualBoundingBoxRight
+                    } = this.ctx.measureText(char);
+
+                    // The integer/pixel part of the top alignment is encoded in metrics.glyphTop
+                    // The remainder is implicitly encoded in the rasterization
+                    const glyphTop = Math.ceil(actualBoundingBoxAscent);
+                    const glyphLeft = 0;
+
+                    // If the glyph overflows the canvas size, it will be clipped at the bottom/right
+                    const glyphWidth = Math.max(0, Math.min(this.size - this.buffer, Math.ceil(actualBoundingBoxRight - actualBoundingBoxLeft)));
+                    const glyphHeight = Math.min(this.size - this.buffer, glyphTop + Math.ceil(actualBoundingBoxDescent));
+
+                    const width = glyphWidth + 2 * this.buffer;
+                    const height = glyphHeight + 2 * this.buffer;
+
+                    const len = Math.max(width * height, 0);
+                    const data = new Uint8ClampedArray(len);
+                    const glyph = {data, width, height, glyphWidth, glyphHeight, glyphTop, glyphLeft, glyphAdvance};
+                    if (glyphWidth === 0 || glyphHeight === 0) return glyph;
+
+                    const {ctx, buffer, gridInner, gridOuter} = this;
+                    ctx.clearRect(buffer, buffer, glyphWidth, glyphHeight);
+                    ctx.fillText(char, buffer, buffer + glyphTop);
+                    const imgData = ctx.getImageData(buffer, buffer, glyphWidth, glyphHeight);
+
+                    // Initialize grids outside the glyph range to alpha 0
+                    gridOuter.fill(INF, 0, len);
+                    gridInner.fill(0, 0, len);
+
+                    for (let y = 0; y < glyphHeight; y++) {
+                        for (let x = 0; x < glyphWidth; x++) {
+                            const a = imgData.data[4 * (y * glyphWidth + x) + 3] / 255; // alpha value
+                            if (a === 0) continue; // empty pixels
+
+                            const j = (y + buffer) * width + x + buffer;
+
+                            if (a === 1) { // fully drawn pixels
+                                gridOuter[j] = 0;
+                                gridInner[j] = INF;
+
+                            } else { // aliased pixels
+                                const d = 0.5 - a;
+                                gridOuter[j] = d > 0 ? d * d : 0;
+                                gridInner[j] = d < 0 ? d * d : 0;
+                            }
+                        }
+                    }
+
+                    edt(gridOuter, 0, 0, width, height, width, this.f, this.v, this.z);
+                    edt(gridInner, buffer, buffer, glyphWidth, glyphHeight, width, this.f, this.v, this.z);
+
+                    for (let i = 0; i < len; i++) {
+                        const d = Math.sqrt(gridOuter[i]) - Math.sqrt(gridInner[i]);
+                        data[i] = Math.round(255 - 255 * (d / this.radius + this.cutoff));
+                    }
+
+                    return glyph;
+                }
+            }
+
+            // 2D Euclidean squared distance transform by Felzenszwalb & Huttenlocher https://cs.brown.edu/~pff/papers/dt-final.pdf
+            function edt(data, x0, y0, width, height, gridSize, f, v, z) {
+                for (let x = x0; x < x0 + width; x++) edt1d(data, y0 * gridSize + x, gridSize, height, f, v, z);
+                for (let y = y0; y < y0 + height; y++) edt1d(data, y * gridSize + x0, 1, width, f, v, z);
+            }
+
+            // 1D squared distance transform
+            function edt1d(grid, offset, stride, length, f, v, z) {
+                v[0] = 0;
+                z[0] = -INF;
+                z[1] = INF;
+                f[0] = grid[offset];
+
+                for (let q = 1, k = 0, s = 0; q < length; q++) {
+                    f[q] = grid[offset + q * stride];
+                    const q2 = q * q;
+                    do {
+                        const r = v[k];
+                        s = (f[q] - f[r] + q2 - r * r) / (q - r) / 2;
+                    } while (s <= z[k] && --k > -1);
+
+                    k++;
+                    v[k] = q;
+                    z[k] = s;
+                    z[k + 1] = INF;
+                }
+
+                for (let q = 0, k = 0; q < length; q++) {
+                    while (z[k + 1] < q) k++;
+                    const r = v[k];
+                    const qr = q - r;
+                    grid[offset + q * stride] = f[r] + qr * qr;
+                }
+            }
+
+            TinySDF = _TinySDF;
+        }
+
+
+        /* invoke now-established TinySDF in a for loop to make the font atlas */
+        {
+            /* use tiny sdf + a for loop to get a texture atlas canvas */
+            let sdfImage;
+            {
+                const chars = ' abcdefghijklmnopqrstuvwxyzZABCDEFGHIJKLMNOPQRSTUVWXYZ!@#$%^&*()1234567890<,>./?;:\'"\\|{}[]';
+                const fontCanvas = document.createElement('canvas');
+                fontCanvas.width = fontCanvas.height = 512
+                const ctx = fontCanvas.getContext('2d');
+
+                // Convert alpha-only to RGBA so we can use `putImageData` for building the composite bitmap
+                function makeRGBAImageData(alphaChannel, width, height) {
+                    const imageData = ctx.createImageData(width, height);
+                    for (let i = 0; i < alphaChannel.length; i++) {
+                        imageData.data[4 * i + 0] = alphaChannel[i];
+                        imageData.data[4 * i + 1] = alphaChannel[i];
+                        imageData.data[4 * i + 2] = alphaChannel[i];
+                        imageData.data[4 * i + 3] = 255;
+                    }
+                    return imageData;
+                }
+
+                const charWidths = Array.from({ length: chars.length }, _ => 0);
+
+                ctx.clearRect(0, 0, fontCanvas.width, fontCanvas.height);
+                const fontSize = +SDF_FONT_SIZE;
+                const fontWeight = +SDF_FONT_SIZE;
+                const fontStyle = 'normal';
+                const buffer = Math.ceil(fontSize / 8);
+                const radius = Math.ceil(fontSize / 3);
+                const sdf = new TinySDF({fontSize, buffer, radius, fontWeight, fontStyle});
+                const size = fontSize + buffer * 2;
+
+                const now = performance.now();
+                let i = 0;
+                for (let y = 0; y + size <= fontCanvas.height && i < chars.length; y += size) {
+                    for (let x = 0; x + size <= fontCanvas.width && i < chars.length; x += size) {
+                        const glyph = sdf.draw(chars[i]);
+                        const {data, width, height} = glyph;
+                        delete glyph.data;
+                        this.sdfs[chars[i]] = { x, y, glyph };
+                        ctx.putImageData(makeRGBAImageData(data, width, height), x, y);
+                        i++;
+                    }
+                }
+                console.log(`${i} characters (${fontSize}px, font-weight: ${fontWeight} with ${buffer}px buffer) rendered in ${Math.round(performance.now() - now)}ms.`)
+
+                sdfImage = ctx.getImageData(0, 0, fontCanvas.width, fontCanvas.height);
+            }
+
+            /* upload that canvas to a texture */
+            {
+                gl.useProgram(this.shaders.text.program);
+                gl.enableVertexAttribArray(this.shaders.text.a_pos);
+                gl.enableVertexAttribArray(this.shaders.text.a_texcoord);
+
+                const sdfBytes = new Uint8Array(sdfImage.data)
+
+                gl.bindTexture(gl.TEXTURE_2D, this.font_atlas);
+                gl.texImage2D(
+                    /* target         */ gl.TEXTURE_2D,
+                    /* level          */ 0,
+                    /* internalformat */ gl.RGBA,
+                    /* width          */ sdfImage.width,
+                    /* height         */ sdfImage.height,
+                    /* border,        */ 0,
+                    /* format,        */ gl.RGBA,
+                    /* type,          */ gl.UNSIGNED_BYTE,
+                    /* data           */ sdfBytes
+                );
+                gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+                gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+                gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+                gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+
+                gl.uniform2f(this.shaders.text.u_texsize, sdfImage.width, sdfImage.height);
+            }
+        }
+    }
+
+    /**
+     * @param scale {Number} size of text vertically in pixels
+     */
+    useFont(scale, color) {
+        const fb = new FontBuf(this.sdfs, scale, color);
+        tr.font_bufs.push(fb);
+        return fb;
+    }
+
+    clear() {
+        for (const font_buf of this.font_bufs) {
+            font_buf.clear();
+        }
+    }
+
+    render() {
+        const pMatrix = mat4_ortho(this.pMatrix, 0, gl.canvas.width, gl.canvas.height, 0, 1, -1);
+        gl.viewport(
+            0,
+            0,
+            canvas.width,
+            canvas.height
+        );
+
+        /* set up premultiplied alpha */
+        gl.blendFuncSeparate(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA, gl.ONE, gl.ONE);
+        gl.enable(gl.BLEND);
+
+        /* clear all */
+        gl.clearColor(0.93, 0.9, 0.89, 1);
+        gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+
+        for (const fb of this.font_bufs) {
+            const gamma = 2;
+            gl.uniformMatrix4fv(this.shaders.text.u_matrix, false, pMatrix);
+            gl.uniform4fv(this.shaders.text.u_color, fb.color);
+            gl.uniform1f(this.shaders.text.u_buffer, 0.75);
+            gl.uniform1f(this.shaders.text.u_gamma, gamma * 1.4142 / fb.dynamic_scale);
+
+            /* upload/bind geometry */
+            const vbuf_count = fb.text_vbuf_pos.length / 3;
+            {
+                gl.bindBuffer(gl.ARRAY_BUFFER, this.buf.text_vbuf_pos);
+                gl.vertexAttribPointer(this.shaders.text.a_pos, 3, gl.FLOAT, false, 0, 0);
+                gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(fb.text_vbuf_pos), gl.STATIC_DRAW);
+
+                gl.bindBuffer(gl.ARRAY_BUFFER, this.buf.text_vbuf_uv);
+                gl.vertexAttribPointer(this.shaders.text.a_texcoord, 2, gl.FLOAT, false, 0, 0);
+                gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(fb.text_vbuf_uv), gl.STATIC_DRAW);
+            }
+
+            /* bind texture */
+            {
+                gl.activeTexture(gl.TEXTURE0);
+                gl.bindTexture(gl.TEXTURE_2D, this.font_atlas);
+                gl.uniform1i(this.shaders.text.u_texture, 0);
+            }
+
+            gl.drawArrays(gl.TRIANGLES, 0, vbuf_count);
+        }
+    }
+}
+
+const canvas = document.getElementById('glcanvas');
+const gl = canvas.getContext('webgl', {antialias: false});
+if (!gl) { alert('Failed to initialize WebGL'); }
+
+(window.onresize = () => {
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+
+    /* account for e.g. high-retina macbook screens */
+    if (window.devicePixelRatio > 1) {
+        canvas.style.width = `${canvas.width}px`;
+        canvas.style.height = `${canvas.height}px`;
+        canvas.width *= window.devicePixelRatio;
+        canvas.height *= window.devicePixelRatio;
+    }
+})();
+
+const tr = new TextRenderer(gl);
+const fonts = {
+    title:      tr.useFont(125, [0.50, 0.25, 0.35, 1]),
+    subheading: tr.useFont( 50, [0.40, 0.25, 0.55, 1]),
+};
+
+requestAnimationFrame(function frame(timestamp) {
+    requestAnimationFrame(frame);
+
+    tr.clear();
+
+    const title_x = canvas.width /2;
+    const title_y = canvas.height/2;
+    fonts.title.drawText(
+        'accelerated instance graph',
+        title_x,
+        title_y - fonts.title.dynamic_scale*0.6,
+        ALIGN_CENTER
+    );
+
+    for (let i = 0; i < 20; i++) {
+        const x = title_x + Math.cos(Math.PI*2 * i/20 + Date.now()*0.0001) * 900;
+        const y = title_y + Math.sin(Math.PI*2 * i/20 + Date.now()*0.0001) * 900;
+        fonts.subheading.drawText("hi", x, y - fonts.subheading.dynamic_scale*0.6, ALIGN_CENTER);
+    }
+
+    tr.render(gl, canvas);
+})
+
+
+    </script>
+  </body>
+</html>

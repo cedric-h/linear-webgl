@@ -45,8 +45,11 @@ simple text demo, based on mapbox's TinySDF
 
 I've tried a lot of different mechanisms for doing text and this one works the best by far with arbitrary zoom
 
-[text](https://cedric-h.github.io/linear-webgl/text),
-[text_clipped](https://cedric-h.github.io/linear-webgl/text_clipped)
+| **link**                                                                       | **desc**                                                                                                                       |
+|--------------------------------------------------------------------------------|--------------------------------------------------------------------------------------------------------------------------------|
+| [text           ](https://cedric-h.github.io/linear-webgl/text)                | shows off tinysdf, arbitrarily zoomable text on an infinite canvas                                                             |
+| [text-dropin    ](https://cedric-h.github.io/linear-webgl/text_dropin)         | simpler text (no controls) you can just drop into an existing project                                                          |
+| [text-clipped   ](https://cedric-h.github.io/linear-webgl/text_clipped)        | example of how to clip text without scissor rects, useful for doing a lot of text with few drawcalls                           |
 
 also: example of how to clip text without scissor rects, useful for doing a lot of text with few drawcalls
 
