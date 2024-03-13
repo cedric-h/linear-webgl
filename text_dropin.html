@@ -126,7 +126,7 @@ class FontBuf {
 }
 
 class TextRenderer {
-    constructor() {
+    constructor(gl) {
         this.pMatrix = mat4_create();
 
         /* maps character to location in spritesheet/font_atlas */
@@ -453,7 +453,7 @@ class TextRenderer {
      */
     useFont(scale, color) {
         const fb = new FontBuf(this.sdfs, scale, color);
-        tr.font_bufs.push(fb);
+        this.font_bufs.push(fb);
         return fb;
     }
 
@@ -463,13 +463,13 @@ class TextRenderer {
         }
     }
 
-    render() {
+    render(gl) {
         const pMatrix = mat4_ortho(this.pMatrix, 0, gl.canvas.width, gl.canvas.height, 0, 1, -1);
         gl.viewport(
             0,
             0,
-            canvas.width,
-            canvas.height
+            gl.canvas.width,
+            gl.canvas.height
         );
 
         /* set up premultiplied alpha */
@@ -511,51 +511,53 @@ class TextRenderer {
     }
 }
 
-const canvas = document.getElementById('glcanvas');
-const gl = canvas.getContext('webgl', {antialias: false});
-if (!gl) { alert('Failed to initialize WebGL'); }
+{
+    const canvas = document.getElementById('glcanvas');
+    const gl = canvas.getContext('webgl', {antialias: false});
+    if (!gl) { alert('Failed to initialize WebGL'); }
 
-(window.onresize = () => {
-    canvas.width = window.innerWidth;
-    canvas.height = window.innerHeight;
+    (window.onresize = () => {
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
 
-    /* account for e.g. high-retina macbook screens */
-    if (window.devicePixelRatio > 1) {
-        canvas.style.width = `${canvas.width}px`;
-        canvas.style.height = `${canvas.height}px`;
-        canvas.width *= window.devicePixelRatio;
-        canvas.height *= window.devicePixelRatio;
-    }
-})();
+        /* account for e.g. high-retina macbook screens */
+        if (window.devicePixelRatio > 1) {
+            canvas.style.width = `${canvas.width}px`;
+            canvas.style.height = `${canvas.height}px`;
+            canvas.width *= window.devicePixelRatio;
+            canvas.height *= window.devicePixelRatio;
+        }
+    })();
 
-const tr = new TextRenderer(gl);
-const fonts = {
-    title:      tr.useFont(125, [0.50, 0.25, 0.35, 1]),
-    subheading: tr.useFont( 50, [0.40, 0.25, 0.55, 1]),
-};
+    const tr = new TextRenderer(gl);
+    const fonts = {
+        title:      tr.useFont(125, [0.50, 0.25, 0.35, 1]),
+        subheading: tr.useFont( 50, [0.40, 0.25, 0.55, 1]),
+    };
 
-requestAnimationFrame(function frame(timestamp) {
-    requestAnimationFrame(frame);
+    requestAnimationFrame(function frame(timestamp) {
+        requestAnimationFrame(frame);
 
-    tr.clear();
+        tr.clear();
 
-    const title_x = canvas.width /2;
-    const title_y = canvas.height/2;
-    fonts.title.drawText(
-        'accelerated instance graph',
-        title_x,
-        title_y - fonts.title.dynamic_scale*0.6,
-        ALIGN_CENTER
-    );
+        const title_x = canvas.width /2;
+        const title_y = canvas.height/2;
+        fonts.title.drawText(
+            'accelerated instance graph',
+            title_x,
+            title_y - fonts.title.dynamic_scale*0.6,
+            ALIGN_CENTER
+        );
 
-    for (let i = 0; i < 20; i++) {
-        const x = title_x + Math.cos(Math.PI*2 * i/20 + Date.now()*0.0001) * 900;
-        const y = title_y + Math.sin(Math.PI*2 * i/20 + Date.now()*0.0001) * 900;
-        fonts.subheading.drawText("hi", x, y - fonts.subheading.dynamic_scale*0.6, ALIGN_CENTER);
-    }
+        for (let i = 0; i < 20; i++) {
+            const x = title_x + Math.cos(Math.PI*2 * i/20 + Date.now()*0.0001) * 900;
+            const y = title_y + Math.sin(Math.PI*2 * i/20 + Date.now()*0.0001) * 900;
+            fonts.subheading.drawText("hi", x, y - fonts.subheading.dynamic_scale*0.6, ALIGN_CENTER);
+        }
 
-    tr.render(gl, canvas);
-})
+        tr.render(gl, canvas);
+    })
+}
 
 
     </script>
