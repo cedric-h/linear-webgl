@@ -30,7 +30,7 @@ simple OBJ model
 interactive data thing with text, drop shadows, zooming, panning, scrollbars, etc.
 
 [nodes](https://cedric-h.github.io/linear-webgl/nodes.html),
-[nodes-rpi](https://cedric-h.github.io/linear-webgl/nodes-rpi)
+[nodes-rpi](https://cedric-h.github.io/linear-webgl/nodes_rpi)
 
 also: nodes-rpi, a WebGL 1 version that works (~25 fps) at low resolutions on a raspberry pi Model B that only supports WebGL 1
 
