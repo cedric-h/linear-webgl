@@ -34,7 +34,7 @@ interactive data thing with text, drop shadows, zooming, panning, scrollbars, et
 
 also: nodes-rpi, a WebGL 1 version that works (~25 fps) at low resolutions on a raspberry pi Model B that only supports WebGL 1
 
-(this was a rewrite of an application that got 200ms frametimes (5 fps) on a $3000 macbook)
+(this was a rewrite of an SVG-based application that got 200ms frametimes (5 fps) on a $3000 macbook)
 
 <img width="400" alt="Screenshot 2024-03-08 at 2 40 15 PM" src="https://github.com/cedric-h/linear-webgl/assets/25539554/223cbe91-9ad0-449d-b0cd-7df599854b87">
 
