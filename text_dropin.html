@@ -367,15 +367,24 @@ class TextRenderer {
             TinySDF = _TinySDF;
         }
 
+        const FONT_SIZE = 40;
+        const FONT_NAME = "GraphLabelFont";
+        const font = new FontFace(
+            FONT_NAME,
+            "url(AvenirNext_Variable.ttf)",
+            { weight: "bold" }
+        );
 
         /* invoke now-established TinySDF in a for loop to make the font atlas */
-        {
+        return font.load().then(() => {
+            document.fonts.add(font);
+
             /* use tiny sdf + a for loop to get a texture atlas canvas */
             let sdfImage;
             {
                 const chars = ' abcdefghijklmnopqrstuvwxyzZABCDEFGHIJKLMNOPQRSTUVWXYZ!@#$%^&*()1234567890<,>./?;:\'"\\|{}[]';
                 const fontCanvas = document.createElement('canvas');
-                fontCanvas.width = fontCanvas.height = 512
+                fontCanvas.width = fontCanvas.height = 1024
                 const ctx = fontCanvas.getContext('2d');
 
                 // Convert alpha-only to RGBA so we can use `putImageData` for building the composite bitmap
@@ -394,11 +403,9 @@ class TextRenderer {
 
                 ctx.clearRect(0, 0, fontCanvas.width, fontCanvas.height);
                 const fontSize = +SDF_FONT_SIZE;
-                const fontWeight = +SDF_FONT_SIZE;
-                const fontStyle = 'normal';
                 const buffer = Math.ceil(fontSize / 8);
                 const radius = Math.ceil(fontSize / 3);
-                const sdf = new TinySDF({fontSize, buffer, radius, fontWeight, fontStyle});
+                const sdf = new TinySDF({fontSize, buffer, radius, fontFamily: FONT_NAME });
                 const size = fontSize + buffer * 2;
 
                 const now = performance.now();
@@ -413,7 +420,7 @@ class TextRenderer {
                         i++;
                     }
                 }
-                console.log(`${i} characters (${fontSize}px, font-weight: ${fontWeight} with ${buffer}px buffer) rendered in ${Math.round(performance.now() - now)}ms.`)
+                console.log(`${i} characters (${fontSize}px, with ${buffer}px buffer) rendered in ${Math.round(performance.now() - now)}ms.`)
 
                 sdfImage = ctx.getImageData(0, 0, fontCanvas.width, fontCanvas.height);
             }
@@ -445,7 +452,9 @@ class TextRenderer {
 
                 gl.uniform2f(this.shaders.text.u_texsize, sdfImage.width, sdfImage.height);
             }
-        }
+
+            return this;
+        })
     }
 
     /**
@@ -472,13 +481,11 @@ class TextRenderer {
             gl.canvas.height
         );
 
+        gl.useProgram(this.shaders.text.program);
+
         /* set up premultiplied alpha */
         gl.blendFuncSeparate(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA, gl.ONE, gl.ONE);
         gl.enable(gl.BLEND);
-
-        /* clear all */
-        gl.clearColor(0.93, 0.9, 0.89, 1);
-        gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
 
         for (const fb of this.font_bufs) {
             const gamma = 2;
@@ -511,7 +518,7 @@ class TextRenderer {
     }
 }
 
-{
+(async () => {
     const canvas = document.getElementById('glcanvas');
     const gl = canvas.getContext('webgl', {antialias: false});
     if (!gl) { alert('Failed to initialize WebGL'); }
@@ -529,7 +536,7 @@ class TextRenderer {
         }
     })();
 
-    const tr = new TextRenderer(gl);
+    const tr = await new TextRenderer(gl);
     const fonts = {
         title:      tr.useFont(125, [0.50, 0.25, 0.35, 1]),
         subheading: tr.useFont( 50, [0.40, 0.25, 0.55, 1]),
@@ -538,26 +545,32 @@ class TextRenderer {
     requestAnimationFrame(function frame(timestamp) {
         requestAnimationFrame(frame);
 
+        /* clear all */
+        gl.clearColor(0.93, 0.9, 0.89, 1);
+        gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+
         tr.clear();
 
-        const title_x = canvas.width /2;
-        const title_y = canvas.height/2;
-        fonts.title.drawText(
-            'accelerated instance graph',
-            title_x,
-            title_y - fonts.title.dynamic_scale*0.6,
-            ALIGN_CENTER
-        );
+        {
+            const title_x = canvas.width /2;
+            const title_y = canvas.height/2;
+            fonts.title.drawText(
+                'accelerated instance graph',
+                title_x,
+                title_y - fonts.title.dynamic_scale*0.6,
+                ALIGN_CENTER
+            );
 
-        for (let i = 0; i < 20; i++) {
-            const x = title_x + Math.cos(Math.PI*2 * i/20 + Date.now()*0.0001) * 900;
-            const y = title_y + Math.sin(Math.PI*2 * i/20 + Date.now()*0.0001) * 900;
-            fonts.subheading.drawText("hi", x, y - fonts.subheading.dynamic_scale*0.6, ALIGN_CENTER);
+            for (let i = 0; i < 20; i++) {
+                const x = title_x + Math.cos(Math.PI*2 * i/20 + Date.now()*0.0001) * 900;
+                const y = title_y + Math.sin(Math.PI*2 * i/20 + Date.now()*0.0001) * 900;
+                fonts.subheading.drawText("hi", x, y - fonts.subheading.dynamic_scale*0.6, ALIGN_CENTER);
+            }
         }
 
         tr.render(gl, canvas);
     })
-}
+})()
 
 
     </script>
