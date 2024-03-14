@@ -1,0 +1,511 @@
+<!-- vim: sw=4 ts=4 expandtab smartindent ft=javascript
+-->
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>WebGL Demo</title>
+    <style> document, body { margin: 0px; padding: 0px; overflow: hidden; } </style>
+  </head>
+
+  <body>
+    <canvas id="glcanvas"></canvas>
+    <script>
+const canvas = document.getElementById('glcanvas');
+const gl = canvas.getContext('webgl2', {antialias: true});
+if (!gl) { alert('Failed to initialize WebGL'); }
+
+(window.onresize = () => {
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+
+    /* account for e.g. high-retina macbook screens */
+    if (window.devicePixelRatio > 1) {
+        canvas.style.width = `${canvas.width}px`;
+        canvas.style.height = `${canvas.height}px`;
+        canvas.width *= window.devicePixelRatio;
+        canvas.height *= window.devicePixelRatio;
+    }
+
+    gl.viewport(
+        0,
+        0,
+        canvas.width,
+        canvas.height
+    );
+})();
+
+const geo_vbuf_pos = gl.createBuffer();
+const geo_vbuf_uv  = gl.createBuffer();
+const geo_ibuf     = gl.createBuffer();
+
+let shaders;
+/* compile shaders */
+{
+    const vs_geo = `
+        attribute vec3 a_pos;
+        attribute vec2 a_uv;
+
+        varying vec2 v_uv;
+
+        void main() {
+            gl_Position = vec4(a_pos.xyz, 1);
+            v_uv = a_uv;
+        }`;
+
+    const fs_geo = `
+        precision mediump float;
+
+        uniform sampler2D u_texture;
+        uniform float u_brightness;
+
+        varying vec2 v_uv;
+
+        void main() {
+            gl_FragColor = texture2D(u_texture, v_uv) * u_brightness;
+        }`;
+
+    const vs_fullscreen_blur = `#version 300 es
+        precision mediump float;
+
+        out vec2 v_texcoord;
+
+        void main(void) {
+            float x = float((gl_VertexID & 1) << 2);
+            float y = float((gl_VertexID & 2) << 1);
+            v_texcoord.x = x * 0.5;
+            v_texcoord.y = y * 0.5;
+            gl_Position = vec4(x - 1.0, y - 1.0, 1, 1);
+        }
+    `;
+
+    const fs_fullscreen_blur = `#version 300 es
+        precision mediump float;
+
+        uniform sampler2D u_texture;
+        uniform vec2 u_direction;
+
+        in vec2 v_texcoord;
+
+        out vec4 frag_color;
+
+        void main(void) {
+            vec2 one_pixel = u_direction*(vec2(1) / vec2(textureSize(u_texture, 0)));
+
+            frag_color = texture(u_texture, v_texcoord) * 0.2270270270;
+
+            frag_color += texture(u_texture, v_texcoord + one_pixel    ) * 0.1945945946;
+            frag_color += texture(u_texture, v_texcoord - one_pixel    ) * 0.1945945946;
+
+            frag_color += texture(u_texture, v_texcoord + one_pixel*2.0) * 0.1216216216;
+            frag_color += texture(u_texture, v_texcoord - one_pixel*2.0) * 0.1216216216;
+
+            frag_color += texture(u_texture, v_texcoord + one_pixel*3.0) * 0.0540540541;
+            frag_color += texture(u_texture, v_texcoord - one_pixel*3.0) * 0.0540540541;
+
+            frag_color += texture(u_texture, v_texcoord + one_pixel*4.0) * 0.0162162162;
+            frag_color += texture(u_texture, v_texcoord - one_pixel*4.0) * 0.0162162162;
+        }
+    `;
+
+
+    function createProgram(gl, vertexSource, fragmentSource) {
+        function createShader(gl, type, source) {
+            const shader = gl.createShader(type);
+            gl.shaderSource(shader, source);
+            gl.compileShader(shader);
+            if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+                throw new Error(gl.getShaderInfoLog(shader));
+            }
+            return shader;
+        }
+
+        const program = gl.createProgram();
+
+        const vertexShader = createShader(gl, gl.VERTEX_SHADER, vertexSource);
+        const fragmentShader = createShader(gl, gl.FRAGMENT_SHADER, fragmentSource);
+
+        gl.attachShader(program, vertexShader);
+        gl.attachShader(program, fragmentShader);
+
+        gl.linkProgram(program);
+        if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+            throw new Error(gl.getProgramInfoLog(program));
+        }
+
+        const wrapper = {program};
+
+        const numAttributes = gl.getProgramParameter(program, gl.ACTIVE_ATTRIBUTES);
+        for (let i = 0; i < numAttributes; i++) {
+            const attribute = gl.getActiveAttrib(program, i);
+            wrapper[attribute.name] = gl.getAttribLocation(program, attribute.name);
+        }
+        const numUniforms = gl.getProgramParameter(program, gl.ACTIVE_UNIFORMS);
+        for (let i = 0; i < numUniforms; i++) {
+            const uniform = gl.getActiveUniform(program, i);
+            wrapper[uniform.name] = gl.getUniformLocation(program, uniform.name);
+        }
+
+        return wrapper;
+    }
+
+
+    shaders = {
+        fullscreenBlur: createProgram(gl, vs_fullscreen_blur, fs_fullscreen_blur),
+        geo: createProgram(gl, vs_geo, fs_geo)
+    }
+}
+
+let texture_starfield = gl.createTexture();
+{
+    const texture_starfield_size = 2000;
+    const blur_factor = 0.00075;
+    const image_brightness = 0.4;
+
+    let atlas = gl.createTexture();
+    const ATLAS_SIZE = 2; /* in emoji */
+    const EMOJI_SIZE = 300;
+
+    {
+        const canvas = document.createElement("canvas");
+
+        canvas.width = canvas.height = ATLAS_SIZE * EMOJI_SIZE;
+
+        const ctx = canvas.getContext("2d");
+
+        {
+            const atlas = ['⭐️', '💫', '✨', '🪐'];
+            const PAD = EMOJI_SIZE*0.05;
+            ctx.font = (EMOJI_SIZE - PAD*2) + 'px sans-serif';
+
+            let i = 0;
+            for (const char of atlas) {
+                const x = (           i % ATLAS_SIZE ) * EMOJI_SIZE;
+                const y = (Math.floor(i / ATLAS_SIZE)) * EMOJI_SIZE;
+
+                ctx.fillText(
+                    char,
+                    x + PAD,
+                    y + EMOJI_SIZE - PAD*2
+                );
+
+                i++;
+            }
+        }
+
+        gl.bindTexture(gl.TEXTURE_2D, atlas);
+        gl.texImage2D(
+            /* target         */ gl.TEXTURE_2D,
+            /* level          */ 0,
+            /* internalformat */ gl.RGBA,
+            /* width          */ canvas.width,
+            /* height         */ canvas.height,
+            /* border,        */ 0,
+            /* format,        */ gl.RGBA,
+            /* type,          */ gl.UNSIGNED_BYTE,
+            /* data           */ canvas
+        );
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    }
+
+    let render_targets = [
+        { tex: null, fb: null },
+        { tex: null, fb: null },
+    ];
+
+    gl.viewport(
+        0,
+        0,
+        texture_starfield_size,
+        texture_starfield_size
+    );
+
+    /* create scene-sized render-target for post-processing fx (like shadows) */
+    for (const target of render_targets) {
+        target.tex = gl.createTexture();
+        gl.bindTexture(gl.TEXTURE_2D, target.tex);
+
+        // define size and format of level 0
+        gl.texImage2D(
+            gl.TEXTURE_2D,
+            /* level,          */ 0,
+            /* internalFormat, */ gl.RGBA,
+            /* width,          */ texture_starfield_size,
+            /* height,         */ texture_starfield_size,
+            /* border,         */ 0,
+            /* format,         */ gl.RGBA,
+            /* type,           */ gl.UNSIGNED_BYTE,
+            /* data            */ null
+        );
+
+        // set the filtering so we don't need mips
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+
+        target.fb = gl.createFramebuffer();
+        gl.bindFramebuffer(gl.FRAMEBUFFER, target.fb);
+        gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, target.tex, 0);
+    }
+
+
+    const geo = {
+        idx: [],
+        pos: [],
+        uv : [],
+    };
+
+    {
+        function drawBox(x, y, size, atlas_index) {
+
+            /* generate UVs from atlas_index */
+            {
+                const u = (           atlas_index % ATLAS_SIZE );
+                const v = (Math.floor(atlas_index / ATLAS_SIZE));
+
+                geo.uv.push(
+                    (u+1)/ATLAS_SIZE, (v+1)/ATLAS_SIZE,
+                    (u+0)/ATLAS_SIZE, (v+1)/ATLAS_SIZE,
+                    (u+0)/ATLAS_SIZE, (v+0)/ATLAS_SIZE,
+                    (u+1)/ATLAS_SIZE, (v+0)/ATLAS_SIZE,
+                );
+            }
+
+            /* generate position + index */
+            {
+                const vbuf_i = geo.pos.length / 3;
+                geo.pos.push(x+size, y-size, 0.1);
+                geo.pos.push(x-size, y-size, 0.1);
+                geo.pos.push(x-size, y+size, 0.1);
+                geo.pos.push(x+size, y+size, 0.1);
+
+                geo.idx.push(
+                    vbuf_i + 0,
+                    vbuf_i + 1,
+                    vbuf_i + 2,
+                    vbuf_i + 2,
+                    vbuf_i + 3,
+                    vbuf_i + 0
+                );
+            }
+        }
+
+        for (let x = -1; x <= 1; x += 0.1) {
+            for (let y = -1; y <= 1; y += 0.1) {
+                drawBox(
+                    x + (0.5 - Math.random())*0.1,
+                    y + (0.5 - Math.random())*0.1,
+                    0.005 + Math.random()*0.008,
+                    ~~(Math.random()*4)
+                );
+            }
+        }
+    }
+
+    {
+        /* clear framebuffers */
+        {
+            const BRIGHTNESS = 0.9;
+
+            {
+                gl.bindFramebuffer(gl.FRAMEBUFFER, render_targets[1].fb);
+
+                /* clear all */
+                gl.clearColor(0.0, 0.0, 0.0, 1.0 - BRIGHTNESS);
+                gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+            }
+
+            /* bind first rendertarget in blur swapchain */
+            {
+                gl.bindFramebuffer(gl.FRAMEBUFFER, render_targets[0].fb);
+
+                /* clear all */
+                gl.clearColor(0.0, 0.0, 0.0, 1.0 - BRIGHTNESS);
+                gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+            }
+        }
+
+        /* basic setup */
+        {
+            /* set up premultiplied alpha */
+            gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
+            gl.enable(gl.BLEND);
+
+            /* enable depth */
+            gl.enable(gl.DEPTH_TEST);
+            gl.depthFunc(gl.LEQUAL);
+        }
+
+        /* geo pass */
+        function geoPass() {
+            gl.useProgram(shaders.geo.program);
+            gl.enableVertexAttribArray(shaders.geo.a_pos);
+            gl.enableVertexAttribArray(shaders.geo.a_uv);
+
+            /* upload/bind atlas */
+            {
+                gl.activeTexture(gl.TEXTURE1);
+                gl.bindTexture(gl.TEXTURE_2D, atlas);
+                gl.uniform1i(shaders.geo.u_texture, 1);
+            }
+
+            gl.uniform1f(shaders.geo.u_brightness, image_brightness);
+
+            /* upload/bind geometry */
+            {
+                gl.bindBuffer(gl.ARRAY_BUFFER, geo_vbuf_pos);
+                gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(geo.pos), gl.STATIC_DRAW);
+                gl.vertexAttribPointer(shaders.geo.a_pos, 3, gl.FLOAT, false, 0, 0);
+
+                gl.bindBuffer(gl.ARRAY_BUFFER, geo_vbuf_uv);
+                gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(geo.uv), gl.STATIC_DRAW);
+                gl.vertexAttribPointer(shaders.geo.a_uv, 2, gl.FLOAT, false, 0, 0);
+
+                gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, geo_ibuf);
+                gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, new Uint16Array(geo.idx), gl.STATIC_DRAW);
+            }
+
+            gl.drawElements(gl.TRIANGLES, geo.idx.length, gl.UNSIGNED_SHORT, 0);
+        }
+
+        geoPass();
+
+        /* blur passes! */
+        {
+            const blur_size = texture_starfield_size * blur_factor;
+            const passes = [
+                [render_targets[1].fb, render_targets[0].tex, [0*blur_size, 8*blur_size]],
+                [render_targets[0].fb, render_targets[1].tex, [7*blur_size, 0*blur_size]],
+                [render_targets[1].fb, render_targets[0].tex, [0*blur_size, 6*blur_size]],
+                [render_targets[0].fb, render_targets[1].tex, [5*blur_size, 0*blur_size]],
+                [render_targets[1].fb, render_targets[0].tex, [0*blur_size, 4*blur_size]],
+                [render_targets[0].fb, render_targets[1].tex, [3*blur_size, 0*blur_size]],
+                [render_targets[1].fb, render_targets[0].tex, [0*blur_size, 2*blur_size]],
+                [render_targets[0].fb, render_targets[1].tex, [1*blur_size, 0*blur_size]]
+            ];
+            for (const [dst_fb, src_tex, dir] of passes) {
+                gl.bindFramebuffer(gl.FRAMEBUFFER, dst_fb);
+
+                gl.useProgram(shaders.fullscreenBlur.program);
+
+                gl.uniform2fv(shaders.fullscreenBlur.u_direction, dir);
+
+
+                /* bind tex */
+                {
+                    gl.activeTexture(gl.TEXTURE0);
+                    gl.bindTexture(gl.TEXTURE_2D, src_tex);
+                    gl.uniform1i(shaders.fullscreenBlur.u_texture, 0);
+                }
+
+                gl.drawArrays(gl.TRIANGLE_FAN, 0, 3);
+            }
+        }
+
+        geoPass();
+    }
+
+    gl.deleteFramebuffer(render_targets[0].fb);
+    texture_starfield = render_targets[0].tex;
+
+    gl.deleteFramebuffer(render_targets[1].fb);
+    gl.deleteTexture(render_targets[1].tex);
+
+    gl.deleteTexture(atlas);
+
+    gl.viewport(
+        0,
+        0,
+        canvas.width,
+        canvas.height
+    );
+}
+
+requestAnimationFrame(function frame(timestamp) {
+    requestAnimationFrame(frame);
+
+    const geo = {
+        idx: [],
+        pos: [],
+        uv : [],
+    };
+
+    {
+        function drawBox(x, y, size) {
+
+            /* generate UVs from atlas_index */
+            geo.uv.push(
+                1, 0,
+                0, 0,
+                0, 1,
+                1, 1,
+            );
+
+            /* generate position + index */
+            {
+                const vbuf_i = geo.pos.length / 3;
+                geo.pos.push(x+size, y-size, 0.1);
+                geo.pos.push(x-size, y-size, 0.1);
+                geo.pos.push(x-size, y+size, 0.1);
+                geo.pos.push(x+size, y+size, 0.1);
+
+                geo.idx.push(
+                    vbuf_i + 0,
+                    vbuf_i + 1,
+                    vbuf_i + 2,
+                    vbuf_i + 2,
+                    vbuf_i + 3,
+                    vbuf_i + 0
+                );
+            }
+        }
+
+        drawBox(0, 0, 0.8, 0);
+    }
+
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+
+    /* clear all */
+    gl.clearColor(1.0, 1.0, 1.0, 1.0);
+    gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+
+    {
+        gl.useProgram(shaders.geo.program);
+        gl.enableVertexAttribArray(shaders.geo.a_pos);
+        gl.enableVertexAttribArray(shaders.geo.a_uv);
+
+        /* upload/bind atlas */
+        {
+            gl.activeTexture(gl.TEXTURE1);
+            gl.bindTexture(gl.TEXTURE_2D, texture_starfield);
+            gl.uniform1i(shaders.geo.u_texture, 1);
+        }
+
+        gl.uniform1f(shaders.geo.u_brightness, 1);
+
+        /* upload/bind geometry */
+        {
+            gl.bindBuffer(gl.ARRAY_BUFFER, geo_vbuf_pos);
+            gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(geo.pos), gl.STATIC_DRAW);
+            gl.vertexAttribPointer(shaders.geo.a_pos, 3, gl.FLOAT, false, 0, 0);
+
+            gl.bindBuffer(gl.ARRAY_BUFFER, geo_vbuf_uv);
+            gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(geo.uv), gl.STATIC_DRAW);
+            gl.vertexAttribPointer(shaders.geo.a_uv, 2, gl.FLOAT, false, 0, 0);
+
+            gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, geo_ibuf);
+            gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, new Uint16Array(geo.idx), gl.STATIC_DRAW);
+        }
+
+        gl.drawElements(gl.TRIANGLES, geo.idx.length, gl.UNSIGNED_SHORT, 0);
+    }
+
+})
+
+
+    </script>
+  </body>
+</html>
