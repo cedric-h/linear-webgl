@@ -58,8 +58,6 @@ also: example of how to clip text without scissor rects, useful for doing a lot 
 
 ## quad squad
 
-<img width="400" alt="Screenshot 2024-03-10 at 11 34 47 PM" src="https://github.com/cedric-h/linear-webgl/assets/25539554/9b6be17c-e290-4ac5-8dc9-2e483ac13545">
-
 | **link**                                                                       | **desc**                                                                                                                       |
 |--------------------------------------------------------------------------------|--------------------------------------------------------------------------------------------------------------------------------|
 | [quad           ](https://cedric-h.github.io/linear-webgl/quad)                | premultiplied alpha                                                                                                            |
@@ -68,6 +66,9 @@ also: example of how to clip text without scissor rects, useful for doing a lot 
 | [quad-shadow    ](https://cedric-h.github.io/linear-webgl/quad_shadow)         | demonstrates prebaking shadow for static geometry so you don't need to redo every frame -- can be easier for layering as well. |
 | [quad-woosh     ](https://cedric-h.github.io/linear-webgl/quad_woosh)          | some fun with feedback transforms                                                                                              |
 
+<img width="400" alt="Screenshot 2024-03-10 at 11 34 47 PM" src="https://github.com/cedric-h/linear-webgl/assets/25539554/9b6be17c-e290-4ac5-8dc9-2e483ac13545">
+
+
 ## ✨ texture time ✨
 
 | **link**                                                                       | **desc**                                                                                                                       |
@@ -75,3 +76,5 @@ also: example of how to clip text without scissor rects, useful for doing a lot 
 | [image   ](https://cedric-h.github.io/linear-webgl/image.html)                 | emoji -> canvas -> texture -> quad -> screen                                                                                   |
 | [bedsheet](https://cedric-h.github.io/linear-webgl/bedsheet.html)              | like "image," but demonstrates how to use several images on a single atlas.                                                    |
 | [galaxy  ](https://cedric-h.github.io/linear-webgl/galaxy.html)                | see above + fun with gaussian blur                                                                                             |
+
+
