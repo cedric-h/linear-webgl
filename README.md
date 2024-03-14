@@ -73,8 +73,8 @@ also: example of how to clip text without scissor rects, useful for doing a lot 
 
 | **link**                                                                       | **desc**                                                                                                                       |
 |--------------------------------------------------------------------------------|--------------------------------------------------------------------------------------------------------------------------------|
-| [image   ](https://cedric-h.github.io/linear-webgl/image.html)                 | emoji -> canvas -> texture -> quad -> screen                                                                                   |
-| [bedsheet](https://cedric-h.github.io/linear-webgl/bedsheet.html)              | like "image," but demonstrates how to use several images on a single atlas.                                                    |
-| [galaxy  ](https://cedric-h.github.io/linear-webgl/galaxy.html)                | see above + fun with gaussian blur                                                                                             |
+| [image       ](https://cedric-h.github.io/linear-webgl/image.html)             | emoji -> canvas -> texture -> quad -> screen                                                                                   |
+| [image_atlas ](https://cedric-h.github.io/linear-webgl/image_atals.html)       | like "image," but demonstrates how to use several images on a single atlas.                                                    |
+| [galaxy      ](https://cedric-h.github.io/linear-webgl/galaxy.html)            | see above + fun with gaussian blur                                                                                             |
 
 
