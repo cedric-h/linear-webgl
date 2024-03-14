@@ -14,13 +14,13 @@ So raw, unadulterated WebGL it is. [Webglfundamentals.org](https://webglfundamen
 
 Ergo: flat, linear WebGL.
 
-## simple 3D
+## simple
 
-[cube](https://cedric-h.github.io/linear-webgl/cube.html)
-it's a cube
-
-[gazebo](https://cedric-h.github.io/linear-webgl/gazebo.html)
-simple OBJ model
+| **link**                                                                       | **desc**                                                                                                                       |
+|--------------------------------------------------------------------------------|--------------------------------------------------------------------------------------------------------------------------------|
+| [cube  ](https://cedric-h.github.io/linear-webgl/cube.html)                    | it's a cube.                                                                                                                   |
+| [gazebo](https://cedric-h.github.io/linear-webgl/gazebo.html)                  | simple OBJ model                                                                                                               |
+| [tri   ](https://cedric-h.github.io/linear-webgl/tri.html)                     | triangle; starting-off point; _well, I tri-d._                                                                                 |
 
 <img width="400" alt="Screenshot 2024-03-08 at 2 54 01 PM" src="https://github.com/cedric-h/linear-webgl/assets/25539554/b1d41550-0d5b-4051-af55-6846f1738175">
 
@@ -67,3 +67,11 @@ also: example of how to clip text without scissor rects, useful for doing a lot 
 | [quad-blur-depth](https://cedric-h.github.io/linear-webgl/quad_blur_depth)     | separable gaussian blur + depth texture attached to rendertarget                                                               |
 | [quad-shadow    ](https://cedric-h.github.io/linear-webgl/quad_shadow)         | demonstrates prebaking shadow for static geometry so you don't need to redo every frame -- can be easier for layering as well. |
 | [quad-woosh     ](https://cedric-h.github.io/linear-webgl/quad_woosh)          | some fun with feedback transforms                                                                                              |
+
+## ✨ texture time ✨
+
+| **link**                                                                       | **desc**                                                                                                                       |
+|--------------------------------------------------------------------------------|--------------------------------------------------------------------------------------------------------------------------------|
+| [image   ](https://cedric-h.github.io/linear-webgl/image.html)                 | emoji -> canvas -> texture -> quad -> screen                                                                                   |
+| [bedsheet](https://cedric-h.github.io/linear-webgl/bedsheet.html)              | like "image," but demonstrates how to use several images on a single atlas.                                                    |
+| [galaxy  ](https://cedric-h.github.io/linear-webgl/galaxy.html)                | see above + fun with gaussian blur                                                                                             |

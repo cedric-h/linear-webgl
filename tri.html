@@ -11,38 +11,6 @@
   <body>
     <canvas id="glcanvas"></canvas>
     <script>
-function mat4_create() {
-    let out = new Float32Array(16);
-    out[0] = 1;
-    out[5] = 1;
-    out[10] = 1;
-    out[15] = 1;
-    return out;
-}
-function mat4_ortho(out, left, right, bottom, top, near, far) {
-    let lr = 1 / (left - right);
-    let bt = 1 / (bottom - top);
-    let nf = 1 / (near - far);
-    out[0] = -2 * lr;
-    out[1] = 0;
-    out[2] = 0;
-    out[3] = 0;
-    out[4] = 0;
-    out[5] = -2 * bt;
-    out[6] = 0;
-    out[7] = 0;
-    out[8] = 0;
-    out[9] = 0;
-    out[10] = 2 * nf;
-    out[11] = 0;
-    out[12] = (left + right) * lr;
-    out[13] = (top + bottom) * bt;
-    out[14] = (far + near) * nf;
-    out[15] = 1;
-    return out;
-}
-
-const pMatrix = mat4_create();
 const canvas = document.getElementById('glcanvas');
 const gl = canvas.getContext('webgl', {antialias: true});
 if (!gl) { alert('Failed to initialize WebGL'); }
@@ -59,7 +27,6 @@ if (!gl) { alert('Failed to initialize WebGL'); }
         canvas.height *= window.devicePixelRatio;
     }
 
-    mat4_ortho(pMatrix, 0, gl.canvas.width, gl.canvas.height, 0, 1, -1);
     gl.viewport(
         0,
         0,
@@ -79,12 +46,10 @@ let shaders;
         attribute vec3 a_pos;
         attribute vec4 a_color;
 
-        uniform mat4 u_matrix;
-
         varying vec4 v_color;
 
         void main() {
-            gl_Position = u_matrix * vec4(a_pos.xyz, 1);
+            gl_Position = vec4(a_pos.xyz, 1);
             v_color = a_color;
         }`;
 
@@ -146,72 +111,23 @@ let shaders;
 requestAnimationFrame(function frame(timestamp) {
     requestAnimationFrame(frame);
 
-    const geo_idx = [];
-    const geo_pos = [];
+    const geo_idx   = [];
+    const geo_pos   = [];
     const geo_color = [];
 
-    function drawSquare( min_x, min_y,   max_x, max_y,   z,   color ) {
+    {
         geo_color.push(
-            color[0], color[1], color[2], color[3],
-            color[0], color[1], color[2], color[3],
-            color[0], color[1], color[2], color[3],
-            color[0], color[1], color[2], color[3]
+            255,   0,   0, 255,
+              0, 255,   0, 255,
+              0,   0, 255, 255
         )
 
         const vbuf_i = geo_pos.length / 3;
-        geo_pos.push(max_x, min_y, z);
-        geo_pos.push(min_x, min_y, z);
-        geo_pos.push(min_x, max_y, z);
-        geo_pos.push(max_x, max_y, z);
+        geo_pos.push( 0.7, -0.7, 0);
+        geo_pos.push(-0.7, -0.7, 0);
+        geo_pos.push( 0.0,  0.7, 0);
 
-        geo_idx.push(vbuf_i + 0, vbuf_i + 1, vbuf_i + 2, vbuf_i + 2, vbuf_i + 3, vbuf_i + 0);
-    }
-
-    {
-        const rainbow = [
-            /* red,    */ [255,   0,   0, 255],
-            /* orange, */ [255, 100,   0, 255],
-            /* yellow, */ [255, 255,   0, 255],
-            /* green,  */ [  0, 255,   0, 255],
-            /* blue,   */ [  0,   0, 255, 255],
-            /* purple  */ [255,   0, 255, 255]
-        ];
-
-        /* desaturate */
-        for (const color of rainbow) {
-            color[0] = (color[0] + 255*2) * 0.33;
-            color[1] = (color[1] + 255*2) * 0.33;
-            color[2] = (color[2] + 255*2) * 0.33;
-
-            color[0] *= 0.8;
-            color[1] *= 0.8;
-            color[2] *= 0.8;
-            color[3] *= 0.8;
-        }
-
-        if (1) {
-            /* front to back */
-            for (let _i = 0; _i < rainbow.length; _i++) {
-                const i = rainbow.length - 1 - _i;
-
-                const min_x = 500 + i* 75;
-                const min_y = 500 + i* 75;
-                const max_x = min_x + 200;
-                const max_y = min_y + 200;
-                const z = (i/rainbow.length)*2 - 1;
-                drawSquare(min_x, min_y, max_x, max_y, z, rainbow[i]);
-            }
-        } else {
-            /* back to font */
-            for (let i = 0; i < rainbow.length; i++) {
-                const min_x = 500 + i* 75;
-                const min_y = 500 + i* 75;
-                const max_x = min_x + 200;
-                const max_y = min_y + 200;
-                const z = (1 - i/rainbow.length)*2 - 1;
-                drawSquare(min_x, min_y, max_x, max_y, z, rainbow[i]);
-            }
-        }
+        geo_idx.push(0, 1, 2);
     }
 
     {
@@ -231,8 +147,6 @@ requestAnimationFrame(function frame(timestamp) {
             gl.useProgram(shaders.geo.program);
             gl.enableVertexAttribArray(shaders.geo.a_pos);
             gl.enableVertexAttribArray(shaders.geo.a_color);
-
-            gl.uniformMatrix4fv(shaders.geo.u_matrix, false, pMatrix);
 
             /* upload/bind geometry */
 
