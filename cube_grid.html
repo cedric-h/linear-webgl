@@ -12,7 +12,7 @@
     <canvas id="glcanvas"></canvas>
     <script>
 const canvas = document.getElementById('glcanvas');
-const gl = canvas.getContext('webgl', {antialias: true});
+const gl = canvas.getContext('webgl2', {antialias: true});
 if (!gl) { alert('Failed to initialize WebGL'); }
 
 (window.onresize = () => {
@@ -57,8 +57,57 @@ let shaders;
         varying vec4 v_color;
 
         void main() {
-            gl_FragColor = vec4(v_color.xyz*0.3, 1.0);
+            gl_FragColor = vec4(v_color.xyz*0.35, 1.0);
         }`;
+
+
+    const vs_grid = `#version 300 es
+        in vec3 a_pos;
+        in vec2 a_uv;
+
+        uniform mat4 u_matrix;
+
+        out vec2 v_uv;
+
+        void main() {
+            gl_Position = u_matrix * vec4(a_pos.xyz, 1);
+            v_uv = (a_uv - 0.5)*abs(a_pos.xy);
+        }`;
+
+    const fs_grid = `#version 300 es
+        precision mediump float;
+
+        in vec2 v_uv;
+
+        /* https://iquilezles.org/articles/filterableprocedurals/ */
+
+        const float N = 30.0; // grid ratio
+        float gridTextureGradBox(in vec2 p, in vec2 ddx, in vec2 ddy) {
+            // filter kernel
+            vec2 w = max(abs(ddx), abs(ddy)) + 0.01;
+
+            // analytic (box) filtering
+            vec2 a = p + 0.5*w;                        
+            vec2 b = p - 0.5*w;           
+            vec2 i = (floor(a)+min(fract(a)*N,1.0)-
+                      floor(b)-min(fract(b)*N,1.0))/(N*w);
+            //pattern
+            return (1.0-i.x)*(1.0-i.y);
+        }
+
+        out vec4 frag_color;
+
+        void main() {
+            // vec2 d = 1.0 - step(0.01, fract(v_uv*10.0));
+            // gl_FragColor = vec4(max(d.x, d.y));
+
+            vec2 uv = (v_uv - 0.5) + 0.5/N;
+            float grid = gridTextureGradBox(uv, dFdx(uv), dFdy(uv));
+            frag_color = vec4(1.0 - grid);
+            frag_color *= 0.25;
+            frag_color *= 0.3 + 0.6*smoothstep(0.0, 0.1, 1.0 - length(v_uv)/6.0);
+        }`;
+
 
     function createProgram(gl, vertexSource, fragmentSource) {
         function createShader(gl, type, source) {
@@ -102,20 +151,23 @@ let shaders;
 
 
     shaders = {
-        geo: createProgram(gl, vs_geo, fs_geo)
+        geo:  createProgram(gl, vs_geo , fs_geo ),
+        grid: createProgram(gl, vs_grid, fs_grid),
     }
 }
 
-const geo_vbuf_pos = gl.createBuffer();
-const geo_vbuf_color = gl.createBuffer();
-const geo_ibuf = gl.createBuffer();
+const buf = {
+    geo_v_pos:   gl.createBuffer(),
+    geo_v_color: gl.createBuffer(),
+    geo_i:       gl.createBuffer(),
+
+    grid_v_pos:  gl.createBuffer(),
+    grid_v_uv:   gl.createBuffer(),
+    grid_i:      gl.createBuffer(),
+};
 
 requestAnimationFrame(function frame(timestamp) {
     requestAnimationFrame(frame);
-
-    const geo_idx   = [];
-    const geo_pos   = [];
-    const geo_color = [];
 
     const ORTHO = false;
     const mvp = mat4_create();
@@ -138,11 +190,12 @@ requestAnimationFrame(function frame(timestamp) {
 
             mat4_mul(mvp, projection, model);
         } else {
-            const FIELD_OF_VIEW = 75 / 180 * Math.PI;
+            const FIELD_OF_VIEW = 70 / 180 * Math.PI;
             const ar = window.innerWidth / window.innerHeight;
             const projection = mat4_perspective(mat4_create(), FIELD_OF_VIEW, ar, 0.01, 100.0);
 
-            const view = mat4_target_to(mat4_create(), [5, 5, 5], [0, 0, 0], [0, 0, 1]);
+            const dist = 6;
+            const view = mat4_target_to(mat4_create(), [dist, dist, dist*1.3], [0, 0, 0], [0, 0, 1]);
             mat4_invert(view, view);
 
             mat4_mul(mvp, projection, view);
@@ -150,6 +203,9 @@ requestAnimationFrame(function frame(timestamp) {
         }
     }
 
+    const geo_idx   = [];
+    const geo_pos   = [];
+    const geo_color = [];
     {
         const corners = [
             -1, -1,  1,   1, -1,  1,   1,  1,  1,  -1,  1,  1, /* Top face    */
@@ -163,7 +219,7 @@ requestAnimationFrame(function frame(timestamp) {
         ];
 
         for (let corner_i = 0; corner_i < corners.length; corner_i += 3)
-            corners[corner_i+2] += 1;
+            corners[corner_i+2] += 1.0;
 
         for (let corner_i = 0; corner_i < corners.length; corner_i += 12) {
             geo_color.push(
@@ -190,6 +246,42 @@ requestAnimationFrame(function frame(timestamp) {
         }
     }
 
+    const grid_idx = [];
+    const grid_pos = [];
+    const grid_uv  = [];
+    {
+        const corners = [
+            -999, -999, -0,  -999,  999, -0,   999,  999, -0,   999, -999, -0, /* Bottom face */
+        ];
+
+        for (let corner_i = 0; corner_i < corners.length; corner_i += 3)
+            corners[corner_i+2] -= 0.025;
+
+        for (let corner_i = 0; corner_i < corners.length; corner_i += 12) {
+            grid_uv.push(
+                255,   0,
+                  0,   0,
+                  0, 255,
+                255, 255,
+            );
+
+            const vbuf_i = grid_pos.length / 3;
+            grid_pos.push(corners[corner_i +  0], corners[corner_i +  1], corners[corner_i +  2]);
+            grid_pos.push(corners[corner_i +  3], corners[corner_i +  4], corners[corner_i +  5]);
+            grid_pos.push(corners[corner_i +  6], corners[corner_i +  7], corners[corner_i +  8]);
+            grid_pos.push(corners[corner_i +  9], corners[corner_i + 10], corners[corner_i + 11]);
+
+            grid_idx.push(
+                vbuf_i + 0,
+                vbuf_i + 1,
+                vbuf_i + 2,
+                vbuf_i + 2,
+                vbuf_i + 3,
+                vbuf_i + 0
+            );
+        }
+    }
+
     {
         /* set up premultiplied alpha */
         gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
@@ -212,19 +304,44 @@ requestAnimationFrame(function frame(timestamp) {
 
             /* upload/bind geometry */
             {
-                gl.bindBuffer(gl.ARRAY_BUFFER, geo_vbuf_pos);
+                gl.bindBuffer(gl.ARRAY_BUFFER, buf.geo_v_pos);
                 gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(geo_pos), gl.STATIC_DRAW);
                 gl.vertexAttribPointer(shaders.geo.a_pos, 3, gl.FLOAT, false, 0, 0);
 
-                gl.bindBuffer(gl.ARRAY_BUFFER, geo_vbuf_color);
+                gl.bindBuffer(gl.ARRAY_BUFFER, buf.geo_v_color);
                 gl.bufferData(gl.ARRAY_BUFFER, new Uint8Array(geo_color), gl.STATIC_DRAW);
                 gl.vertexAttribPointer(shaders.geo.a_color, 4, gl.UNSIGNED_BYTE, true, 0, 0);
 
-                gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, geo_ibuf);
+                gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, buf.geo_i);
                 gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, new Uint16Array(geo_idx), gl.STATIC_DRAW);
             }
 
             gl.drawElements(gl.TRIANGLES, geo_idx.length, gl.UNSIGNED_SHORT, 0);
+        }
+
+        /* geo pass */
+        {
+            gl.useProgram(shaders.grid.program);
+            gl.enableVertexAttribArray(shaders.grid.a_pos);
+            gl.enableVertexAttribArray(shaders.grid.a_color);
+
+            gl.uniformMatrix4fv(shaders.grid.u_matrix, false, mvp);
+
+            /* upload/bind geometry */
+            {
+                gl.bindBuffer(gl.ARRAY_BUFFER, buf.grid_v_pos);
+                gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(grid_pos), gl.STATIC_DRAW);
+                gl.vertexAttribPointer(shaders.grid.a_pos, 3, gl.FLOAT, false, 0, 0);
+
+                gl.bindBuffer(gl.ARRAY_BUFFER, buf.grid_v_uv);
+                gl.bufferData(gl.ARRAY_BUFFER, new Uint8Array(grid_uv), gl.STATIC_DRAW);
+                gl.vertexAttribPointer(shaders.grid.a_uv, 2, gl.UNSIGNED_BYTE, true, 0, 0);
+
+                gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, buf.grid_i);
+                gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, new Uint16Array(grid_idx), gl.STATIC_DRAW);
+            }
+
+            gl.drawElements(gl.TRIANGLES, grid_idx.length, gl.UNSIGNED_SHORT, 0);
         }
     }
 })
