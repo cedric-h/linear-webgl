@@ -4,7 +4,7 @@ If you ask me, any attempt to make an abstraction over WebGL ... only makes it m
 
 But don't take it from me, let's look at the numbers:
 
-- Higher level abstractions [suffer from performance issues](benchmarks.slaylines.io)
+- Higher level abstractions [suffer from performance issues](https://benchmarks.slaylines.io)
 
 - Lower level abstractions like [picogl](https://tsherif.github.io/picogl.js/), [twgl](https://twgljs.org/) and [regl](https://regl-project.github.io/regl/) hardly offer enough to be worth the marginally larger bundle size. (coming in at 67k, 52k, and 86k respectively ... [i fit a minimal minecraft clone in under 96kb](https://github.com/cedric-h/cedcraft) and [you should really only block on the loading of 650kb max, ever](https://infrequently.org/2024/01/performance-inequality-gap-2024/))
 
