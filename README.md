@@ -18,9 +18,9 @@ Ergo: flat, linear WebGL.
 
 | **link**                                                                       | **desc**                                                                                                              |
 |--------------------------------------------------------------------------------|-----------------------------------------------------------------------------------------------------------------------|
-| [cube       ](https://cedric-h.github.io/linear-webgl/cube.html)               | it's a cube.                                                                                                          |
-| [gazebo     ](https://cedric-h.github.io/linear-webgl/gazebo.html)             | simple OBJ model                                                                                                      |
 | [tri        ](https://cedric-h.github.io/linear-webgl/tri.html)                | triangle; starting-off point; _well, I tri-d._                                                                        |
+| [gazebo     ](https://cedric-h.github.io/linear-webgl/gazebo.html)             | simple OBJ model                                                                                                      |
+| [cube       ](https://cedric-h.github.io/linear-webgl/cube.html)               | it's a cube.                                                                                                          |
 | [cube grid  ](https://cedric-h.github.io/linear-webgl/cube_grid.html)          | this cube has a grid!                                                                                                 |
 | [cube camera](https://cedric-h.github.io/linear-webgl/cube_camera.html)        | this cube has a grid AND mouse-based camera controls!                                                               |
 
