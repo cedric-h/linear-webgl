@@ -167,11 +167,20 @@ const buf = {
 };
 
 let input = {
-    pitch:      Math.PI*0.25,
-    yaw:       -Math.PI*0.25,
-    zoom:       10,
-    scroll:     0,
-    mousedown:  false,
+    pitch:  Math.PI*0.25,
+    yaw:   -Math.PI*0.25,
+
+    dampedEvent: { button: 0, movementX: 0, movementY: 0 },
+
+    cam_pivot_x: 0,
+    cam_pivot_y: 0,
+    cam_pivot_z: 0,
+
+    zoom:   10,
+    scroll:  0,
+
+    lmb_down: false,
+    rmb_down: false,
 }
 let wheelTimeout;
 window.onwheel = e => {
@@ -182,20 +191,67 @@ window.onwheel = e => {
     wheelTimeout = setTimeout(() => input.scroll = 0, 100)
 };
 window.onmousedown = ev => {
-    input.mousedown = true;
+    ev.preventDefault();
+
+    if (ev.button == 0) input.lmb_down = true;
+    if (ev.button == 2) input.rmb_down = true;
 };
 window.onmousemove = ev => {
-    if (input.mousedown) {
-        input.pitch -= ev.movementX * 0.0035;
-        input.yaw -= ev.movementY * 0.0035;
-    }
+    input.dampedEvent.button    = ev.button;
+    input.dampedEvent.movementX = ev.movementX;
+    input.dampedEvent.movementY = ev.movementY;
 };
+window.oncontextmenu = ev => ev.preventDefault();
 window.onmouseup = ev => {
-    input.mousedown = false;
+    ev.preventDefault();
+
+    if (ev.button == 0) input.lmb_down = false;
+    if (ev.button == 2) input.rmb_down = false;
 };
 
 requestAnimationFrame(function frame(timestamp) {
     requestAnimationFrame(frame);
+
+    /* we could apply these changes directly in the event handlers, but the result feels "low fps"
+     * because we don't get input events at 60fps. so instead, we apply the changes every frame
+     * and simply "damp them" so that they get weaker every frame.
+     *
+     * (this should probably use delta time rather than simply *= 0.8) */
+    {
+        const ev = input.dampedEvent;
+
+        /* based on the assumption that if you're zoomed in more,
+         * you're doing finer-detailed work and want more precise movements. */
+        const zoom_fudge = Math.sqrt(input.zoom/10.0)*2.0;
+
+        if (input.lmb_down) {
+            input.pitch -= ev.movementX * 0.0035 * zoom_fudge;
+            input.yaw   -= ev.movementY * 0.0035 * zoom_fudge;
+        }
+        if (input.rmb_down) {
+            const unit = [0, -ev.movementX*0.0075*zoom_fudge, ev.movementY*0.0075*zoom_fudge, 1];
+            {
+                const view    = mat4_create();
+                const scratch = mat4_create();
+
+                mat4_from_z_rotation(scratch, input.pitch);
+                mat4_mul(view, view, scratch);
+
+                mat4_from_y_rotation(scratch, input.yaw);
+                mat4_mul(view, view, scratch);
+
+                mat4_transform_vec4(unit, unit, view);
+            }
+
+            input.cam_pivot_x += unit[0];
+            input.cam_pivot_y += unit[1];
+            input.cam_pivot_z += unit[2];
+        }
+
+        ev.button    *= 0.8;
+        ev.movementX *= 0.8;
+        ev.movementY *= 0.8;
+    }
 
     input.zoom += 0.025*input.scroll*input.zoom;
 
@@ -236,7 +292,16 @@ requestAnimationFrame(function frame(timestamp) {
 
                     mat4_transform_vec4(eye, eye, view);
                 }
-                mat4_target_to(view, eye, [0, 0, 0], [0, 0, 1]);
+
+                eye[0] += input.cam_pivot_x;
+                eye[1] += input.cam_pivot_y;
+                eye[2] += input.cam_pivot_z;
+                mat4_target_to(
+                    view,
+                    eye,
+                    [input.cam_pivot_x, input.cam_pivot_y, input.cam_pivot_z],
+                    [                0,                 0,                 1]
+                );
                 mat4_invert(view, view);
             }
 
