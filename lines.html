@@ -55,6 +55,8 @@ window.onload = () => {
       if (1.0 == v_palette_index) gl_FragColor = vec4(0.0, 1.0, 0.0, 1.0);
       if (2.0 == v_palette_index) gl_FragColor = vec4(0.0, 0.0, 1.0, 1.0);
       if (3.0 == v_palette_index) gl_FragColor = vec4(0.0, 0.0, 0.0, 1.0);
+
+      // gl_FragColor *= 0.6;
     }
   `;
 
@@ -106,10 +108,10 @@ window.onload = () => {
   /* fill buffers */
   {
     gl.bindBuffer(gl.ARRAY_BUFFER, buffers.vrt);
-    gl.bufferData(gl.ARRAY_BUFFER, 1024, gl.DYNAMIC_DRAW);
+    gl.bufferData(gl.ARRAY_BUFFER, 8192, gl.DYNAMIC_DRAW);
 
     gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, buffers.idx);
-    gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, 1024, gl.DYNAMIC_DRAW);
+    gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, 8192, gl.DYNAMIC_DRAW);
   }
 
   let camRotationX = 0;
@@ -132,12 +134,15 @@ window.onload = () => {
 
     /* draw */
     {
-      gl.clearColor(1.0, 1.0, 1.0, 1.0);
+      gl.clearColor(0.0, 0.0, 0.0, 1.0);
       gl.clearDepth(1.0);
       gl.enable(gl.DEPTH_TEST);
       gl.depthFunc(gl.LEQUAL);
 
       gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+
+      gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
+      gl.enable(gl.BLEND);
 
       {
         gl.bindBuffer(gl.ARRAY_BUFFER, buffers.vrt);
@@ -189,8 +194,8 @@ window.onload = () => {
 
         let vbuf_i = 0;
         ibuf_i = 0;
-        vbuf = new Float32Array(1024 / 4);
-        ibuf = new Uint16Array(1024 / 2);
+        vbuf = new Float32Array(8192 / 4);
+        ibuf = new Uint16Array(8192 / 2);
 
         function line(a, b, a_thick, b_thick, c) {
           mat4_transform_vec4(a, a, u_mvp);
@@ -221,11 +226,60 @@ window.onload = () => {
           vbuf[vbuf_i++] = b[0] - b_tx; vbuf[vbuf_i++] = b[1] - b_ty; vbuf[vbuf_i++] = b[2]; vbuf[vbuf_i++] = b[3]; vbuf[vbuf_i++] = c;
         }
 
-        const e = -0.02;
-        /*                     arrows                  ;                         tips                         */
-        line([e,0,0,1], [1.0,  0,  0,1], 0.05, 0.05, 0); line([1.1, 0.0, 0.0, 1], [1.0,  0,  0,1], 0.0, 0.1, 0);
-        line([0,e,0,1], [  0,1.0,  0,1], 0.05, 0.05, 1); line([0.0, 1.1, 0.0, 1], [  0,1.0,  0,1], 0.0, 0.1, 1);
-        line([0,0,e,1], [  0,  0,1.0,1], 0.05, 0.05, 2); line([0.0, 0.0, 1.1, 1], [  0,  0,1.0,1], 0.0, 0.1, 2);
+        const RED   = 0;
+        const GREEN = 1;
+        const BLUE  = 2;
+
+        const LINE_BASE  = 0.6;
+        const ARROW_BASE = 0.9;
+        const ARROW_TIP  = 1.0;
+
+        const SCALE_P = 0.8;
+
+        /* lines */
+        {
+          line([LINE_BASE,         0,         0, 1], [ARROW_BASE,          0,          0, 1], 0.04, 0.04, RED  );
+          line([        0, LINE_BASE,         0, 1], [         0, ARROW_BASE,          0, 1], 0.04, 0.04, GREEN);
+          line([        0,         0, LINE_BASE, 1], [         0,          0, ARROW_BASE, 1], 0.04, 0.04, BLUE );
+        }
+
+        /* translation arrows */
+        {
+          line([ARROW_TIP,         0,         0, 1], [ARROW_BASE,          0,          0, 1], 0.00, 0.10, RED  );
+          line([        0, ARROW_TIP,         0, 1], [         0, ARROW_BASE,          0, 1], 0.00, 0.10, GREEN);
+          line([        0,         0, ARROW_TIP, 1], [         0,          0, ARROW_BASE, 1], 0.00, 0.10, BLUE );
+        }
+
+        /* scale boxes */
+        {
+          const S = 0.035;
+          line([SCALE_P-S,         0,         0, 1], [SCALE_P+S,         0,         0, 1], 0.08, 0.08, RED  );
+          line([        0, SCALE_P-S,         0, 1], [        0, SCALE_P+S,         0, 1], 0.08, 0.08, GREEN);
+          line([        0,         0, SCALE_P-S, 1], [        0,         0, SCALE_P+S, 1], 0.08, 0.08, BLUE );
+        }
+
+        /* rotation arcs */
+        const RESOLUTION = 12;
+        for (let axis = 0; axis < 3; axis++) {
+          for (let i = 0; i < RESOLUTION; i++) {
+            const a_x = Math.cos((i - 0.01)/RESOLUTION * Math.PI*0.5)*LINE_BASE;
+            const a_y = Math.sin((i - 0.01)/RESOLUTION * Math.PI*0.5)*LINE_BASE;
+            const b_x = Math.cos((i + 1.01)/RESOLUTION * Math.PI*0.5)*LINE_BASE;
+            const b_y = Math.sin((i + 1.01)/RESOLUTION * Math.PI*0.5)*LINE_BASE;
+
+            if (axis == 0)
+              line([a_x, 0, a_y, 1],
+                   [b_x, 0, b_y, 1], 0.04, 0.04, RED);
+
+            if (axis == 1)
+              line([0, a_x, a_y, 1],
+                   [0, b_x, b_y, 1], 0.04, 0.04, BLUE);
+
+            if (axis == 2)
+              line([a_x, a_y, 0, 1],
+                   [b_x, b_y, 0, 1], 0.04, 0.04, GREEN);
+          }
+        }
       }
 
       gl.bindBuffer(gl.ARRAY_BUFFER, buffers.vrt);
