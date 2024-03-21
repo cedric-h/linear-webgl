@@ -51,10 +51,12 @@ window.onload = () => {
 
     void main(void) {
       gl_FragColor = vec4(1.0, 0.0, 1.0, 1.0);
-      if (0.0 == v_palette_index) gl_FragColor = vec4(1.0, 0.0, 0.0, 1.0);
-      if (1.0 == v_palette_index) gl_FragColor = vec4(0.0, 1.0, 0.0, 1.0);
-      if (2.0 == v_palette_index) gl_FragColor = vec4(0.0, 0.0, 1.0, 1.0);
-      if (3.0 == v_palette_index) gl_FragColor = vec4(0.0, 0.0, 0.0, 1.0);
+      if (0.0 == v_palette_index) gl_FragColor = vec4(0.8, 0.1, 0.1, 1.0);
+      if (1.0 == v_palette_index) gl_FragColor = vec4(0.1, 0.8, 0.1, 1.0);
+      if (2.0 == v_palette_index) gl_FragColor = vec4(0.1, 0.1, 0.8, 1.0);
+      if (3.0 == v_palette_index) gl_FragColor = vec4(1.0, 0.4, 0.4, 1.0);
+      if (4.0 == v_palette_index) gl_FragColor = vec4(0.4, 1.0, 0.4, 1.0);
+      if (5.0 == v_palette_index) gl_FragColor = vec4(0.4, 0.4, 1.0, 1.0);
 
       // gl_FragColor *= 0.6;
     }
@@ -116,11 +118,15 @@ window.onload = () => {
 
   let camRotationX = 0;
   let camRotationY = 0;
+  let mouse_x = 0;
+  let mouse_y = 0;
   window.onmousemove = ev => {
     if (ev.buttons > 0) {
       camRotationX -= ev.movementX*0.01;
       camRotationY -= ev.movementY*0.01;
     }
+    mouse_x = ev.offsetX;
+    mouse_y = ev.offsetY;
   }
 
   let then = 0;
@@ -197,7 +203,7 @@ window.onload = () => {
         vbuf = new Float32Array(8192 / 4);
         ibuf = new Uint16Array(8192 / 2);
 
-        function line(a, b, a_thick, b_thick, c) {
+        function line(a, b, a_thick, b_thick, c, z_push=0) {
           mat4_transform_vec4(a, a, u_mvp);
           mat4_transform_vec4(b, b, u_mvp);
           
@@ -220,21 +226,48 @@ window.onload = () => {
           ibuf[ibuf_i++] = 1 + vbuf_i/5;
           ibuf[ibuf_i++] = 3 + vbuf_i/5;
 
+          a[2] += z_push;
+          b[2] += z_push;
+
           vbuf[vbuf_i++] = a[0] + a_tx; vbuf[vbuf_i++] = a[1] + a_ty; vbuf[vbuf_i++] = a[2]; vbuf[vbuf_i++] = a[3]; vbuf[vbuf_i++] = c;
           vbuf[vbuf_i++] = a[0] - a_tx; vbuf[vbuf_i++] = a[1] - a_ty; vbuf[vbuf_i++] = a[2]; vbuf[vbuf_i++] = a[3]; vbuf[vbuf_i++] = c;
           vbuf[vbuf_i++] = b[0] + b_tx; vbuf[vbuf_i++] = b[1] + b_ty; vbuf[vbuf_i++] = b[2]; vbuf[vbuf_i++] = b[3]; vbuf[vbuf_i++] = c;
           vbuf[vbuf_i++] = b[0] - b_tx; vbuf[vbuf_i++] = b[1] - b_ty; vbuf[vbuf_i++] = b[2]; vbuf[vbuf_i++] = b[3]; vbuf[vbuf_i++] = c;
         }
 
+        function selectable_line(a, b, a_thick, b_thick, normal_color, selected_color) {
+          const center = [
+            (a[0] + b[0]) * 0.5,
+            (a[1] + b[1]) * 0.5,
+            (a[2] + b[2]) * 0.5,
+            1
+          ];
+          mat4_transform_vec4(center, center, u_mvp);
+          const w = center[3];
+          center[0] = (0 + (center[0]/w*0.5 + 0.5))*window.innerWidth;
+          center[1] = (1 - (center[1]/w*0.5 + 0.5))*window.innerHeight;
+
+          const dist = Math.sqrt((center[0] - mouse_x)*(center[0] - mouse_x) +
+                                 (center[1] - mouse_y)*(center[1] - mouse_y) );
+          const selected = dist < 20;
+          const color = selected ? selected_color : normal_color;
+          const z_push = selected ? -0.01 : 0;
+
+          line(a, b, a_thick, b_thick, color, z_push);
+        }
+
         const RED   = 0;
         const GREEN = 1;
         const BLUE  = 2;
+        const SELECTED_RED   = 3;
+        const SELECTED_GREEN = 4;
+        const SELECTED_BLUE  = 5;
 
-        const LINE_BASE  = 0.6;
-        const ARROW_BASE = 0.9;
-        const ARROW_TIP  = 1.0;
+        const LINE_BASE  = 0.575;
+        const ARROW_BASE = 0.8;
+        const ARROW_TIP  = 0.9;
 
-        const SCALE_P = 0.8;
+        const SCALE_P = 0.7;
 
         /* lines */
         {
@@ -245,19 +278,19 @@ window.onload = () => {
 
         /* translation arrows */
         {
-          line([ARROW_TIP,         0,         0, 1], [ARROW_BASE,          0,          0, 1], 0.00, 0.10, RED  );
-          line([        0, ARROW_TIP,         0, 1], [         0, ARROW_BASE,          0, 1], 0.00, 0.10, GREEN);
-          line([        0,         0, ARROW_TIP, 1], [         0,          0, ARROW_BASE, 1], 0.00, 0.10, BLUE );
+          selectable_line([ARROW_TIP,         0,         0, 1], [ARROW_BASE,          0,          0, 1], 0.00, 0.10, RED  , SELECTED_RED  );
+          selectable_line([        0, ARROW_TIP,         0, 1], [         0, ARROW_BASE,          0, 1], 0.00, 0.10, GREEN, SELECTED_GREEN);
+          selectable_line([        0,         0, ARROW_TIP, 1], [         0,          0, ARROW_BASE, 1], 0.00, 0.10, BLUE , SELECTED_BLUE );
         }
 
         /* scale boxes */
         {
           const S = 0.035;
-          line([SCALE_P-S,         0,         0, 1], [SCALE_P+S,         0,         0, 1], 0.08, 0.08, RED  );
-          line([        0, SCALE_P-S,         0, 1], [        0, SCALE_P+S,         0, 1], 0.08, 0.08, GREEN);
-          line([        0,         0, SCALE_P-S, 1], [        0,         0, SCALE_P+S, 1], 0.08, 0.08, BLUE );
+          selectable_line([SCALE_P-S,         0,         0, 1], [SCALE_P+S,         0,         0, 1], 0.08, 0.08, RED  , SELECTED_RED  );
+          selectable_line([        0, SCALE_P-S,         0, 1], [        0, SCALE_P+S,         0, 1], 0.08, 0.08, GREEN, SELECTED_GREEN);
+          selectable_line([        0,         0, SCALE_P-S, 1], [        0,         0, SCALE_P+S, 1], 0.08, 0.08, BLUE , SELECTED_BLUE );
         }
-
+ 
         /* rotation arcs */
         const RESOLUTION = 12;
         for (let axis = 0; axis < 3; axis++) {
@@ -268,16 +301,16 @@ window.onload = () => {
             const b_y = Math.sin((i + 1.01)/RESOLUTION * Math.PI*0.5)*LINE_BASE;
 
             if (axis == 0)
-              line([a_x, 0, a_y, 1],
-                   [b_x, 0, b_y, 1], 0.04, 0.04, RED);
+              selectable_line([a_x, 0, a_y, 1],
+                              [b_x, 0, b_y, 1], 0.04, 0.04, RED, SELECTED_RED);
 
             if (axis == 1)
-              line([0, a_x, a_y, 1],
-                   [0, b_x, b_y, 1], 0.04, 0.04, BLUE);
+              selectable_line([0, a_x, a_y, 1],
+                              [0, b_x, b_y, 1], 0.04, 0.04, BLUE, SELECTED_BLUE);
 
             if (axis == 2)
-              line([a_x, a_y, 0, 1],
-                   [b_x, b_y, 0, 1], 0.04, 0.04, GREEN);
+              selectable_line([a_x, a_y, 0, 1],
+                              [b_x, b_y, 0, 1], 0.04, 0.04, GREEN, SELECTED_GREEN);
           }
         }
       }
