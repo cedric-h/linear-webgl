@@ -12,50 +12,243 @@
     <canvas id="glcanvas"></canvas>
     <script>
 
+window.onload = () => {
+  const canvas = document.querySelector("#glcanvas");
+  const gl = canvas.getContext("webgl");
+
+  if (gl === null) {
+    alert(
+      "Unable to initialize WebGL. Your browser or machine may not support it."
+    );
+    return;
+  }
+
+  (window.onresize = () => {
+     gl.viewport(
+       0,
+       0,
+       canvas.width = window.innerWidth*window.devicePixelRatio,
+       canvas.height = window.innerHeight*window.devicePixelRatio
+     );
+     canvas.style.width = window.innerWidth + 'px';
+     canvas.style.height = window.innerHeight + 'px';
+   })();
+
+  const vsSource = `
+    attribute vec4 a_vpos;
+    attribute float a_palette_index;
+
+    varying float v_palette_index;
+
+    void main(void) {
+      v_palette_index = a_palette_index;
+      gl_Position = a_vpos;
+    }
+  `;
+
+  const fsSource = `
+    varying lowp float v_palette_index;
+
+    void main(void) {
+      gl_FragColor = vec4(1.0, 0.0, 1.0, 1.0);
+      if (0.0 == v_palette_index) gl_FragColor = vec4(1.0, 0.0, 0.0, 1.0);
+      if (1.0 == v_palette_index) gl_FragColor = vec4(0.0, 1.0, 0.0, 1.0);
+      if (2.0 == v_palette_index) gl_FragColor = vec4(0.0, 0.0, 1.0, 1.0);
+      if (3.0 == v_palette_index) gl_FragColor = vec4(0.0, 0.0, 0.0, 1.0);
+    }
+  `;
+
+  let shaderProgram;
+  {
+    let vsShader, fsShader;
+    {
+      vsShader = gl.createShader(gl.VERTEX_SHADER);
+      fsShader = gl.createShader(gl.FRAGMENT_SHADER);
+
+      /* compile shaders in parallel
+       *  https://developer.mozilla.org/en-US/docs/Web/API/WebGL_API/WebGL_best_practices#compile_shaders_and_link_programs_in_parallel
+       *  https://developer.mozilla.org/en-US/docs/Web/API/WebGL_API/WebGL_best_practices#dont_check_shader_compile_status_unless_linking_fails
+       *
+       * improvement:
+       *  https://developer.mozilla.org/en-US/docs/Web/API/WebGL_API/WebGL_best_practices#prefer_khr_parallel_shader_compile
+       */
+      gl.shaderSource(fsShader, fsSource);
+      gl.shaderSource(vsShader, vsSource);
+      gl.compileShader(fsShader);
+      gl.compileShader(vsShader);
+    }
+
+    shaderProgram = gl.createProgram();
+    gl.attachShader(shaderProgram, vsShader);
+    gl.attachShader(shaderProgram, fsShader);
+    gl.linkProgram(shaderProgram);
+
+    if (!gl.getProgramParameter(shaderProgram, gl.LINK_STATUS)) {
+      console.error(`Link failed: ${gl.getProgramInfoLog(shaderProgram)}`);
+      console.error(`vs info-log: ${gl.getShaderInfoLog(vsShader)}`);
+      console.error(`fs info-log: ${gl.getShaderInfoLog(fsShader)}`);
+      return;
+    }
+  }
+
+  const programInfo = {
+    program: shaderProgram,
+    a_vpos:          gl.getAttribLocation(shaderProgram,          "a_vpos"),
+    a_palette_index: gl.getAttribLocation(shaderProgram, "a_palette_index"),
+  };
+
+  const buffers = {
+    vrt: gl.createBuffer(),
+    col: gl.createBuffer(),
+    idx: gl.createBuffer(),
+  };
+
+  /* fill buffers */
+  {
+    gl.bindBuffer(gl.ARRAY_BUFFER, buffers.vrt);
+    gl.bufferData(gl.ARRAY_BUFFER, 1024, gl.DYNAMIC_DRAW);
+
+    gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, buffers.idx);
+    gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, 1024, gl.DYNAMIC_DRAW);
+  }
+
+  let camRotationX = 0;
+  let camRotationY = 0;
+  window.onmousemove = ev => {
+    if (ev.buttons > 0) {
+      camRotationX -= ev.movementX*0.01;
+      camRotationY -= ev.movementY*0.01;
+    }
+  }
+
+  let then = 0;
+  let deltaTime = 0;
+  requestAnimationFrame(function render(now) {
+    requestAnimationFrame(render);
+
+    now *= 0.001;
+    deltaTime = now - then;
+    then = now;
+
+    /* draw */
+    {
+      gl.clearColor(1.0, 1.0, 1.0, 1.0);
+      gl.clearDepth(1.0);
+      gl.enable(gl.DEPTH_TEST);
+      gl.depthFunc(gl.LEQUAL);
+
+      gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+
+      {
+        gl.bindBuffer(gl.ARRAY_BUFFER, buffers.vrt);
+
+        gl.vertexAttribPointer(
+          programInfo.a_vpos,
+          4,        /* numComponents, */
+          gl.FLOAT, /* type,          */
+          false,    /* normalize,     */
+          4*5,      /* stride,        */
+          0         /* offset         */
+        );
+        gl.enableVertexAttribArray(programInfo.a_vpos);
+
+        gl.vertexAttribPointer(
+          programInfo.a_palette_index,
+          1,        /* numComponents, */
+          gl.FLOAT, /* type,          */
+          false,    /* normalize,     */
+          4*5,      /* stride,        */
+          4*4       /* offset         */
+        );
+        gl.enableVertexAttribArray(programInfo.a_palette_index);
+      }
+
+      let vbuf, ibuf, ibuf_i;
+      {
+
+        const aspect_ratio = gl.canvas.clientWidth / gl.canvas.clientHeight;
+        const u_mvp = mat4_perspective(
+          mat4_create(),
+          (45 * Math.PI) / 180,                           /* fieldOfView */
+          aspect_ratio,                                   /* aspect      */
+          0.1,                                            /* zNear       */
+          100.0,                                          /* zFar        */
+        );
+
+        mat4_mul(
+          u_mvp,
+          u_mvp,
+          mat4_from_translation(mat4_create(), [0.0, 0.0, -6.0])
+        );
+        const m = mat4_create();
+        mat4_mul(
+          u_mvp,
+          u_mvp,
+          mat4_invert(m, mat4_from_zyx_rotation(m, camRotationY, camRotationX, 0))
+        );
+
+        let vbuf_i = 0;
+        ibuf_i = 0;
+        vbuf = new Float32Array(1024 / 4);
+        ibuf = new Uint16Array(1024 / 2);
+
+        function line(a, b, t, c) {
+          mat4_transform_vec4(a, a, u_mvp);
+          mat4_transform_vec4(b, b, u_mvp);
+
+          const dx = b[0] - a[0];
+          const dy = b[1] - a[1];
+          const nx = -dy; /* perp */
+          const ny = dx*aspect_ratio;
+          const tlen = Math.sqrt(nx*nx + ny*ny) / (t * 0.5);
+          if (tlen <= 0) return;
+          const tx = nx/tlen;
+          const ty = ny/tlen * aspect_ratio;
+
+          ibuf[ibuf_i++] = 0 + vbuf_i/5;
+          ibuf[ibuf_i++] = 1 + vbuf_i/5;
+          ibuf[ibuf_i++] = 2 + vbuf_i/5;
+
+          ibuf[ibuf_i++] = 2 + vbuf_i/5;
+          ibuf[ibuf_i++] = 1 + vbuf_i/5;
+          ibuf[ibuf_i++] = 3 + vbuf_i/5;
+
+          vbuf[vbuf_i++] = a[0] + tx; vbuf[vbuf_i++] = a[1] + ty; vbuf[vbuf_i++] = a[2]; vbuf[vbuf_i++] = a[3]; vbuf[vbuf_i++] = c;
+          vbuf[vbuf_i++] = a[0] - tx; vbuf[vbuf_i++] = a[1] - ty; vbuf[vbuf_i++] = a[2]; vbuf[vbuf_i++] = a[3]; vbuf[vbuf_i++] = c;
+          vbuf[vbuf_i++] = b[0] + tx; vbuf[vbuf_i++] = b[1] + ty; vbuf[vbuf_i++] = b[2]; vbuf[vbuf_i++] = b[3]; vbuf[vbuf_i++] = c;
+          vbuf[vbuf_i++] = b[0] - tx; vbuf[vbuf_i++] = b[1] - ty; vbuf[vbuf_i++] = b[2]; vbuf[vbuf_i++] = b[3]; vbuf[vbuf_i++] = c;
+        }
+
+        const e = -0.02;
+        line([e,0,0,1], [1.0,  0,  0,1], 0.05, 0);
+        line([0,e,0,1], [  0,1.0,  0,1], 0.05, 1);
+        line([0,0,e,1], [  0,  0,1.0,1], 0.05, 2);
+      }
+
+      gl.bindBuffer(gl.ARRAY_BUFFER, buffers.vrt);
+      gl.bufferSubData(gl.ARRAY_BUFFER, 0, vbuf);
+      gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, buffers.idx);
+      gl.bufferSubData(gl.ELEMENT_ARRAY_BUFFER, 0, ibuf);
+
+      gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, buffers.idx);
+      gl.useProgram(programInfo.program);
+
+      gl.drawElements(
+        gl.TRIANGLES,
+        ibuf_i,            /* vertexCount */
+        gl.UNSIGNED_SHORT, /* type        */
+        0                  /* offset      */
+      );
+    }
+  })
+}
+
 function mat4_create() {
   let out = new Float32Array(16);
   out[0] = 1;
   out[5] = 1;
   out[10] = 1;
   out[15] = 1;
-  return out;
-}
-function mat4_transpose(out, a) {
-  /* If we are transposing ourselves we can skip a few steps but have to cache some values */
-  if (out === a) {
-    let a01 = a[1], a02 = a[2], a03 = a[3];
-    let a12 = a[6], a13 = a[7];
-    let a23 = a[11];
-    out[1] = a[4];
-    out[2] = a[8];
-    out[3] = a[12];
-    out[4] = a01;
-    out[6] = a[9];
-    out[7] = a[13];
-    out[8] = a02;
-    out[9] = a12;
-    out[11] = a[14];
-    out[12] = a03;
-    out[13] = a13;
-    out[14] = a23;
-  } else {
-    out[0] = a[0];
-    out[1] = a[4];
-    out[2] = a[8];
-    out[3] = a[12];
-    out[4] = a[1];
-    out[5] = a[5];
-    out[6] = a[9];
-    out[7] = a[13];
-    out[8] = a[2];
-    out[9] = a[6];
-    out[10] = a[10];
-    out[11] = a[14];
-    out[12] = a[3];
-    out[13] = a[7];
-    out[14] = a[11];
-    out[15] = a[15];
-  }
   return out;
 }
 function mat4_invert(out, a) {
@@ -365,237 +558,6 @@ function mat4_ortho(out, left, right, bottom, top, near, far) {
   out[14] = (far + near) * nf;
   out[15] = 1;
   return out;
-}
-
-window.onload = () => {
-  const canvas = document.querySelector("#glcanvas");
-  const gl = canvas.getContext("webgl");
-
-  if (gl === null) {
-    alert(
-      "Unable to initialize WebGL. Your browser or machine may not support it."
-    );
-    return;
-  }
-
-  (window.onresize = () => {
-     gl.viewport(
-       0,
-       0,
-       canvas.width = window.innerWidth*window.devicePixelRatio,
-       canvas.height = window.innerHeight*window.devicePixelRatio
-     );
-     canvas.style.width = window.innerWidth + 'px';
-     canvas.style.height = window.innerHeight + 'px';
-   })();
-
-  const vsSource = `
-    attribute vec4 a_vpos;
-    attribute float a_palette_index;
-
-    varying float v_palette_index;
-
-    void main(void) {
-      v_palette_index = a_palette_index;
-      gl_Position = a_vpos;
-    }
-  `;
-
-  const fsSource = `
-    varying lowp float v_palette_index;
-
-    void main(void) {
-      gl_FragColor = vec4(1.0, 0.0, 1.0, 1.0);
-      if (0.0 == v_palette_index) gl_FragColor = vec4(1.0, 0.0, 0.0, 1.0);
-      if (1.0 == v_palette_index) gl_FragColor = vec4(0.0, 1.0, 0.0, 1.0);
-      if (2.0 == v_palette_index) gl_FragColor = vec4(0.0, 0.0, 1.0, 1.0);
-      if (3.0 == v_palette_index) gl_FragColor = vec4(0.0, 0.0, 0.0, 1.0);
-    }
-  `;
-
-  let shaderProgram;
-  {
-    let vsShader, fsShader;
-    {
-      vsShader = gl.createShader(gl.VERTEX_SHADER);
-      fsShader = gl.createShader(gl.FRAGMENT_SHADER);
-
-      /* compile shaders in parallel
-       *  https://developer.mozilla.org/en-US/docs/Web/API/WebGL_API/WebGL_best_practices#compile_shaders_and_link_programs_in_parallel
-       *  https://developer.mozilla.org/en-US/docs/Web/API/WebGL_API/WebGL_best_practices#dont_check_shader_compile_status_unless_linking_fails
-       *
-       * improvement:
-       *  https://developer.mozilla.org/en-US/docs/Web/API/WebGL_API/WebGL_best_practices#prefer_khr_parallel_shader_compile
-       */
-      gl.shaderSource(fsShader, fsSource);
-      gl.shaderSource(vsShader, vsSource);
-      gl.compileShader(fsShader);
-      gl.compileShader(vsShader);
-    }
-
-    shaderProgram = gl.createProgram();
-    gl.attachShader(shaderProgram, vsShader);
-    gl.attachShader(shaderProgram, fsShader);
-    gl.linkProgram(shaderProgram);
-
-    if (!gl.getProgramParameter(shaderProgram, gl.LINK_STATUS)) {
-      console.error(`Link failed: ${gl.getProgramInfoLog(shaderProgram)}`);
-      console.error(`vs info-log: ${gl.getShaderInfoLog(vsShader)}`);
-      console.error(`fs info-log: ${gl.getShaderInfoLog(fsShader)}`);
-      return;
-    }
-  }
-
-  const programInfo = {
-    program: shaderProgram,
-    a_vpos:          gl.getAttribLocation(shaderProgram,          "a_vpos"),
-    a_palette_index: gl.getAttribLocation(shaderProgram, "a_palette_index"),
-  };
-
-  const buffers = {
-    vrt: gl.createBuffer(),
-    col: gl.createBuffer(),
-    idx: gl.createBuffer(),
-  };
-
-  /* fill buffers */
-  {
-    gl.bindBuffer(gl.ARRAY_BUFFER, buffers.vrt);
-    gl.bufferData(gl.ARRAY_BUFFER, 1024, gl.DYNAMIC_DRAW);
-
-    gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, buffers.idx);
-    gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, 1024, gl.DYNAMIC_DRAW);
-  }
-
-  let camRotationX = 0;
-  let camRotationY = 0;
-  window.onmousemove = ev => {
-    if (ev.buttons > 0) {
-      camRotationX -= ev.movementX*0.01;
-      camRotationY -= ev.movementY*0.01;
-    }
-  }
-
-  let then = 0;
-  let deltaTime = 0;
-  requestAnimationFrame(function render(now) {
-    requestAnimationFrame(render);
-
-    now *= 0.001;
-    deltaTime = now - then;
-    then = now;
-
-    /* draw */
-    {
-      gl.clearColor(1.0, 1.0, 1.0, 1.0);
-      gl.clearDepth(1.0);
-      gl.enable(gl.DEPTH_TEST);
-      gl.depthFunc(gl.LEQUAL);
-
-      gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
-
-      {
-        gl.bindBuffer(gl.ARRAY_BUFFER, buffers.vrt);
-
-        gl.vertexAttribPointer(
-          programInfo.a_vpos,
-          4,        /* numComponents, */
-          gl.FLOAT, /* type,          */
-          false,    /* normalize,     */
-          4*5,      /* stride,        */
-          0         /* offset         */
-        );
-        gl.enableVertexAttribArray(programInfo.a_vpos);
-
-        gl.vertexAttribPointer(
-          programInfo.a_palette_index,
-          1,        /* numComponents, */
-          gl.FLOAT, /* type,          */
-          false,    /* normalize,     */
-          4*5,      /* stride,        */
-          4*4       /* offset         */
-        );
-        gl.enableVertexAttribArray(programInfo.a_palette_index);
-      }
-
-      let vbuf, ibuf, ibuf_i;
-      {
-
-        const aspect_ratio = gl.canvas.clientWidth / gl.canvas.clientHeight;
-        const u_mvp = mat4_perspective(
-          mat4_create(),
-          (45 * Math.PI) / 180,                           /* fieldOfView */
-          aspect_ratio,                                   /* aspect      */
-          0.1,                                            /* zNear       */
-          100.0,                                          /* zFar        */
-        );
-
-        mat4_mul(
-          u_mvp,
-          u_mvp,
-          mat4_from_translation(mat4_create(), [0.0, 0.0, -6.0])
-        );
-        const m = mat4_create();
-        mat4_mul(
-          u_mvp,
-          u_mvp,
-          mat4_invert(m, mat4_from_zyx_rotation(m, camRotationY, camRotationX, 0))
-        );
-
-        let vbuf_i = 0;
-        ibuf_i = 0;
-        vbuf = new Float32Array(1024 / 4);
-        ibuf = new Uint16Array(1024 / 2);
-
-        function line(a, b, t, c) {
-          mat4_transform_vec4(a, a, u_mvp);
-          mat4_transform_vec4(b, b, u_mvp);
-          
-          const dx = b[0] - a[0];
-          const dy = b[1] - a[1];
-          const nx = -dy; /* perp */
-          const ny = dx*aspect_ratio;
-          const tlen = Math.sqrt(nx*nx + ny*ny) / (t * 0.5);
-          if (tlen <= 0) return;
-          const tx = nx/tlen;
-          const ty = ny/tlen * aspect_ratio;
-
-          ibuf[ibuf_i++] = 0 + vbuf_i/5;
-          ibuf[ibuf_i++] = 1 + vbuf_i/5;
-          ibuf[ibuf_i++] = 2 + vbuf_i/5;
-
-          ibuf[ibuf_i++] = 2 + vbuf_i/5;
-          ibuf[ibuf_i++] = 1 + vbuf_i/5;
-          ibuf[ibuf_i++] = 3 + vbuf_i/5;
-
-          vbuf[vbuf_i++] = a[0] + tx; vbuf[vbuf_i++] = a[1] + ty; vbuf[vbuf_i++] = a[2]; vbuf[vbuf_i++] = a[3]; vbuf[vbuf_i++] = c;
-          vbuf[vbuf_i++] = a[0] - tx; vbuf[vbuf_i++] = a[1] - ty; vbuf[vbuf_i++] = a[2]; vbuf[vbuf_i++] = a[3]; vbuf[vbuf_i++] = c;
-          vbuf[vbuf_i++] = b[0] + tx; vbuf[vbuf_i++] = b[1] + ty; vbuf[vbuf_i++] = b[2]; vbuf[vbuf_i++] = b[3]; vbuf[vbuf_i++] = c;
-          vbuf[vbuf_i++] = b[0] - tx; vbuf[vbuf_i++] = b[1] - ty; vbuf[vbuf_i++] = b[2]; vbuf[vbuf_i++] = b[3]; vbuf[vbuf_i++] = c;
-        }
-
-        const e = -0.02;
-        line([e,0,0,1], [1.0,  0,  0,1], 0.05, 0);
-        line([0,e,0,1], [  0,1.0,  0,1], 0.05, 1);
-        line([0,0,e,1], [  0,  0,1.0,1], 0.05, 2);
-      }
-
-      gl.bindBuffer(gl.ARRAY_BUFFER, buffers.vrt);
-      gl.bufferSubData(gl.ARRAY_BUFFER, 0, vbuf);
-      gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, buffers.idx);
-      gl.bufferSubData(gl.ELEMENT_ARRAY_BUFFER, 0, ibuf);
-
-      gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, buffers.idx);
-      gl.useProgram(programInfo.program);
-
-      gl.drawElements(
-        gl.TRIANGLES,
-        ibuf_i,            /* vertexCount */
-        gl.UNSIGNED_SHORT, /* type        */
-        0                  /* offset      */
-      );
-    }
-  })
 }
     </script>
   </body>
