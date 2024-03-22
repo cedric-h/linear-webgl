@@ -189,7 +189,7 @@ window.onload = () => {
         mat4_mul(
           u_mvp,
           u_mvp,
-          mat4_from_translation(mat4_create(), [0.0, 0.0, -6.0])
+          mat4_from_translation(mat4_create(), [0.0, 0.0, -4.0])
         );
         const m = mat4_create();
         mat4_mul(
@@ -235,7 +235,7 @@ window.onload = () => {
           vbuf[vbuf_i++] = b[0] - b_tx; vbuf[vbuf_i++] = b[1] - b_ty; vbuf[vbuf_i++] = b[2]; vbuf[vbuf_i++] = b[3]; vbuf[vbuf_i++] = c;
         }
 
-        function selectable_line(a, b, a_thick, b_thick, normal_color, selected_color) {
+        function dist_to_center(a, b) {
           const center = [
             (a[0] + b[0]) * 0.5,
             (a[1] + b[1]) * 0.5,
@@ -249,70 +249,93 @@ window.onload = () => {
 
           const dist = Math.sqrt((center[0] - mouse_x)*(center[0] - mouse_x) +
                                  (center[1] - mouse_y)*(center[1] - mouse_y) );
-          const selected = dist < 20;
-          const color = selected ? selected_color : normal_color;
-          const z_push = selected ? -0.01 : 0;
 
-          line(a, b, a_thick, b_thick, color, z_push);
+          return dist;
         }
 
-        const RED   = 0;
-        const GREEN = 1;
-        const BLUE  = 2;
-        const SELECTED_RED   = 3;
-        const SELECTED_GREEN = 4;
-        const SELECTED_BLUE  = 5;
-
-        const LINE_BASE  = 0.575;
-        const ARROW_BASE = 0.8;
-        const ARROW_TIP  = 0.9;
-
-        const SCALE_P = 0.7;
-
-        /* lines */
         {
-          line([LINE_BASE,         0,         0, 1], [ARROW_BASE,          0,          0, 1], 0.04, 0.04, RED  );
-          line([        0, LINE_BASE,         0, 1], [         0, ARROW_BASE,          0, 1], 0.04, 0.04, GREEN);
-          line([        0,         0, LINE_BASE, 1], [         0,          0, ARROW_BASE, 1], 0.04, 0.04, BLUE );
-        }
+          function gizmo(line) {
+            const LINE_BASE  = 0.575;
+            const ARROW_BASE = 0.7;
+            const ARROW_TIP  = 0.8;
+            const SCALE_P    = 0.64;
 
-        /* translation arrows */
-        {
-          selectable_line([ARROW_TIP,         0,         0, 1], [ARROW_BASE,          0,          0, 1], 0.00, 0.10, RED  , SELECTED_RED  );
-          selectable_line([        0, ARROW_TIP,         0, 1], [         0, ARROW_BASE,          0, 1], 0.00, 0.10, GREEN, SELECTED_GREEN);
-          selectable_line([        0,         0, ARROW_TIP, 1], [         0,          0, ARROW_BASE, 1], 0.00, 0.10, BLUE , SELECTED_BLUE );
-        }
+            let gizmo_i = 1;
 
-        /* scale boxes */
-        {
-          const S = 0.035;
-          selectable_line([SCALE_P-S,         0,         0, 1], [SCALE_P+S,         0,         0, 1], 0.08, 0.08, RED  , SELECTED_RED  );
-          selectable_line([        0, SCALE_P-S,         0, 1], [        0, SCALE_P+S,         0, 1], 0.08, 0.08, GREEN, SELECTED_GREEN);
-          selectable_line([        0,         0, SCALE_P-S, 1], [        0,         0, SCALE_P+S, 1], 0.08, 0.08, BLUE , SELECTED_BLUE );
-        }
- 
-        /* rotation arcs */
-        const RESOLUTION = 12;
-        for (let axis = 0; axis < 3; axis++) {
-          for (let i = 0; i < RESOLUTION; i++) {
-            const a_x = Math.cos((i - 0.01)/RESOLUTION * Math.PI*0.5)*LINE_BASE;
-            const a_y = Math.sin((i - 0.01)/RESOLUTION * Math.PI*0.5)*LINE_BASE;
-            const b_x = Math.cos((i + 1.01)/RESOLUTION * Math.PI*0.5)*LINE_BASE;
-            const b_y = Math.sin((i + 1.01)/RESOLUTION * Math.PI*0.5)*LINE_BASE;
+            /* lines */
+            {
+              line([LINE_BASE,         0,         0, 1], [ARROW_BASE,          0,          0, 1], 0.04, 0.04, RED,   null);
+              line([        0, LINE_BASE,         0, 1], [         0, ARROW_BASE,          0, 1], 0.04, 0.04, GREEN, null);
+              line([        0,         0, LINE_BASE, 1], [         0,          0, ARROW_BASE, 1], 0.04, 0.04, BLUE,  null);
+            }
 
-            if (axis == 0)
-              selectable_line([a_x, 0, a_y, 1],
-                              [b_x, 0, b_y, 1], 0.04, 0.04, RED, SELECTED_RED);
+            /* translation arrows */
+            {
+              line([ARROW_TIP,         0,         0, 1], [ARROW_BASE,          0,          0, 1], 0.00, 0.10, RED,   gizmo_i++);
+              line([        0, ARROW_TIP,         0, 1], [         0, ARROW_BASE,          0, 1], 0.00, 0.10, GREEN, gizmo_i++);
+              line([        0,         0, ARROW_TIP, 1], [         0,          0, ARROW_BASE, 1], 0.00, 0.10, BLUE,  gizmo_i++);
+            }
 
-            if (axis == 1)
-              selectable_line([0, a_x, a_y, 1],
-                              [0, b_x, b_y, 1], 0.04, 0.04, BLUE, SELECTED_BLUE);
+            /* scale boxes */
+            {
+              const S = 0.0275;
+              line([SCALE_P-S,         0,         0, 1], [SCALE_P+S,         0,         0, 1], 0.11, 0.11, RED,   gizmo_i++);
+              line([        0, SCALE_P-S,         0, 1], [        0, SCALE_P+S,         0, 1], 0.11, 0.11, GREEN, gizmo_i++);
+              line([        0,         0, SCALE_P-S, 1], [        0,         0, SCALE_P+S, 1], 0.11, 0.11, BLUE,  gizmo_i++);
+            }
 
-            if (axis == 2)
-              selectable_line([a_x, a_y, 0, 1],
-                              [b_x, b_y, 0, 1], 0.04, 0.04, GREEN, SELECTED_GREEN);
+            /* rotation arcs */
+            const RESOLUTION = 12;
+            for (let axis = 0; axis < 3; axis++) {
+              for (let i = 0; i < RESOLUTION; i++) {
+                const a_x = Math.cos((i - 0.01)/RESOLUTION * Math.PI*0.5)*LINE_BASE;
+                const a_y = Math.sin((i - 0.01)/RESOLUTION * Math.PI*0.5)*LINE_BASE;
+                const b_x = Math.cos((i + 1.01)/RESOLUTION * Math.PI*0.5)*LINE_BASE;
+                const b_y = Math.sin((i + 1.01)/RESOLUTION * Math.PI*0.5)*LINE_BASE;
+
+                if (axis == 0)
+                  line([a_x, 0, a_y, 1],
+                       [b_x, 0, b_y, 1], 0.04, 0.04, RED,   gizmo_i + 0);
+
+                if (axis == 1)
+                  line([0, a_x, a_y, 1],
+                       [0, b_x, b_y, 1], 0.04, 0.04, BLUE,  gizmo_i + 1);
+
+                if (axis == 2)
+                  line([a_x, a_y, 0, 1],
+                       [b_x, b_y, 0, 1], 0.04, 0.04, GREEN, gizmo_i + 2);
+              }
+            }
           }
+
+          const RED            = 0;
+          const GREEN          = 1;
+          const BLUE           = 2;
+          const SELECTED_RED   = 3;
+          const SELECTED_GREEN = 4;
+          const SELECTED_BLUE  = 5;
+
+          /* first pass - find closest */
+          let selected_i = -1;
+          let selected_dist = Infinity;
+          gizmo((a, b, a_thick, b_thick, color, i) => {
+            const dist = dist_to_center(a, b);
+
+            if (i && dist < selected_dist && dist < 30) {
+              selected_dist = dist;
+              selected_i = i;
+            }
+          });
+
+          /* second pass - draw */
+          gizmo((a, b, a_thick, b_thick, color, i) => {
+            const selected = (selected_i == i);
+            color += 3*selected;
+            const push = -0.01*selected;
+            line(a, b, a_thick, b_thick, color, push);
+          });
         }
+   
       }
 
       gl.bindBuffer(gl.ARRAY_BUFFER, buffers.vrt);
