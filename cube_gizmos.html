@@ -194,11 +194,22 @@ const buf = {
     grid_i:      gl.createBuffer(),
 };
 
+const save = {
+    translation_x: 0,
+    translation_y: 0,
+    translation_z: 1,
+};
 let input = {
     pitch:  Math.PI*0.25,
     yaw:   -Math.PI*0.25,
 
-    dampedEvent: { button: 0, movementX: 0, movementY: 0 },
+    lmb_down: false,
+    rmb_down: false,
+    mouse_x: 0,
+    mouse_y: 0,
+    captured_mouse: -1,
+
+    damped_event: { button: 0, movementX: 0, movementY: 0 },
 
     cam_pivot_x: 0,
     cam_pivot_y: 0,
@@ -206,13 +217,10 @@ let input = {
 
     zoom:   10,
     scroll:  0,
-
-    lmb_down: false,
-    rmb_down: false,
 }
 let wheelTimeout;
 window.onwheel = e => {
-    if (input.mouse_down) return;
+    if (input.lmb_down) return;
     input.scroll = Math.sign(e.deltaY);
 
     clearTimeout(wheelTimeout);
@@ -225,9 +233,12 @@ window.onmousedown = ev => {
     if (ev.button == 2) input.rmb_down = true;
 };
 window.onmousemove = ev => {
-    input.dampedEvent.button    = ev.button;
-    input.dampedEvent.movementX = ev.movementX;
-    input.dampedEvent.movementY = ev.movementY;
+    input.damped_event.button    = ev.button;
+    input.damped_event.movementX = ev.movementX;
+    input.damped_event.movementY = ev.movementY;
+
+    input.mouse_x = ev.offsetX;
+    input.mouse_y = ev.offsetY;
 };
 window.oncontextmenu = ev => ev.preventDefault();
 window.onmouseup = ev => {
@@ -246,34 +257,36 @@ requestAnimationFrame(function frame(timestamp) {
      *
      * (this should probably use delta time rather than simply *= 0.8) */
     {
-        const ev = input.dampedEvent;
+        const ev = input.damped_event;
 
-        /* based on the assumption that if you're zoomed in more,
-         * you're doing finer-detailed work and want more precise movements. */
-        const zoom_fudge = Math.sqrt(input.zoom/10.0)*2.0;
+        if (input.captured_mouse == -1) {
+            /* based on the assumption that if you're zoomed in more,
+             * you're doing finer-detailed work and want more precise movements. */
+            const zoom_fudge = Math.sqrt(input.zoom/10.0)*2.0;
 
-        if (input.lmb_down) {
-            input.pitch -= ev.movementX * 0.0035 * zoom_fudge;
-            input.yaw   -= ev.movementY * 0.0035 * zoom_fudge;
-        }
-        if (input.rmb_down) {
-            const unit = [0, -ev.movementX*0.0075*zoom_fudge, ev.movementY*0.0075*zoom_fudge, 1];
-            {
-                const view    = mat4_create();
-                const scratch = mat4_create();
-
-                mat4_from_z_rotation(scratch, input.pitch);
-                mat4_mul(view, view, scratch);
-
-                mat4_from_y_rotation(scratch, input.yaw);
-                mat4_mul(view, view, scratch);
-
-                mat4_transform_vec4(unit, unit, view);
+            if (input.lmb_down) {
+                input.pitch -= ev.movementX * 0.0035 * zoom_fudge;
+                input.yaw   -= ev.movementY * 0.0035 * zoom_fudge;
             }
+            if (input.rmb_down) {
+                const unit = [0, -ev.movementX*0.0075*zoom_fudge, ev.movementY*0.0075*zoom_fudge, 1];
+                {
+                    const view    = mat4_create();
+                    const scratch = mat4_create();
 
-            input.cam_pivot_x += unit[0];
-            input.cam_pivot_y += unit[1];
-            input.cam_pivot_z += unit[2];
+                    mat4_from_z_rotation(scratch, input.pitch);
+                    mat4_mul(view, view, scratch);
+
+                    mat4_from_y_rotation(scratch, input.yaw);
+                    mat4_mul(view, view, scratch);
+
+                    mat4_transform_vec4(unit, unit, view);
+                }
+
+                input.cam_pivot_x += unit[0];
+                input.cam_pivot_y += unit[1];
+                input.cam_pivot_z += unit[2];
+            }
         }
 
         ev.button    *= 0.8;
@@ -284,13 +297,17 @@ requestAnimationFrame(function frame(timestamp) {
     input.zoom += 0.025*input.scroll*input.zoom;
 
     const ORTHO = false;
-    const u_mvp = mat4_create();
+    const u_vp = mat4_create();
+    const u_cube_mvp = mat4_create();
     const scratch = mat4_create();
     {
         const model = mat4_create();
         {
             /* default cube is in -1..1, (and 0 ..2 on Z) */
-            mat4_from_scaling(scratch, 0.5)
+            // mat4_from_scaling(scratch, 0.5)
+            // mat4_mul(model, scratch, model);
+
+            mat4_from_translation(scratch, save.translation_x, save.translation_y, save.translation_z);
             mat4_mul(model, scratch, model);
         }
 
@@ -298,7 +315,7 @@ requestAnimationFrame(function frame(timestamp) {
             const ar = window.innerWidth / window.innerHeight;
             const projection = mat4_ortho(mat4_create(), -ar, ar, -1, 1, -2, 2);
 
-            mat4_mul(u_mvp, projection, model);
+            mat4_mul(u_vp, projection, model);
         } else {
             const FIELD_OF_VIEW = 70 / 180 * Math.PI;
             const ar = window.innerWidth / window.innerHeight;
@@ -329,8 +346,9 @@ requestAnimationFrame(function frame(timestamp) {
                 mat4_invert(view, view);
             }
 
-            mat4_mul(u_mvp, projection, view);
-            mat4_mul(u_mvp, u_mvp, model);
+            mat4_mul(u_vp, projection, view);
+
+            mat4_mul(u_cube_mvp, u_vp, model);
         }
     }
 
@@ -348,9 +366,6 @@ requestAnimationFrame(function frame(timestamp) {
              1, -1, -1,   1,  1, -1,   1,  1,  1,   1, -1,  1, /* Right face  */
             -1, -1, -1,  -1, -1,  1,  -1,  1,  1,  -1,  1, -1, /* Left face   */
         ];
-
-        for (let corner_i = 0; corner_i < corners.length; corner_i += 3)
-            corners[corner_i+2] += 1.0;
 
         for (let corner_i = 0; corner_i < corners.length; corner_i += 12) {
             geo_color.push(
@@ -417,40 +432,36 @@ requestAnimationFrame(function frame(timestamp) {
     const gizmo_pos   = [];
     const gizmo_color = [];
     {
-
-        const e = -0.02;
-        line([e,0,0+1,1], [1.9,  0,  0+1,1], 0.05, [155,   0,   0, 255]);
-        line([0,e,0+1,1], [  0,1.9,  0+1,1], 0.05, [  0, 155,   0, 255]);
-        line([0,0,e+1,1], [  0,  0,1.9+1,1], 0.05, [  0,   0, 155, 255]);
-
-        function line(a, b, t, c) {
+        function line(a, b, a_thick, b_thick, color, z_push=0) {
             const aspect_ratio = window.innerWidth / window.innerHeight;
 
-            mat4_transform_vec4(a, a, u_mvp);
-            mat4_transform_vec4(b, b, u_mvp);
+            mat4_transform_vec4(a, a, u_cube_mvp);
+            mat4_transform_vec4(b, b, u_cube_mvp);
 
             const dx = b[0] - a[0];
             const dy = b[1] - a[1];
             const nx = -dy; /* perp */
             const ny = dx*aspect_ratio;
-            const tlen = Math.sqrt(nx*nx + ny*ny) / (t * 0.5);
+            const tlen = Math.sqrt(nx*nx + ny*ny);
             if (tlen <= 0) return;
-            const tx = nx/tlen;
-            const ty = ny/tlen * aspect_ratio;
+            let a_tx = nx/tlen * a_thick / aspect_ratio;
+            let a_ty = ny/tlen * a_thick;
+            let b_tx = nx/tlen * b_thick / aspect_ratio;
+            let b_ty = ny/tlen * b_thick;
 
             const vbuf_i = gizmo_pos.length / 4;
             gizmo_pos.push(
-                a[0] + tx, a[1] + ty, a[2], a[3],
-                a[0] - tx, a[1] - ty, a[2], a[3],
-                b[0] + tx, b[1] + ty, b[2], b[3],
-                b[0] - tx, b[1] - ty, b[2], b[3]
+                a[0] + a_tx, a[1] + a_ty, a[2] + z_push, a[3],
+                a[0] - a_tx, a[1] - a_ty, a[2] + z_push, a[3],
+                b[0] + b_tx, b[1] + b_ty, b[2] + z_push, b[3],
+                b[0] - b_tx, b[1] - b_ty, b[2] + z_push, b[3]
             );
 
             gizmo_color.push(
-                c[0], c[1], c[2], c[3],
-                c[0], c[1], c[2], c[3],
-                c[0], c[1], c[2], c[3],
-                c[0], c[1], c[2], c[3],
+                color[0], color[1], color[2], color[3],
+                color[0], color[1], color[2], color[3],
+                color[0], color[1], color[2], color[3],
+                color[0], color[1], color[2], color[3],
             );
 
             gizmo_idx.push(
@@ -461,6 +472,132 @@ requestAnimationFrame(function frame(timestamp) {
                 vbuf_i + 1,
                 vbuf_i + 3
             );
+        }
+
+        function dist_to_center(a, b) {
+            const center = [
+                (a[0] + b[0]) * 0.5,
+                (a[1] + b[1]) * 0.5,
+                (a[2] + b[2]) * 0.5,
+                1
+            ];
+            mat4_transform_vec4(center, center, u_cube_mvp);
+            const w = center[3];
+            center[0] = (0 + (center[0]/w*0.5 + 0.5))*window.innerWidth;
+            center[1] = (1 - (center[1]/w*0.5 + 0.5))*window.innerHeight;
+
+            const dist = Math.sqrt((center[0] - input.mouse_x)*(center[0] - input.mouse_x) +
+                                   (center[1] - input.mouse_y)*(center[1] - input.mouse_y) );
+
+            return dist;
+        }
+
+        {
+            function gizmo(line, doInput) {
+                doInput &&= input.lmb_down;
+                const ev = input.damped_event;
+
+                const LINE_BASE  = 1.75;
+                const ARROW_BASE = 2.2;
+                const ARROW_TIP  = 2.4;
+                const SCALE_P    = 1.99;
+
+                let gizmo_i = 1;
+
+                /* lines */
+                {
+                    line([LINE_BASE,         0,         0, 1], [ARROW_BASE,          0,          0, 1], 0.04, 0.04, RED,   null);
+                    line([        0, LINE_BASE,         0, 1], [         0, ARROW_BASE,          0, 1], 0.04, 0.04, GREEN, null);
+                    line([        0,         0, LINE_BASE, 1], [         0,          0, ARROW_BASE, 1], 0.04, 0.04, BLUE,  null);
+                }
+
+                /* translation arrows */
+                {
+                    const tip = [0, 0, 0, 1];
+                    const base = [0, 0, 0, 1];
+                    const colors = [RED, GREEN, BLUE];
+
+                    for (let i = 0; i < colors.length; i++) {
+                        tip[0] = base[0] = 0;
+                        tip[1] = base[1] = 0;
+                        tip[2] = base[2] = 0;
+                        tip[3] = base[3] = 1;
+
+                        tip[i] = ARROW_TIP;
+                        base[i] = ARROW_BASE;
+
+                        line(tip, base, 0.00, 0.10, colors[i], gizmo_i);
+                        if (doInput && input.captured_mouse == gizmo_i)
+                            save.translation_x += ev.movementY*0.035;
+                        gizmo_i++;
+                    }
+                }
+
+                /* scale boxes */
+                {
+                    const S = 0.075;
+                    line([SCALE_P-S,         0,         0, 1], [SCALE_P+S,         0,         0, 1], 0.10, 0.10, RED,   gizmo_i++);
+                    line([        0, SCALE_P-S,         0, 1], [        0, SCALE_P+S,         0, 1], 0.10, 0.10, GREEN, gizmo_i++);
+                    line([        0,         0, SCALE_P-S, 1], [        0,         0, SCALE_P+S, 1], 0.10, 0.10, BLUE,  gizmo_i++);
+                }
+
+                /* rotation arcs */
+                const RESOLUTION = 12;
+                for (let axis = 0; axis < 3; axis++) {
+                    for (let i = 0; i < RESOLUTION; i++) {
+                        const a_x = Math.cos((i - 0.01)/RESOLUTION * Math.PI*0.5)*LINE_BASE;
+                        const a_y = Math.sin((i - 0.01)/RESOLUTION * Math.PI*0.5)*LINE_BASE;
+                        const b_x = Math.cos((i + 1.01)/RESOLUTION * Math.PI*0.5)*LINE_BASE;
+                        const b_y = Math.sin((i + 1.01)/RESOLUTION * Math.PI*0.5)*LINE_BASE;
+
+                        if (axis == 0)
+                            line([a_x, 0, a_y, 1],
+                                 [b_x, 0, b_y, 1], 0.04, 0.04, RED,   gizmo_i + 0);
+
+                        if (axis == 1)
+                            line([0, a_x, a_y, 1],
+                                 [0, b_x, b_y, 1], 0.04, 0.04, BLUE,  gizmo_i + 1);
+
+                        if (axis == 2)
+                            line([a_x, a_y, 0, 1],
+                                 [b_x, b_y, 0, 1], 0.04, 0.04, GREEN, gizmo_i + 2);
+                    }
+                }
+            }
+
+            const RED   = [[204.0,  25.5,  25.5, 255.0], [255.0, 102.0, 102.0, 255.0]];
+            const GREEN = [[ 25.5, 204.0,  25.5, 255.0], [102.0, 255.0, 102.0, 255.0]];
+            const BLUE  = [[ 25.5,  25.5, 204.0, 255.0], [102.0, 102.0, 255.0, 255.0]];
+
+            /* first pass - find closest */
+            let selected_i = input.captured_mouse;
+            if (!input.lmb_down) {
+                selected_i = -1;
+                let selected_dist = Infinity;
+                gizmo(
+                    (a, b, a_thick, b_thick, color, i) => {
+                      const dist = dist_to_center(a, b);
+
+                      if (i && dist < selected_dist && dist < 30) {
+                          selected_dist = dist;
+                          selected_i = i;
+                      }
+                    },
+                    false
+                );
+            }
+
+            /* second pass - draw */
+            gizmo(
+                (a, b, a_thick, b_thick, color, i) => {
+                    const selected = +(selected_i == i);
+                    const push = -0.001*selected;
+                    line(a, b, a_thick, b_thick, color[selected], push);
+                },
+                true
+            );
+
+            input.captured_mouse = selected_i;
         }
     }
 
@@ -482,7 +619,7 @@ requestAnimationFrame(function frame(timestamp) {
             gl.enableVertexAttribArray(shaders.geo.a_pos);
             gl.enableVertexAttribArray(shaders.geo.a_color);
 
-            gl.uniformMatrix4fv(shaders.geo.u_matrix, false, u_mvp);
+            gl.uniformMatrix4fv(shaders.geo.u_matrix, false, u_cube_mvp);
 
             /* upload/bind geometry */
             {
@@ -507,7 +644,7 @@ requestAnimationFrame(function frame(timestamp) {
             gl.enableVertexAttribArray(shaders.grid.a_pos);
             gl.enableVertexAttribArray(shaders.grid.a_color);
 
-            gl.uniformMatrix4fv(shaders.grid.u_matrix, false, u_mvp);
+            gl.uniformMatrix4fv(shaders.grid.u_matrix, false, u_vp);
 
             /* upload/bind geometry */
             {
@@ -742,7 +879,7 @@ function mat4_from_scaling(out, f) {
     return out;
 }
 
-function mat4_from_translation(out, v) {
+function mat4_from_translation(out, x, y, z) {
     out[0] = 1;
     out[1] = 0;
     out[2] = 0;
@@ -755,9 +892,9 @@ function mat4_from_translation(out, v) {
     out[9] = 0;
     out[10] = 1;
     out[11] = 0;
-    out[12] = v[0];
-    out[13] = v[1];
-    out[14] = v[2];
+    out[12] = x;
+    out[13] = y;
+    out[14] = z;
     out[15] = 1;
     return out;
 }

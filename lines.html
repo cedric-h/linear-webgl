@@ -51,10 +51,14 @@ window.onload = () => {
 
     void main(void) {
       gl_FragColor = vec4(1.0, 0.0, 1.0, 1.0);
-      if (0.0 == v_palette_index) gl_FragColor = vec4(1.0, 0.0, 0.0, 1.0);
-      if (1.0 == v_palette_index) gl_FragColor = vec4(0.0, 1.0, 0.0, 1.0);
-      if (2.0 == v_palette_index) gl_FragColor = vec4(0.0, 0.0, 1.0, 1.0);
-      if (3.0 == v_palette_index) gl_FragColor = vec4(0.0, 0.0, 0.0, 1.0);
+      if (0.0 == v_palette_index) gl_FragColor = vec4(0.8, 0.1, 0.1, 1.0);
+      if (1.0 == v_palette_index) gl_FragColor = vec4(0.1, 0.8, 0.1, 1.0);
+      if (2.0 == v_palette_index) gl_FragColor = vec4(0.1, 0.1, 0.8, 1.0);
+      if (3.0 == v_palette_index) gl_FragColor = vec4(1.0, 0.4, 0.4, 1.0);
+      if (4.0 == v_palette_index) gl_FragColor = vec4(0.4, 1.0, 0.4, 1.0);
+      if (5.0 == v_palette_index) gl_FragColor = vec4(0.4, 0.4, 1.0, 1.0);
+
+      // gl_FragColor *= 0.6;
     }
   `;
 
@@ -106,19 +110,23 @@ window.onload = () => {
   /* fill buffers */
   {
     gl.bindBuffer(gl.ARRAY_BUFFER, buffers.vrt);
-    gl.bufferData(gl.ARRAY_BUFFER, 1024, gl.DYNAMIC_DRAW);
+    gl.bufferData(gl.ARRAY_BUFFER, 8192, gl.DYNAMIC_DRAW);
 
     gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, buffers.idx);
-    gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, 1024, gl.DYNAMIC_DRAW);
+    gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, 8192, gl.DYNAMIC_DRAW);
   }
 
   let camRotationX = 0;
   let camRotationY = 0;
+  let mouse_x = 0;
+  let mouse_y = 0;
   window.onmousemove = ev => {
     if (ev.buttons > 0) {
       camRotationX -= ev.movementX*0.01;
       camRotationY -= ev.movementY*0.01;
     }
+    mouse_x = ev.offsetX;
+    mouse_y = ev.offsetY;
   }
 
   let then = 0;
@@ -132,12 +140,15 @@ window.onload = () => {
 
     /* draw */
     {
-      gl.clearColor(1.0, 1.0, 1.0, 1.0);
+      gl.clearColor(0.0, 0.0, 0.0, 1.0);
       gl.clearDepth(1.0);
       gl.enable(gl.DEPTH_TEST);
       gl.depthFunc(gl.LEQUAL);
 
       gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+
+      gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
+      gl.enable(gl.BLEND);
 
       {
         gl.bindBuffer(gl.ARRAY_BUFFER, buffers.vrt);
@@ -166,11 +177,10 @@ window.onload = () => {
       let vbuf, ibuf, ibuf_i;
       {
 
-        const aspect_ratio = gl.canvas.clientWidth / gl.canvas.clientHeight;
         const u_mvp = mat4_perspective(
           mat4_create(),
           (45 * Math.PI) / 180,                           /* fieldOfView */
-          aspect_ratio,                                   /* aspect      */
+          gl.canvas.clientWidth / gl.canvas.clientHeight, /* aspect      */
           0.1,                                            /* zNear       */
           100.0,                                          /* zFar        */
         );
@@ -178,7 +188,7 @@ window.onload = () => {
         mat4_mul(
           u_mvp,
           u_mvp,
-          mat4_from_translation(mat4_create(), [0.0, 0.0, -6.0])
+          mat4_from_translation(mat4_create(), [0.0, 0.0, -4.0])
         );
         const m = mat4_create();
         mat4_mul(
@@ -189,21 +199,25 @@ window.onload = () => {
 
         let vbuf_i = 0;
         ibuf_i = 0;
-        vbuf = new Float32Array(1024 / 4);
-        ibuf = new Uint16Array(1024 / 2);
+        vbuf = new Float32Array(8192 / 4);
+        ibuf = new Uint16Array(8192 / 2);
 
-        function line(a, b, t, c) {
+        function line(a, b, a_thick, b_thick, c, z_push=0) {
+          const aspect_ratio = gl.canvas.clientWidth / gl.canvas.clientHeight;
+
           mat4_transform_vec4(a, a, u_mvp);
           mat4_transform_vec4(b, b, u_mvp);
-
+          
           const dx = b[0] - a[0];
           const dy = b[1] - a[1];
           const nx = -dy; /* perp */
           const ny = dx*aspect_ratio;
-          const tlen = Math.sqrt(nx*nx + ny*ny) / (t * 0.5);
+          const tlen = Math.sqrt(nx*nx + ny*ny);
           if (tlen <= 0) return;
-          const tx = nx/tlen;
-          const ty = ny/tlen * aspect_ratio;
+          let a_tx = nx/tlen * 0.5*a_thick / aspect_ratio;
+          let a_ty = ny/tlen * 0.5*a_thick;
+          let b_tx = nx/tlen * 0.5*b_thick / aspect_ratio;
+          let b_ty = ny/tlen * 0.5*b_thick;
 
           ibuf[ibuf_i++] = 0 + vbuf_i/5;
           ibuf[ibuf_i++] = 1 + vbuf_i/5;
@@ -213,16 +227,116 @@ window.onload = () => {
           ibuf[ibuf_i++] = 1 + vbuf_i/5;
           ibuf[ibuf_i++] = 3 + vbuf_i/5;
 
-          vbuf[vbuf_i++] = a[0] + tx; vbuf[vbuf_i++] = a[1] + ty; vbuf[vbuf_i++] = a[2]; vbuf[vbuf_i++] = a[3]; vbuf[vbuf_i++] = c;
-          vbuf[vbuf_i++] = a[0] - tx; vbuf[vbuf_i++] = a[1] - ty; vbuf[vbuf_i++] = a[2]; vbuf[vbuf_i++] = a[3]; vbuf[vbuf_i++] = c;
-          vbuf[vbuf_i++] = b[0] + tx; vbuf[vbuf_i++] = b[1] + ty; vbuf[vbuf_i++] = b[2]; vbuf[vbuf_i++] = b[3]; vbuf[vbuf_i++] = c;
-          vbuf[vbuf_i++] = b[0] - tx; vbuf[vbuf_i++] = b[1] - ty; vbuf[vbuf_i++] = b[2]; vbuf[vbuf_i++] = b[3]; vbuf[vbuf_i++] = c;
+          a[2] += z_push;
+          b[2] += z_push;
+
+          vbuf[vbuf_i++] = a[0] + a_tx; vbuf[vbuf_i++] = a[1] + a_ty; vbuf[vbuf_i++] = a[2]; vbuf[vbuf_i++] = a[3]; vbuf[vbuf_i++] = c;
+          vbuf[vbuf_i++] = a[0] - a_tx; vbuf[vbuf_i++] = a[1] - a_ty; vbuf[vbuf_i++] = a[2]; vbuf[vbuf_i++] = a[3]; vbuf[vbuf_i++] = c;
+          vbuf[vbuf_i++] = b[0] + b_tx; vbuf[vbuf_i++] = b[1] + b_ty; vbuf[vbuf_i++] = b[2]; vbuf[vbuf_i++] = b[3]; vbuf[vbuf_i++] = c;
+          vbuf[vbuf_i++] = b[0] - b_tx; vbuf[vbuf_i++] = b[1] - b_ty; vbuf[vbuf_i++] = b[2]; vbuf[vbuf_i++] = b[3]; vbuf[vbuf_i++] = c;
         }
 
-        const e = -0.02;
-        line([e,0,0,1], [1.0,  0,  0,1], 0.05, 0);
-        line([0,e,0,1], [  0,1.0,  0,1], 0.05, 1);
-        line([0,0,e,1], [  0,  0,1.0,1], 0.05, 2);
+        function dist_to_center(a, b) {
+          const center = [
+            (a[0] + b[0]) * 0.5,
+            (a[1] + b[1]) * 0.5,
+            (a[2] + b[2]) * 0.5,
+            1
+          ];
+          mat4_transform_vec4(center, center, u_mvp);
+          const w = center[3];
+          center[0] = (0 + (center[0]/w*0.5 + 0.5))*window.innerWidth;
+          center[1] = (1 - (center[1]/w*0.5 + 0.5))*window.innerHeight;
+
+          const dist = Math.sqrt((center[0] - mouse_x)*(center[0] - mouse_x) +
+                                 (center[1] - mouse_y)*(center[1] - mouse_y) );
+
+          return dist;
+        }
+
+        {
+          function gizmo(line) {
+            const LINE_BASE  = 0.575;
+            const ARROW_BASE = 0.675;
+            const ARROW_TIP  = 0.725;
+            const SCALE_P    = 0.630;
+
+            let gizmo_i = 1;
+
+            /* lines */
+            {
+              line([LINE_BASE,         0,         0, 1], [ARROW_BASE,          0,          0, 1], 0.04, 0.04, RED,   null);
+              line([        0, LINE_BASE,         0, 1], [         0, ARROW_BASE,          0, 1], 0.04, 0.04, GREEN, null);
+              line([        0,         0, LINE_BASE, 1], [         0,          0, ARROW_BASE, 1], 0.04, 0.04, BLUE,  null);
+            }
+
+            /* translation arrows */
+            {
+              line([ARROW_TIP,         0,         0, 1], [ARROW_BASE,          0,          0, 1], 0.00, 0.10, RED,   gizmo_i++);
+              line([        0, ARROW_TIP,         0, 1], [         0, ARROW_BASE,          0, 1], 0.00, 0.10, GREEN, gizmo_i++);
+              line([        0,         0, ARROW_TIP, 1], [         0,          0, ARROW_BASE, 1], 0.00, 0.10, BLUE,  gizmo_i++);
+            }
+
+            /* scale boxes */
+            {
+              const S = 0.02;
+              line([SCALE_P-S,         0,         0, 1], [SCALE_P+S,         0,         0, 1], 0.10, 0.10, RED,   gizmo_i++);
+              line([        0, SCALE_P-S,         0, 1], [        0, SCALE_P+S,         0, 1], 0.10, 0.10, GREEN, gizmo_i++);
+              line([        0,         0, SCALE_P-S, 1], [        0,         0, SCALE_P+S, 1], 0.10, 0.10, BLUE,  gizmo_i++);
+            }
+
+            /* rotation arcs */
+            const RESOLUTION = 12;
+            for (let axis = 0; axis < 3; axis++) {
+              for (let i = 0; i < RESOLUTION; i++) {
+                const a_x = Math.cos((i - 0.01)/RESOLUTION * Math.PI*0.5)*LINE_BASE;
+                const a_y = Math.sin((i - 0.01)/RESOLUTION * Math.PI*0.5)*LINE_BASE;
+                const b_x = Math.cos((i + 1.01)/RESOLUTION * Math.PI*0.5)*LINE_BASE;
+                const b_y = Math.sin((i + 1.01)/RESOLUTION * Math.PI*0.5)*LINE_BASE;
+
+                if (axis == 0)
+                  line([a_x, 0, a_y, 1],
+                       [b_x, 0, b_y, 1], 0.04, 0.04, RED,   gizmo_i + 0);
+
+                if (axis == 1)
+                  line([0, a_x, a_y, 1],
+                       [0, b_x, b_y, 1], 0.04, 0.04, BLUE,  gizmo_i + 1);
+
+                if (axis == 2)
+                  line([a_x, a_y, 0, 1],
+                       [b_x, b_y, 0, 1], 0.04, 0.04, GREEN, gizmo_i + 2);
+              }
+            }
+          }
+
+          const RED            = 0;
+          const GREEN          = 1;
+          const BLUE           = 2;
+          const SELECTED_RED   = 3;
+          const SELECTED_GREEN = 4;
+          const SELECTED_BLUE  = 5;
+
+          /* first pass - find closest */
+          let selected_i = -1;
+          let selected_dist = Infinity;
+          gizmo((a, b, a_thick, b_thick, color, i) => {
+            const dist = dist_to_center(a, b);
+
+            if (i && dist < selected_dist && dist < 30) {
+              selected_dist = dist;
+              selected_i = i;
+            }
+          });
+
+          /* second pass - draw */
+          gizmo((a, b, a_thick, b_thick, color, i) => {
+            const selected = (selected_i == i);
+            color += 3*selected;
+            const push = -0.01*selected;
+            line(a, b, a_thick, b_thick, color, push);
+          });
+        }
+   
       }
 
       gl.bindBuffer(gl.ARRAY_BUFFER, buffers.vrt);
@@ -402,25 +516,6 @@ function mat4_from_translation(out, v) {
   out[15] = 1;
   return out;
 }
-function mat4_from_scaling(out, v) {
-  out[0] = v[0];
-  out[1] = 0;
-  out[2] = 0;
-  out[3] = 0;
-  out[4] = 0;
-  out[5] = v[1];
-  out[6] = 0;
-  out[7] = 0;
-  out[8] = 0;
-  out[9] = 0;
-  out[10] = v[2];
-  out[11] = 0;
-  out[12] = 0;
-  out[13] = 0;
-  out[14] = 0;
-  out[15] = 1;
-  return out;
-}
 function mat4_mul(out, a, b) {
   let a00 = a[0], a01 = a[1], a02 = a[2], a03 = a[3];
   let a10 = a[4], a11 = a[5], a12 = a[6], a13 = a[7];
@@ -461,47 +556,6 @@ function mat4_mul(out, a, b) {
   out[15] = b0 * a03 + b1 * a13 + b2 * a23 + b3 * a33;
   return out;
 }
-function mat4_target_to(out, eye, target, up=VEC3_UP) {
-  let eyex = eye[0], eyey = eye[1], eyez = eye[2],
-       upx =  up[0],  upy = up[1],   upz = up[2];
-  let z0 = eyex - target[0],
-      z1 = eyey - target[1],
-      z2 = eyez - target[2];
-  let len = z0 * z0 + z1 * z1 + z2 * z2;
-  if (len > 0) {
-    len = 1 / Math.sqrt(len);
-    z0 *= len;
-    z1 *= len;
-    z2 *= len;
-  }
-  let x0 = upy * z2 - upz * z1,
-    x1 = upz * z0 - upx * z2,
-    x2 = upx * z1 - upy * z0;
-  len = x0 * x0 + x1 * x1 + x2 * x2;
-  if (len > 0) {
-    len = 1 / Math.sqrt(len);
-    x0 *= len;
-    x1 *= len;
-    x2 *= len;
-  }
-  out[0] = x0;
-  out[1] = x1;
-  out[2] = x2;
-  out[3] = 0;
-  out[4] = z1 * x2 - z2 * x1;
-  out[5] = z2 * x0 - z0 * x2;
-  out[6] = z0 * x1 - z1 * x0;
-  out[7] = 0;
-  out[8] = z0;
-  out[9] = z1;
-  out[10] = z2;
-  out[11] = 0;
-  out[12] = eyex;
-  out[13] = eyey;
-  out[14] = eyez;
-  out[15] = 1;
-  return out;
-}
 function mat4_transform_vec4(out, a, m) {
   let x = a[0], y = a[1], z = a[2], w = a[3];
   out[0] = m[0] * x + m[4] * y + m[8] * z + m[12] * w;
@@ -537,28 +591,7 @@ function mat4_perspective(out, fovy, aspect, near, far) {
   }
   return out;
 }
-function mat4_ortho(out, left, right, bottom, top, near, far) {
-  let lr = 1 / (left - right);
-  let bt = 1 / (bottom - top);
-  let nf = 1 / (near - far);
-  out[0] = -2 * lr;
-  out[1] = 0;
-  out[2] = 0;
-  out[3] = 0;
-  out[4] = 0;
-  out[5] = -2 * bt;
-  out[6] = 0;
-  out[7] = 0;
-  out[8] = 0;
-  out[9] = 0;
-  out[10] = 2 * nf;
-  out[11] = 0;
-  out[12] = (left + right) * lr;
-  out[13] = (top + bottom) * bt;
-  out[14] = (far + near) * nf;
-  out[15] = 1;
-  return out;
-}
+
     </script>
   </body>
 </html>
