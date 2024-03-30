@@ -177,11 +177,10 @@ window.onload = () => {
       let vbuf, ibuf, ibuf_i;
       {
 
-        const aspect_ratio = gl.canvas.clientWidth / gl.canvas.clientHeight;
         const u_mvp = mat4_perspective(
           mat4_create(),
           (45 * Math.PI) / 180,                           /* fieldOfView */
-          aspect_ratio,                                   /* aspect      */
+          gl.canvas.clientWidth / gl.canvas.clientHeight, /* aspect      */
           0.1,                                            /* zNear       */
           100.0,                                          /* zFar        */
         );
@@ -204,6 +203,8 @@ window.onload = () => {
         ibuf = new Uint16Array(8192 / 2);
 
         function line(a, b, a_thick, b_thick, c, z_push=0) {
+          const aspect_ratio = gl.canvas.clientWidth / gl.canvas.clientHeight;
+
           mat4_transform_vec4(a, a, u_mvp);
           mat4_transform_vec4(b, b, u_mvp);
           
@@ -213,10 +214,10 @@ window.onload = () => {
           const ny = dx*aspect_ratio;
           const tlen = Math.sqrt(nx*nx + ny*ny);
           if (tlen <= 0) return;
-          let a_tx = nx/tlen * 0.5*a_thick;
-          let a_ty = ny/tlen * 0.5*a_thick * aspect_ratio;
-          let b_tx = nx/tlen * 0.5*b_thick;
-          let b_ty = ny/tlen * 0.5*b_thick * aspect_ratio;
+          let a_tx = nx/tlen * 0.5*a_thick / aspect_ratio;
+          let a_ty = ny/tlen * 0.5*a_thick;
+          let b_tx = nx/tlen * 0.5*b_thick / aspect_ratio;
+          let b_ty = ny/tlen * 0.5*b_thick;
 
           ibuf[ibuf_i++] = 0 + vbuf_i/5;
           ibuf[ibuf_i++] = 1 + vbuf_i/5;
@@ -256,9 +257,9 @@ window.onload = () => {
         {
           function gizmo(line) {
             const LINE_BASE  = 0.575;
-            const ARROW_BASE = 0.7;
-            const ARROW_TIP  = 0.8;
-            const SCALE_P    = 0.64;
+            const ARROW_BASE = 0.675;
+            const ARROW_TIP  = 0.725;
+            const SCALE_P    = 0.630;
 
             let gizmo_i = 1;
 
@@ -278,10 +279,10 @@ window.onload = () => {
 
             /* scale boxes */
             {
-              const S = 0.0275;
-              line([SCALE_P-S,         0,         0, 1], [SCALE_P+S,         0,         0, 1], 0.11, 0.11, RED,   gizmo_i++);
-              line([        0, SCALE_P-S,         0, 1], [        0, SCALE_P+S,         0, 1], 0.11, 0.11, GREEN, gizmo_i++);
-              line([        0,         0, SCALE_P-S, 1], [        0,         0, SCALE_P+S, 1], 0.11, 0.11, BLUE,  gizmo_i++);
+              const S = 0.02;
+              line([SCALE_P-S,         0,         0, 1], [SCALE_P+S,         0,         0, 1], 0.10, 0.10, RED,   gizmo_i++);
+              line([        0, SCALE_P-S,         0, 1], [        0, SCALE_P+S,         0, 1], 0.10, 0.10, GREEN, gizmo_i++);
+              line([        0,         0, SCALE_P-S, 1], [        0,         0, SCALE_P+S, 1], 0.10, 0.10, BLUE,  gizmo_i++);
             }
 
             /* rotation arcs */

@@ -1,0 +1,1090 @@
+<!-- vim: sw=4 ts=4 expandtab smartindent ft=javascript
+-->
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>WebGL Demo</title>
+    <style> document, body { margin: 0px; padding: 0px; overflow: hidden; } </style>
+  </head>
+
+  <body>
+    <canvas id="glcanvas"></canvas>
+    <script>
+const canvas = document.getElementById('glcanvas');
+const gl = canvas.getContext('webgl2', {antialias: true});
+if (!gl) { alert('Failed to initialize WebGL'); }
+
+(window.onresize = () => {
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+
+    /* account for e.g. high-retina macbook screens */
+    if (window.devicePixelRatio > 1) {
+        canvas.style.width = `${canvas.width}px`;
+        canvas.style.height = `${canvas.height}px`;
+        canvas.width *= window.devicePixelRatio;
+        canvas.height *= window.devicePixelRatio;
+    }
+
+    gl.viewport(
+        0,
+        0,
+        canvas.width,
+        canvas.height
+    );
+})();
+
+let shaders;
+/* compile shaders */
+{
+    const vs_geo = `
+        attribute vec3 a_pos;
+        attribute vec4 a_color;
+
+        uniform mat4 u_matrix;
+
+        varying vec4 v_color;
+
+        void main() {
+            gl_Position = u_matrix * vec4(a_pos.xyz, 1);
+            v_color = a_color;
+        }`;
+
+    const fs_geo = `
+        precision mediump float;
+
+        varying vec4 v_color;
+
+        void main() {
+            gl_FragColor = vec4(v_color.xyz*0.35, 1.0);
+        }`;
+
+
+    /* one notable difference in gizmo's shaders (compared to geo's) is that
+     * gizmo passes in the 4th coordinate from CPU-side. */
+    const vs_gizmo = `
+        attribute vec4 a_pos;
+        attribute vec4 a_color;
+
+        varying vec4 v_color;
+
+        void main() {
+            gl_Position = a_pos;
+            v_color = a_color;
+        }`;
+
+    const fs_gizmo = `
+        precision mediump float;
+
+        varying vec4 v_color;
+
+        void main() {
+            gl_FragColor = v_color;
+        }`;
+
+
+    const vs_grid = `#version 300 es
+        in vec3 a_pos;
+        in vec2 a_uv;
+
+        uniform mat4 u_matrix;
+
+        out vec2 v_uv;
+
+        void main() {
+            gl_Position = u_matrix * vec4(a_pos.xyz, 1);
+            v_uv = (a_uv - 0.5)*abs(a_pos.xy);
+        }`;
+
+    const fs_grid = `#version 300 es
+        precision mediump float;
+
+        in vec2 v_uv;
+
+        /* https://iquilezles.org/articles/filterableprocedurals/ */
+
+        const float N = 30.0; // grid ratio
+        float gridTextureGradBox(in vec2 p, in vec2 ddx, in vec2 ddy) {
+            // filter kernel
+            vec2 w = max(abs(ddx), abs(ddy)) + 0.01;
+
+            // analytic (box) filtering
+            vec2 a = p + 0.5*w;
+            vec2 b = p - 0.5*w;
+            vec2 i = (floor(a)+min(fract(a)*N,1.0)-
+                      floor(b)-min(fract(b)*N,1.0))/(N*w);
+            //pattern
+            return (1.0-i.x)*(1.0-i.y);
+        }
+
+        out vec4 frag_color;
+
+        void main() {
+            // vec2 d = 1.0 - step(0.01, fract(v_uv*10.0));
+            // gl_FragColor = vec4(max(d.x, d.y));
+
+            vec2 uv = (v_uv - 0.5) + 0.5/N;
+            float grid = gridTextureGradBox(uv, dFdx(uv), dFdy(uv));
+            frag_color = vec4(1.0 - grid);
+            frag_color *= 0.25;
+            frag_color *= 0.3 + 0.6*smoothstep(0.0, 0.1, 1.0 - length(v_uv)/5.5);
+        }`;
+
+
+    function createProgram(gl, vertexSource, fragmentSource) {
+        function createShader(gl, type, source) {
+            const shader = gl.createShader(type);
+            gl.shaderSource(shader, source);
+            gl.compileShader(shader);
+            if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+                throw new Error(gl.getShaderInfoLog(shader));
+            }
+            return shader;
+        }
+
+        const program = gl.createProgram();
+
+        const vertexShader = createShader(gl, gl.VERTEX_SHADER, vertexSource);
+        const fragmentShader = createShader(gl, gl.FRAGMENT_SHADER, fragmentSource);
+
+        gl.attachShader(program, vertexShader);
+        gl.attachShader(program, fragmentShader);
+
+        gl.linkProgram(program);
+        if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+            throw new Error(gl.getProgramInfoLog(program));
+        }
+
+        const wrapper = {program};
+
+        const numAttributes = gl.getProgramParameter(program, gl.ACTIVE_ATTRIBUTES);
+        for (let i = 0; i < numAttributes; i++) {
+            const attribute = gl.getActiveAttrib(program, i);
+            wrapper[attribute.name] = gl.getAttribLocation(program, attribute.name);
+        }
+        const numUniforms = gl.getProgramParameter(program, gl.ACTIVE_UNIFORMS);
+        for (let i = 0; i < numUniforms; i++) {
+            const uniform = gl.getActiveUniform(program, i);
+            wrapper[uniform.name] = gl.getUniformLocation(program, uniform.name);
+        }
+
+        return wrapper;
+    }
+
+
+    shaders = {
+        geo:   createProgram(gl, vs_geo  , fs_geo  ),
+        grid:  createProgram(gl, vs_grid , fs_grid ),
+        gizmo: createProgram(gl, vs_gizmo, fs_gizmo),
+    }
+}
+
+const buf = {
+    geo_v_pos:   gl.createBuffer(),
+    geo_v_color: gl.createBuffer(),
+    geo_i:       gl.createBuffer(),
+
+    gizmo_v_pos:   gl.createBuffer(),
+    gizmo_v_color: gl.createBuffer(),
+    gizmo_i:       gl.createBuffer(),
+
+    grid_v_pos:  gl.createBuffer(),
+    grid_v_uv:   gl.createBuffer(),
+    grid_i:      gl.createBuffer(),
+};
+
+const save = {
+    translation_x: 0,
+    translation_y: 0,
+    translation_z: 1,
+};
+let input = {
+    pitch:  Math.PI*0.25,
+    yaw:   -Math.PI*0.25,
+    eye: [0, 0, 0, 1],
+
+    lmb_down: false,
+    lmb_down_x: 0, /* for when we need to calculate our own "movementX" in the context of an action */
+    lmb_down_y: 0,
+    lmb_down_translation_x: 0,
+    lmb_down_translation_y: 0,
+    lmb_down_translation_z: 0,
+
+    rmb_down: false,
+    mouse_x: 0,
+    mouse_y: 0,
+    captured_mouse: -1,
+
+    damped_event: { button: 0, movementX: 0, movementY: 0 },
+
+    cam_pivot_x: 0,
+    cam_pivot_y: 0,
+    cam_pivot_z: 0,
+
+    zoom:   10,
+    scroll:  0,
+}
+let wheelTimeout;
+window.addEventListener("wheel", e => {
+    e.preventDefault();
+
+    if (input.lmb_down) return;
+    input.scroll = Math.sign(e.deltaY);
+
+    clearTimeout(wheelTimeout);
+    wheelTimeout = setTimeout(() => input.scroll = 0, 100)
+}, { passive: false });
+window.onmousedown = ev => {
+    ev.preventDefault();
+
+    if (ev.button == 0 && ev.shiftKey) {
+        input.rmb_down = true;
+        return;
+    }
+
+    if (ev.button == 2 || (ev.button == 0 && ev.shiftKey))
+        input.rmb_down = true;
+
+    if (ev.button == 0) {
+        input.lmb_down   = true,
+        input.lmb_down_x = ev.offsetX,
+        input.lmb_down_y = ev.offsetY,
+        input.lmb_down_translation_x = save.translation_x,
+        input.lmb_down_translation_y = save.translation_y,
+        input.lmb_down_translation_z = save.translation_z;
+    }
+};
+window.onmousemove = ev => {
+    input.damped_event.button    = ev.button;
+    input.damped_event.movementX = ev.movementX;
+    input.damped_event.movementY = ev.movementY;
+
+    input.mouse_x = ev.offsetX;
+    input.mouse_y = ev.offsetY;
+};
+window.oncontextmenu = ev => ev.preventDefault();
+window.onmouseup = ev => {
+    ev.preventDefault();
+
+    if (ev.button == 0 && ev.shiftKey) {
+        input.rmb_down = false;
+        return;
+    }
+
+    if (ev.button == 2) input.rmb_down = false;
+    if (ev.button == 0) input.lmb_down = false;
+};
+
+requestAnimationFrame(function frame(timestamp) {
+    requestAnimationFrame(frame);
+
+    /* we could apply these changes directly in the event handlers, but the result feels "low fps"
+     * because we don't get input events at 60fps. so instead, we apply the changes every frame
+     * and simply "damp them" so that they get weaker every frame.
+     *
+     * (this should probably use delta time rather than simply *= 0.8) */
+    {
+        const ev = input.damped_event;
+
+        if (input.captured_mouse == -1) {
+            /* based on the assumption that if you're zoomed in more,
+             * you're doing finer-detailed work and want more precise movements. */
+            const zoom_fudge = Math.sqrt(input.zoom/10.0)*2.0;
+
+            if (input.lmb_down) {
+                input.pitch -= ev.movementX * 0.0035 * zoom_fudge;
+                input.yaw   -= ev.movementY * 0.0035 * zoom_fudge;
+            }
+            if (input.rmb_down) {
+                const unit = [0, -ev.movementX*0.0125*zoom_fudge, ev.movementY*0.0125*zoom_fudge, 1];
+                {
+                    const view    = mat4_create();
+                    const scratch = mat4_create();
+
+                    mat4_from_z_rotation(scratch, input.pitch);
+                    mat4_mul(view, view, scratch);
+
+                    mat4_from_y_rotation(scratch, input.yaw);
+                    mat4_mul(view, view, scratch);
+
+                    mat4_transform_vec4(unit, unit, view);
+                }
+
+                input.cam_pivot_x += unit[0];
+                input.cam_pivot_y += unit[1];
+                input.cam_pivot_z += unit[2];
+            }
+        }
+
+        ev.button    *= 0.8;
+        ev.movementX *= 0.8;
+        ev.movementY *= 0.8;
+    }
+
+    input.zoom += 0.025*input.scroll*input.zoom;
+
+    const ORTHO = false;
+    const u_vp       = mat4_create();
+    const u_vp_inv   = mat4_create();
+    const u_cube_mvp = mat4_create();
+    const scratch    = mat4_create();
+    {
+        const model = mat4_create();
+        {
+            /* default cube is in -1..1, (and 0 ..2 on Z) */
+            // mat4_from_scaling(scratch, 0.5)
+            // mat4_mul(model, scratch, model);
+
+            mat4_from_translation(scratch, save.translation_x, save.translation_y, save.translation_z);
+            mat4_mul(model, scratch, model);
+        }
+
+        if (ORTHO) {
+            const ar = window.innerWidth / window.innerHeight;
+            const projection = mat4_ortho(mat4_create(), -ar, ar, -1, 1, -2, 2);
+
+            mat4_mul(u_vp, projection, model);
+        } else {
+            const FIELD_OF_VIEW = 70 / 180 * Math.PI;
+            const ar = window.innerWidth / window.innerHeight;
+            const projection = mat4_perspective(mat4_create(), FIELD_OF_VIEW, ar, 0.01, 100.0);
+
+            const view = mat4_create();
+            {
+                input.eye[0] = input.zoom;
+                input.eye[1] = 0;
+                input.eye[2] = 0;
+                input.eye[3] = 1;
+                {
+                    mat4_from_z_rotation(scratch, input.pitch);
+                    mat4_mul(view, view, scratch);
+
+                    mat4_from_y_rotation(scratch, input.yaw);
+                    mat4_mul(view, view, scratch);
+
+                    mat4_transform_vec4(input.eye, input.eye, view);
+                }
+
+                input.eye[0] += input.cam_pivot_x;
+                input.eye[1] += input.cam_pivot_y;
+                input.eye[2] += input.cam_pivot_z;
+                mat4_target_to(
+                    view,
+                    input.eye,
+                    [input.cam_pivot_x, input.cam_pivot_y, input.cam_pivot_z],
+                    [                0,                 0,                 1]
+                );
+                mat4_invert(view, view);
+            }
+
+            mat4_mul(u_vp, projection, view);
+
+            mat4_mul(u_cube_mvp, u_vp, model);
+
+            mat4_invert(u_vp_inv, u_vp);
+        }
+    }
+
+    const geo_idx   = [];
+    const geo_pos   = [];
+    const geo_color = [];
+    {
+        const corners = [
+            -1, -1,  1,   1, -1,  1,   1,  1,  1,  -1,  1,  1, /* Top face    */
+            -1, -1, -1,  -1,  1, -1,   1,  1, -1,   1, -1, -1, /* Bottom face */
+
+            -1,  1, -1,  -1,  1,  1,   1,  1,  1,   1,  1, -1, /* Front face  */
+            -1, -1, -1,   1, -1, -1,   1, -1,  1,  -1, -1,  1, /* Back face   */
+
+             1, -1, -1,   1,  1, -1,   1,  1,  1,   1, -1,  1, /* Right face  */
+            -1, -1, -1,  -1, -1,  1,  -1,  1,  1,  -1,  1, -1, /* Left face   */
+        ];
+
+        for (let corner_i = 0; corner_i < corners.length; corner_i += 12) {
+            geo_color.push(
+                255,   0,   0, 255,
+                  0, 255,   0, 255,
+                  0,   0, 255, 255,
+                255,   0, 255, 255
+            )
+
+            const vbuf_i = geo_pos.length / 3;
+            geo_pos.push(corners[corner_i +  0], corners[corner_i +  1], corners[corner_i +  2]);
+            geo_pos.push(corners[corner_i +  3], corners[corner_i +  4], corners[corner_i +  5]);
+            geo_pos.push(corners[corner_i +  6], corners[corner_i +  7], corners[corner_i +  8]);
+            geo_pos.push(corners[corner_i +  9], corners[corner_i + 10], corners[corner_i + 11]);
+
+            geo_idx.push(
+              vbuf_i + 0,
+              vbuf_i + 1,
+              vbuf_i + 2,
+              vbuf_i + 2,
+              vbuf_i + 3,
+              vbuf_i + 0
+            );
+        }
+    }
+
+    const grid_idx = [];
+    const grid_pos = [];
+    const grid_uv  = [];
+    {
+        const corners = [
+            -999, -999, -0,  -999,  999, -0,   999,  999, -0,   999, -999, -0, /* Bottom face */
+        ];
+
+        for (let corner_i = 0; corner_i < corners.length; corner_i += 3)
+            corners[corner_i+2] -= 0.015;
+
+        for (let corner_i = 0; corner_i < corners.length; corner_i += 12) {
+            grid_uv.push(
+                255,   0,
+                  0,   0,
+                  0, 255,
+                255, 255,
+            );
+
+            const vbuf_i = grid_pos.length / 3;
+            grid_pos.push(corners[corner_i +  0], corners[corner_i +  1], corners[corner_i +  2]);
+            grid_pos.push(corners[corner_i +  3], corners[corner_i +  4], corners[corner_i +  5]);
+            grid_pos.push(corners[corner_i +  6], corners[corner_i +  7], corners[corner_i +  8]);
+            grid_pos.push(corners[corner_i +  9], corners[corner_i + 10], corners[corner_i + 11]);
+
+            grid_idx.push(
+                vbuf_i + 0,
+                vbuf_i + 1,
+                vbuf_i + 2,
+                vbuf_i + 2,
+                vbuf_i + 3,
+                vbuf_i + 0
+            );
+        }
+    }
+
+    const gizmo_idx   = [];
+    const gizmo_pos   = [];
+    const gizmo_color = [];
+    {
+        function line(a, b, a_thick, b_thick, color, z_push=0) {
+            const aspect_ratio = window.innerWidth / window.innerHeight;
+
+            mat4_transform_vec4(a, a, u_cube_mvp);
+            mat4_transform_vec4(b, b, u_cube_mvp);
+
+            const dx = b[0] - a[0];
+            const dy = b[1] - a[1];
+            const nx = -dy; /* perp */
+            const ny = dx*aspect_ratio;
+            const tlen = Math.sqrt(nx*nx + ny*ny);
+            if (tlen <= 0) return;
+            let a_tx = nx/tlen * a_thick / aspect_ratio;
+            let a_ty = ny/tlen * a_thick;
+            let b_tx = nx/tlen * b_thick / aspect_ratio;
+            let b_ty = ny/tlen * b_thick;
+
+            const vbuf_i = gizmo_pos.length / 4;
+            gizmo_pos.push(
+                a[0] + a_tx, a[1] + a_ty, a[2] + z_push, a[3],
+                a[0] - a_tx, a[1] - a_ty, a[2] + z_push, a[3],
+                b[0] + b_tx, b[1] + b_ty, b[2] + z_push, b[3],
+                b[0] - b_tx, b[1] - b_ty, b[2] + z_push, b[3]
+            );
+
+            gizmo_color.push(
+                color[0], color[1], color[2], color[3],
+                color[0], color[1], color[2], color[3],
+                color[0], color[1], color[2], color[3],
+                color[0], color[1], color[2], color[3],
+            );
+
+            gizmo_idx.push(
+                vbuf_i + 0,
+                vbuf_i + 1,
+                vbuf_i + 2,
+                vbuf_i + 2,
+                vbuf_i + 1,
+                vbuf_i + 3
+            );
+        }
+
+        function dist_to_center(a, b) {
+            const center = [
+                (a[0] + b[0]) * 0.5,
+                (a[1] + b[1]) * 0.5,
+                (a[2] + b[2]) * 0.5,
+                1
+            ];
+            mat4_transform_vec4(center, center, u_cube_mvp);
+            const w = center[3];
+            center[0] = (0 + (center[0]/w*0.5 + 0.5))*window.innerWidth;
+            center[1] = (1 - (center[1]/w*0.5 + 0.5))*window.innerHeight;
+
+            const dist = Math.sqrt((center[0] - input.mouse_x)*(center[0] - input.mouse_x) +
+                                   (center[1] - input.mouse_y)*(center[1] - input.mouse_y) );
+
+            return dist;
+        }
+
+        {
+            function gizmo(line, doInput) {
+                doInput &&= input.lmb_down;
+                const ev = input.damped_event;
+
+                const LINE_BASE  = 1.75;
+                const ARROW_BASE = 2.2;
+                const ARROW_TIP  = 2.4;
+                const SCALE_P    = 1.99;
+
+                let gizmo_i = 1;
+
+                /* lines */
+                {
+                    line([LINE_BASE,         0,         0, 1], [ARROW_BASE,          0,          0, 1], 0.04, 0.04, RED,   null);
+                    line([        0, LINE_BASE,         0, 1], [         0, ARROW_BASE,          0, 1], 0.04, 0.04, GREEN, null);
+                    line([        0,         0, LINE_BASE, 1], [         0,          0, ARROW_BASE, 1], 0.04, 0.04, BLUE,  null);
+                }
+
+                /* translation arrows */
+                {
+                    const tip = [0, 0, 0, 1];
+                    const base = [0, 0, 0, 1];
+                    const colors = [RED, GREEN, BLUE];
+
+                    for (let i = 0; i < colors.length; i++) {
+                        tip[0] = base[0] = 0;
+                        tip[1] = base[1] = 0;
+                        tip[2] = base[2] = 0;
+                        tip[3] = base[3] = 1;
+
+                        tip[i] = ARROW_TIP;
+                        base[i] = ARROW_BASE;
+
+                        line(tip, base, 0.00, 0.10, colors[i], gizmo_i);
+
+                        if (doInput && input.captured_mouse == gizmo_i) {
+
+                            function screen_to_plane(vec) {
+                                vec[0] = -1 + (vec[0] / window.innerWidth )*2;
+                                vec[1] = +1 - (vec[1] / window.innerHeight)*2;
+                                vec[2] = 1;
+                                vec[3] = 1;
+
+                                mat4_transform_vec4(vec, vec, u_vp_inv);
+                                vec[0] /= vec[3];
+                                vec[1] /= vec[3];
+                                vec[2] /= vec[3];
+
+                                const eye = input.eye;
+                                
+                                ray_hit_plane(
+                                    vec,
+                                             eye[0],          eye[1],          eye[2],
+                                    vec[0] - eye[0], vec[1] - eye[1], vec[2] - eye[2],
+
+                                    input.lmb_down_translation_x, input.lmb_down_translation_y, input.lmb_down_translation_z,
+                                    +(i != 0), +(i != 1), +(i != 2)
+                                );
+
+                                return vec;
+                            }
+
+                            const current  = screen_to_plane([input.   mouse_x, input.   mouse_y, 1, 1]);
+                            const lmb_down = screen_to_plane([input.lmb_down_x, input.lmb_down_y, 1, 1]);
+
+                            if (i == 0) save.translation_x = input.lmb_down_translation_x + current[0] - lmb_down[0];
+                            if (i == 1) save.translation_y = input.lmb_down_translation_y + current[1] - lmb_down[1];
+                            if (i == 2) save.translation_z = input.lmb_down_translation_z + current[2] - lmb_down[2];
+                        }
+                        gizmo_i++;
+                    }
+                }
+
+                /* scale boxes */
+                {
+                    const S = 0.075;
+                    line([SCALE_P-S,         0,         0, 1], [SCALE_P+S,         0,         0, 1], 0.10, 0.10, RED,   gizmo_i++);
+                    line([        0, SCALE_P-S,         0, 1], [        0, SCALE_P+S,         0, 1], 0.10, 0.10, GREEN, gizmo_i++);
+                    line([        0,         0, SCALE_P-S, 1], [        0,         0, SCALE_P+S, 1], 0.10, 0.10, BLUE,  gizmo_i++);
+                }
+
+                /* rotation arcs */
+                const RESOLUTION = 12;
+                for (let axis = 0; axis < 3; axis++) {
+                    for (let i = 0; i < RESOLUTION; i++) {
+                        const a_x = Math.cos((i - 0.01)/RESOLUTION * Math.PI*0.5)*LINE_BASE;
+                        const a_y = Math.sin((i - 0.01)/RESOLUTION * Math.PI*0.5)*LINE_BASE;
+                        const b_x = Math.cos((i + 1.01)/RESOLUTION * Math.PI*0.5)*LINE_BASE;
+                        const b_y = Math.sin((i + 1.01)/RESOLUTION * Math.PI*0.5)*LINE_BASE;
+
+                        if (axis == 0)
+                            line([a_x, 0, a_y, 1],
+                                 [b_x, 0, b_y, 1], 0.04, 0.04, RED,   gizmo_i + 0);
+
+                        if (axis == 1)
+                            line([0, a_x, a_y, 1],
+                                 [0, b_x, b_y, 1], 0.04, 0.04, BLUE,  gizmo_i + 1);
+
+                        if (axis == 2)
+                            line([a_x, a_y, 0, 1],
+                                 [b_x, b_y, 0, 1], 0.04, 0.04, GREEN, gizmo_i + 2);
+                    }
+                }
+            }
+
+            const RED   = [[204.0,  25.5,  25.5, 255.0], [255.0, 102.0, 102.0, 255.0]];
+            const GREEN = [[ 25.5, 204.0,  25.5, 255.0], [102.0, 255.0, 102.0, 255.0]];
+            const BLUE  = [[ 25.5,  25.5, 204.0, 255.0], [102.0, 102.0, 255.0, 255.0]];
+
+            /* first pass - find closest */
+            let selected_i = input.captured_mouse;
+            if (!input.lmb_down) {
+                selected_i = -1;
+                let selected_dist = Infinity;
+                gizmo(
+                    (a, b, a_thick, b_thick, color, i) => {
+                      const dist = dist_to_center(a, b);
+
+                      if (i && dist < selected_dist && dist < 30) {
+                          selected_dist = dist;
+                          selected_i = i;
+                      }
+                    },
+                    false
+                );
+            }
+
+            /* second pass - draw */
+            gizmo(
+                (a, b, a_thick, b_thick, color, i) => {
+                    const selected = +(selected_i == i);
+                    const push = -0.001*selected;
+                    line(a, b, a_thick, b_thick, color[selected], push);
+                },
+                true
+            );
+
+            input.captured_mouse = selected_i;
+        }
+    }
+
+    {
+        /* set up premultiplied alpha */
+        gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
+        gl.enable(gl.BLEND);
+
+        gl.enable(gl.DEPTH_TEST);
+        gl.depthFunc(gl.LEQUAL);
+
+        /* clear all */
+        gl.clearColor(0, 0, 0, 1);
+        gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+
+        /* geo pass */
+        {
+            gl.useProgram(shaders.geo.program);
+            gl.enableVertexAttribArray(shaders.geo.a_pos);
+            gl.enableVertexAttribArray(shaders.geo.a_color);
+
+            gl.uniformMatrix4fv(shaders.geo.u_matrix, false, u_cube_mvp);
+
+            /* upload/bind geometry */
+            {
+                gl.bindBuffer(gl.ARRAY_BUFFER, buf.geo_v_pos);
+                gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(geo_pos), gl.STATIC_DRAW);
+                gl.vertexAttribPointer(shaders.geo.a_pos, 3, gl.FLOAT, false, 0, 0);
+
+                gl.bindBuffer(gl.ARRAY_BUFFER, buf.geo_v_color);
+                gl.bufferData(gl.ARRAY_BUFFER, new Uint8Array(geo_color), gl.STATIC_DRAW);
+                gl.vertexAttribPointer(shaders.geo.a_color, 4, gl.UNSIGNED_BYTE, true, 0, 0);
+
+                gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, buf.geo_i);
+                gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, new Uint16Array(geo_idx), gl.STATIC_DRAW);
+            }
+
+            gl.drawElements(gl.TRIANGLES, geo_idx.length, gl.UNSIGNED_SHORT, 0);
+        }
+
+        /* grid pass */
+        {
+            gl.useProgram(shaders.grid.program);
+            gl.enableVertexAttribArray(shaders.grid.a_pos);
+            gl.enableVertexAttribArray(shaders.grid.a_color);
+
+            gl.uniformMatrix4fv(shaders.grid.u_matrix, false, u_vp);
+
+            /* upload/bind geometry */
+            {
+                gl.bindBuffer(gl.ARRAY_BUFFER, buf.grid_v_pos);
+                gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(grid_pos), gl.STATIC_DRAW);
+                gl.vertexAttribPointer(shaders.grid.a_pos, 3, gl.FLOAT, false, 0, 0);
+
+                gl.bindBuffer(gl.ARRAY_BUFFER, buf.grid_v_uv);
+                gl.bufferData(gl.ARRAY_BUFFER, new Uint8Array(grid_uv), gl.STATIC_DRAW);
+                gl.vertexAttribPointer(shaders.grid.a_uv, 2, gl.UNSIGNED_BYTE, true, 0, 0);
+
+                gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, buf.grid_i);
+                gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, new Uint16Array(grid_idx), gl.STATIC_DRAW);
+            }
+
+            gl.drawElements(gl.TRIANGLES, grid_idx.length, gl.UNSIGNED_SHORT, 0);
+        }
+
+        /* gizmo pass */
+        {
+            gl.disable(gl.DEPTH_TEST);
+
+            gl.useProgram(shaders.gizmo.program);
+            gl.enableVertexAttribArray(shaders.gizmo.a_pos);
+            gl.enableVertexAttribArray(shaders.gizmo.a_color);
+
+            /* upload/bind geometry */
+            {
+                gl.bindBuffer(gl.ARRAY_BUFFER, buf.gizmo_v_pos);
+                gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(gizmo_pos), gl.STATIC_DRAW);
+                gl.vertexAttribPointer(shaders.gizmo.a_pos, 4, gl.FLOAT, false, 0, 0);
+
+                gl.bindBuffer(gl.ARRAY_BUFFER, buf.gizmo_v_color);
+                gl.bufferData(gl.ARRAY_BUFFER, new Uint8Array(gizmo_color), gl.STATIC_DRAW);
+                gl.vertexAttribPointer(shaders.gizmo.a_color, 4, gl.UNSIGNED_BYTE, true, 0, 0);
+
+                gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, buf.gizmo_i);
+                gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, new Uint16Array(gizmo_idx), gl.STATIC_DRAW);
+            }
+
+            gl.drawElements(gl.TRIANGLES, gizmo_idx.length, gl.UNSIGNED_SHORT, 0);
+        }
+    }
+})
+
+function mat4_create() {
+    let out = new Float32Array(16);
+    out[0] = 1;
+    out[5] = 1;
+    out[10] = 1;
+    out[15] = 1;
+    return out;
+}
+
+function mat4_ortho(out, left, right, bottom, top, near, far) {
+    let lr = 1 / (left - right);
+    let bt = 1 / (bottom - top);
+    let nf = 1 / (near - far);
+    out[0] = -2 * lr;
+    out[1] = 0;
+    out[2] = 0;
+    out[3] = 0;
+    out[4] = 0;
+    out[5] = -2 * bt;
+    out[6] = 0;
+    out[7] = 0;
+    out[8] = 0;
+    out[9] = 0;
+    out[10] = 2 * nf;
+    out[11] = 0;
+    out[12] = (left + right) * lr;
+    out[13] = (top + bottom) * bt;
+    out[14] = (far + near) * nf;
+    out[15] = 1;
+    return out;
+}
+
+function mat4_invert(out, a) {
+    let a00 = a[0], a01 = a[1], a02 = a[2], a03 = a[3];
+    let a10 = a[4], a11 = a[5], a12 = a[6], a13 = a[7];
+    let a20 = a[8], a21 = a[9], a22 = a[10], a23 = a[11];
+    let a30 = a[12], a31 = a[13], a32 = a[14], a33 = a[15];
+    let b00 = a00 * a11 - a01 * a10;
+    let b01 = a00 * a12 - a02 * a10;
+    let b02 = a00 * a13 - a03 * a10;
+    let b03 = a01 * a12 - a02 * a11;
+    let b04 = a01 * a13 - a03 * a11;
+    let b05 = a02 * a13 - a03 * a12;
+    let b06 = a20 * a31 - a21 * a30;
+    let b07 = a20 * a32 - a22 * a30;
+    let b08 = a20 * a33 - a23 * a30;
+    let b09 = a21 * a32 - a22 * a31;
+    let b10 = a21 * a33 - a23 * a31;
+    let b11 = a22 * a33 - a23 * a32;
+    /* Calculate the determinant */
+    let det = b00 * b11 - b01 * b10 + b02 * b09 + b03 * b08 - b04 * b07 + b05 * b06;
+    if (!det) {
+        return null;
+    }
+    det = 1.0 / det;
+    out[0] = (a11 * b11 - a12 * b10 + a13 * b09) * det;
+    out[1] = (a02 * b10 - a01 * b11 - a03 * b09) * det;
+    out[2] = (a31 * b05 - a32 * b04 + a33 * b03) * det;
+    out[3] = (a22 * b04 - a21 * b05 - a23 * b03) * det;
+    out[4] = (a12 * b08 - a10 * b11 - a13 * b07) * det;
+    out[5] = (a00 * b11 - a02 * b08 + a03 * b07) * det;
+    out[6] = (a32 * b02 - a30 * b05 - a33 * b01) * det;
+    out[7] = (a20 * b05 - a22 * b02 + a23 * b01) * det;
+    out[8] = (a10 * b10 - a11 * b08 + a13 * b06) * det;
+    out[9] = (a01 * b08 - a00 * b10 - a03 * b06) * det;
+    out[10] = (a30 * b04 - a31 * b02 + a33 * b00) * det;
+    out[11] = (a21 * b02 - a20 * b04 - a23 * b00) * det;
+    out[12] = (a11 * b07 - a10 * b09 - a12 * b06) * det;
+    out[13] = (a00 * b09 - a01 * b07 + a02 * b06) * det;
+    out[14] = (a31 * b01 - a30 * b03 - a32 * b00) * det;
+    out[15] = (a20 * b03 - a21 * b01 + a22 * b00) * det;
+    return out;
+}
+
+function mat4_perspective(out, fovy, aspect, near, far) {
+    let f = 1.0 / Math.tan(fovy / 2),
+        nf;
+    out[0] = f / aspect;
+    out[1] = 0;
+    out[2] = 0;
+    out[3] = 0;
+    out[4] = 0;
+    out[5] = f;
+    out[6] = 0;
+    out[7] = 0;
+    out[8] = 0;
+    out[9] = 0;
+    out[11] = -1;
+    out[12] = 0;
+    out[13] = 0;
+    out[15] = 0;
+    if (far != null && far !== Infinity) {
+        nf = 1 / (near - far);
+        out[10] = (far + near) * nf;
+        out[14] = 2 * far * near * nf;
+    } else {
+        out[10] = -1;
+        out[14] = -2 * near;
+    }
+    return out;
+}
+
+function mat4_from_x_rotation(out, rad) {
+    let s = Math.sin(rad);
+    let c = Math.cos(rad);
+    /* Perform axis-specific matrix multiplication */
+    out[0] = 1;
+    out[1] = 0;
+    out[2] = 0;
+    out[3] = 0;
+    out[4] = 0;
+    out[5] = c;
+    out[6] = s;
+    out[7] = 0;
+    out[8] = 0;
+    out[9] = -s;
+    out[10] = c;
+    out[11] = 0;
+    out[12] = 0;
+    out[13] = 0;
+    out[14] = 0;
+    out[15] = 1;
+    return out;
+}
+
+function mat4_from_y_rotation(out, rad) {
+    let s = Math.sin(rad);
+    let c = Math.cos(rad);
+    /* Perform axis-specific matrix multiplication */
+    out[0] = c;
+    out[1] = 0;
+    out[2] = -s;
+    out[3] = 0;
+    out[4] = 0;
+    out[5] = 1;
+    out[6] = 0;
+    out[7] = 0;
+    out[8] = s;
+    out[9] = 0;
+    out[10] = c;
+    out[11] = 0;
+    out[12] = 0;
+    out[13] = 0;
+    out[14] = 0;
+    out[15] = 1;
+    return out;
+}
+
+function mat4_from_z_rotation(out, rad) {
+    let s = Math.sin(rad);
+    let c = Math.cos(rad);
+    /* Perform axis-specific matrix multiplication */
+    out[0] = c;
+    out[1] = s;
+    out[2] = 0;
+    out[3] = 0;
+    out[4] = -s;
+    out[5] = c;
+    out[6] = 0;
+    out[7] = 0;
+    out[8] = 0;
+    out[9] = 0;
+    out[10] = 1;
+    out[11] = 0;
+    out[12] = 0;
+    out[13] = 0;
+    out[14] = 0;
+    out[15] = 1;
+    return out;
+}
+
+function mat4_from_scaling(out, f) {
+    out[0] = f;
+    out[1] = 0;
+    out[2] = 0;
+    out[3] = 0;
+    out[4] = 0;
+    out[5] = f;
+    out[6] = 0;
+    out[7] = 0;
+    out[8] = 0;
+    out[9] = 0;
+    out[10] = f;
+    out[11] = 0;
+    out[12] = 0;
+    out[13] = 0;
+    out[14] = 0;
+    out[15] = 1;
+    return out;
+}
+
+function mat4_from_translation(out, x, y, z) {
+    out[0] = 1;
+    out[1] = 0;
+    out[2] = 0;
+    out[3] = 0;
+    out[4] = 0;
+    out[5] = 1;
+    out[6] = 0;
+    out[7] = 0;
+    out[8] = 0;
+    out[9] = 0;
+    out[10] = 1;
+    out[11] = 0;
+    out[12] = x;
+    out[13] = y;
+    out[14] = z;
+    out[15] = 1;
+    return out;
+}
+
+function mat4_transform_vec4(out, a, m) {
+    let x = a[0], y = a[1], z = a[2], w = a[3];
+    out[0] = m[0] * x + m[4] * y + m[8] * z + m[12] * w;
+    out[1] = m[1] * x + m[5] * y + m[9] * z + m[13] * w;
+    out[2] = m[2] * x + m[6] * y + m[10] * z + m[14] * w;
+    out[3] = m[3] * x + m[7] * y + m[11] * z + m[15] * w;
+    return out;
+}
+
+function mat4_mul(out, a, b) {
+    let a00 = a[0], a01 = a[1], a02 = a[2], a03 = a[3];
+    let a10 = a[4], a11 = a[5], a12 = a[6], a13 = a[7];
+    let a20 = a[8], a21 = a[9], a22 = a[10], a23 = a[11];
+    let a30 = a[12], a31 = a[13], a32 = a[14], a33 = a[15];
+    /* Cache only the current line of the second matrix */
+    let b0 = b[0], b1 = b[1], b2 = b[2], b3 = b[3];
+    out[0] = b0 * a00 + b1 * a10 + b2 * a20 + b3 * a30;
+    out[1] = b0 * a01 + b1 * a11 + b2 * a21 + b3 * a31;
+    out[2] = b0 * a02 + b1 * a12 + b2 * a22 + b3 * a32;
+    out[3] = b0 * a03 + b1 * a13 + b2 * a23 + b3 * a33;
+    b0 = b[4];
+    b1 = b[5];
+    b2 = b[6];
+    b3 = b[7];
+    out[4] = b0 * a00 + b1 * a10 + b2 * a20 + b3 * a30;
+    out[5] = b0 * a01 + b1 * a11 + b2 * a21 + b3 * a31;
+    out[6] = b0 * a02 + b1 * a12 + b2 * a22 + b3 * a32;
+    out[7] = b0 * a03 + b1 * a13 + b2 * a23 + b3 * a33;
+    b0 = b[8];
+    b1 = b[9];
+    b2 = b[10];
+    b3 = b[11];
+    out[8] = b0 * a00 + b1 * a10 + b2 * a20 + b3 * a30;
+    out[9] = b0 * a01 + b1 * a11 + b2 * a21 + b3 * a31;
+    out[10] = b0 * a02 + b1 * a12 + b2 * a22 + b3 * a32;
+    out[11] = b0 * a03 + b1 * a13 + b2 * a23 + b3 * a33;
+    b0 = b[12];
+    b1 = b[13];
+    b2 = b[14];
+    b3 = b[15];
+    out[12] = b0 * a00 + b1 * a10 + b2 * a20 + b3 * a30;
+    out[13] = b0 * a01 + b1 * a11 + b2 * a21 + b3 * a31;
+    out[14] = b0 * a02 + b1 * a12 + b2 * a22 + b3 * a32;
+    out[15] = b0 * a03 + b1 * a13 + b2 * a23 + b3 * a33;
+    return out;
+}
+
+function mat4_target_to(out, eye, target, up=VEC3_UP) {
+    let eyex = eye[0], eyey = eye[1], eyez = eye[2],
+         upx =  up[0],  upy =  up[1],  upz =  up[2];
+    let z0 = eyex - target[0],
+        z1 = eyey - target[1],
+        z2 = eyez - target[2];
+    let len = z0 * z0 + z1 * z1 + z2 * z2;
+    if (len > 0) {
+        len = 1 / Math.sqrt(len);
+        z0 *= len;
+        z1 *= len;
+        z2 *= len;
+    }
+    let x0 = upy * z2 - upz * z1,
+        x1 = upz * z0 - upx * z2,
+        x2 = upx * z1 - upy * z0;
+    len = x0 * x0 + x1 * x1 + x2 * x2;
+    if (len > 0) {
+        len = 1 / Math.sqrt(len);
+        x0 *= len;
+        x1 *= len;
+        x2 *= len;
+    }
+    out[0] = x0;
+    out[1] = x1;
+    out[2] = x2;
+    out[3] = 0;
+    out[4] = z1 * x2 - z2 * x1;
+    out[5] = z2 * x0 - z0 * x2;
+    out[6] = z0 * x1 - z1 * x0;
+    out[7] = 0;
+    out[8] = z0;
+    out[9] = z1;
+    out[10] = z2;
+    out[11] = 0;
+    out[12] = eyex;
+    out[13] = eyey;
+    out[14] = eyez;
+    out[15] = 1;
+    return out;
+}
+
+function ray_hit_plane(
+    out,
+
+    ray_origin_x, ray_origin_y, ray_origin_z,
+    ray_vector_x, ray_vector_y, ray_vector_z,
+
+    plane_origin_x, plane_origin_y, plane_origin_z,
+    plane_vector_x, plane_vector_y, plane_vector_z
+) {
+    const delta_x = plane_origin_x - ray_origin_x;
+    const delta_y = plane_origin_y - ray_origin_y;
+    const delta_z = plane_origin_z - ray_origin_z;
+
+    const ldot = delta_x*plane_vector_x +
+                 delta_y*plane_vector_y +
+                 delta_z*plane_vector_z ;
+
+    const rdot = ray_vector_x*plane_vector_x +
+                 ray_vector_y*plane_vector_y +
+                 ray_vector_z*plane_vector_z ;
+
+    const d = ldot / rdot;
+    out[0] = ray_origin_x + ray_vector_x * d;
+    out[1] = ray_origin_y + ray_vector_y * d;
+    out[2] = ray_origin_z + ray_vector_z * d;
+
+    return out;
+}
+    </script>
+  </body>
+</html>
