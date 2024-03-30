@@ -204,6 +204,9 @@ let input = {
     yaw:   -Math.PI*0.25,
 
     lmb_down: false,
+    lmb_down_x: 0, /* for when we need to calculate our own "movementX" in the context of an action */
+    lmb_down_y: 0,
+
     rmb_down: false,
     mouse_x: 0,
     mouse_y: 0,
@@ -229,7 +232,10 @@ window.onwheel = e => {
 window.onmousedown = ev => {
     ev.preventDefault();
 
-    if (ev.button == 0) input.lmb_down = true;
+    if (ev.button == 0) input.lmb_down   = true,
+                        input.lmb_down_x = ev.offsetX,
+                        input.lmb_down_y = ev.offsetY;
+
     if (ev.button == 2) input.rmb_down = true;
 };
 window.onmousemove = ev => {
@@ -527,8 +533,10 @@ requestAnimationFrame(function frame(timestamp) {
                         base[i] = ARROW_BASE;
 
                         line(tip, base, 0.00, 0.10, colors[i], gizmo_i);
-                        if (doInput && input.captured_mouse == gizmo_i)
-                            save.translation_x += ev.movementY*0.035;
+                        if (doInput && input.captured_mouse == gizmo_i) {
+                            save.translation_x = (input.mouse_x - input.lmb_down_x)*0.0035;
+                            save.translation_y = (input.mouse_y - input.lmb_down_y)*0.0035;
+                        }
                         gizmo_i++;
                     }
                 }
