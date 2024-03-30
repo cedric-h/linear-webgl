@@ -202,10 +202,14 @@ const save = {
 let input = {
     pitch:  Math.PI*0.25,
     yaw:   -Math.PI*0.25,
+    eye: [0, 0, 0, 1],
 
     lmb_down: false,
     lmb_down_x: 0, /* for when we need to calculate our own "movementX" in the context of an action */
     lmb_down_y: 0,
+    lmb_down_translation_x: 0,
+    lmb_down_translation_y: 0,
+    lmb_down_translation_z: 0,
 
     rmb_down: false,
     mouse_x: 0,
@@ -222,21 +226,34 @@ let input = {
     scroll:  0,
 }
 let wheelTimeout;
-window.onwheel = e => {
+window.addEventListener("wheel", e => {
+    e.preventDefault();
+
     if (input.lmb_down) return;
     input.scroll = Math.sign(e.deltaY);
 
     clearTimeout(wheelTimeout);
     wheelTimeout = setTimeout(() => input.scroll = 0, 100)
-};
+}, { passive: false });
 window.onmousedown = ev => {
     ev.preventDefault();
 
-    if (ev.button == 0) input.lmb_down   = true,
-                        input.lmb_down_x = ev.offsetX,
-                        input.lmb_down_y = ev.offsetY;
+    if (ev.button == 0 && ev.shiftKey) {
+        input.rmb_down = true;
+        return;
+    }
 
-    if (ev.button == 2) input.rmb_down = true;
+    if (ev.button == 2 || (ev.button == 0 && ev.shiftKey))
+        input.rmb_down = true;
+
+    if (ev.button == 0) {
+        input.lmb_down   = true,
+        input.lmb_down_x = ev.offsetX,
+        input.lmb_down_y = ev.offsetY,
+        input.lmb_down_translation_x = save.translation_x,
+        input.lmb_down_translation_y = save.translation_y,
+        input.lmb_down_translation_z = save.translation_z;
+    }
 };
 window.onmousemove = ev => {
     input.damped_event.button    = ev.button;
@@ -250,8 +267,13 @@ window.oncontextmenu = ev => ev.preventDefault();
 window.onmouseup = ev => {
     ev.preventDefault();
 
-    if (ev.button == 0) input.lmb_down = false;
+    if (ev.button == 0 && ev.shiftKey) {
+        input.rmb_down = false;
+        return;
+    }
+
     if (ev.button == 2) input.rmb_down = false;
+    if (ev.button == 0) input.lmb_down = false;
 };
 
 requestAnimationFrame(function frame(timestamp) {
@@ -275,7 +297,7 @@ requestAnimationFrame(function frame(timestamp) {
                 input.yaw   -= ev.movementY * 0.0035 * zoom_fudge;
             }
             if (input.rmb_down) {
-                const unit = [0, -ev.movementX*0.0075*zoom_fudge, ev.movementY*0.0075*zoom_fudge, 1];
+                const unit = [0, -ev.movementX*0.0125*zoom_fudge, ev.movementY*0.0125*zoom_fudge, 1];
                 {
                     const view    = mat4_create();
                     const scratch = mat4_create();
@@ -303,9 +325,10 @@ requestAnimationFrame(function frame(timestamp) {
     input.zoom += 0.025*input.scroll*input.zoom;
 
     const ORTHO = false;
-    const u_vp = mat4_create();
+    const u_vp       = mat4_create();
+    const u_vp_inv   = mat4_create();
     const u_cube_mvp = mat4_create();
-    const scratch = mat4_create();
+    const scratch    = mat4_create();
     {
         const model = mat4_create();
         {
@@ -329,7 +352,10 @@ requestAnimationFrame(function frame(timestamp) {
 
             const view = mat4_create();
             {
-                const eye = [input.zoom, 0, 0, 1];
+                input.eye[0] = input.zoom;
+                input.eye[1] = 0;
+                input.eye[2] = 0;
+                input.eye[3] = 1;
                 {
                     mat4_from_z_rotation(scratch, input.pitch);
                     mat4_mul(view, view, scratch);
@@ -337,15 +363,15 @@ requestAnimationFrame(function frame(timestamp) {
                     mat4_from_y_rotation(scratch, input.yaw);
                     mat4_mul(view, view, scratch);
 
-                    mat4_transform_vec4(eye, eye, view);
+                    mat4_transform_vec4(input.eye, input.eye, view);
                 }
 
-                eye[0] += input.cam_pivot_x;
-                eye[1] += input.cam_pivot_y;
-                eye[2] += input.cam_pivot_z;
+                input.eye[0] += input.cam_pivot_x;
+                input.eye[1] += input.cam_pivot_y;
+                input.eye[2] += input.cam_pivot_z;
                 mat4_target_to(
                     view,
-                    eye,
+                    input.eye,
                     [input.cam_pivot_x, input.cam_pivot_y, input.cam_pivot_z],
                     [                0,                 0,                 1]
                 );
@@ -355,6 +381,8 @@ requestAnimationFrame(function frame(timestamp) {
             mat4_mul(u_vp, projection, view);
 
             mat4_mul(u_cube_mvp, u_vp, model);
+
+            mat4_invert(u_vp_inv, u_vp);
         }
     }
 
@@ -533,9 +561,40 @@ requestAnimationFrame(function frame(timestamp) {
                         base[i] = ARROW_BASE;
 
                         line(tip, base, 0.00, 0.10, colors[i], gizmo_i);
+
                         if (doInput && input.captured_mouse == gizmo_i) {
-                            save.translation_x = (input.mouse_x - input.lmb_down_x)*0.0035;
-                            save.translation_y = (input.mouse_y - input.lmb_down_y)*0.0035;
+
+                            function screen_to_plane(vec) {
+                                vec[0] = -1 + (vec[0] / window.innerWidth )*2;
+                                vec[1] = +1 - (vec[1] / window.innerHeight)*2;
+                                vec[2] = 1;
+                                vec[3] = 1;
+
+                                mat4_transform_vec4(vec, vec, u_vp_inv);
+                                vec[0] /= vec[3];
+                                vec[1] /= vec[3];
+                                vec[2] /= vec[3];
+
+                                const eye = input.eye;
+                                
+                                ray_hit_plane(
+                                    vec,
+                                             eye[0],          eye[1],          eye[2],
+                                    vec[0] - eye[0], vec[1] - eye[1], vec[2] - eye[2],
+
+                                    input.lmb_down_translation_x, input.lmb_down_translation_y, input.lmb_down_translation_z,
+                                    +(i != 0), +(i != 1), +(i != 2)
+                                );
+
+                                return vec;
+                            }
+
+                            const current  = screen_to_plane([input.   mouse_x, input.   mouse_y, 1, 1]);
+                            const lmb_down = screen_to_plane([input.lmb_down_x, input.lmb_down_y, 1, 1]);
+
+                            if (i == 0) save.translation_x = input.lmb_down_translation_x + current[0] - lmb_down[0];
+                            if (i == 1) save.translation_y = input.lmb_down_translation_y + current[1] - lmb_down[1];
+                            if (i == 2) save.translation_z = input.lmb_down_translation_z + current[2] - lmb_down[2];
                         }
                         gizmo_i++;
                     }
@@ -673,6 +732,8 @@ requestAnimationFrame(function frame(timestamp) {
 
         /* gizmo pass */
         {
+            gl.disable(gl.DEPTH_TEST);
+
             gl.useProgram(shaders.gizmo.program);
             gl.enableVertexAttribArray(shaders.gizmo.a_pos);
             gl.enableVertexAttribArray(shaders.gizmo.a_color);
@@ -996,6 +1057,34 @@ function mat4_target_to(out, eye, target, up=VEC3_UP) {
     return out;
 }
 
+function ray_hit_plane(
+    out,
+
+    ray_origin_x, ray_origin_y, ray_origin_z,
+    ray_vector_x, ray_vector_y, ray_vector_z,
+
+    plane_origin_x, plane_origin_y, plane_origin_z,
+    plane_vector_x, plane_vector_y, plane_vector_z
+) {
+    const delta_x = plane_origin_x - ray_origin_x;
+    const delta_y = plane_origin_y - ray_origin_y;
+    const delta_z = plane_origin_z - ray_origin_z;
+
+    const ldot = delta_x*plane_vector_x +
+                 delta_y*plane_vector_y +
+                 delta_z*plane_vector_z ;
+
+    const rdot = ray_vector_x*plane_vector_x +
+                 ray_vector_y*plane_vector_y +
+                 ray_vector_z*plane_vector_z ;
+
+    const d = ldot / rdot;
+    out[0] = ray_origin_x + ray_vector_x * d;
+    out[1] = ray_origin_y + ray_vector_y * d;
+    out[2] = ray_origin_z + ray_vector_z * d;
+
+    return out;
+}
     </script>
   </body>
 </html>
