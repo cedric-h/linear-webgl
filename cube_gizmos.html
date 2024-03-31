@@ -198,6 +198,12 @@ const save = {
     translation_x: 0,
     translation_y: 0,
     translation_z: 1,
+    scale_x: 1,
+    scale_y: 1,
+    scale_z: 1,
+    rotation_x: 0,
+    rotation_y: 0,
+    rotation_z: 0,
 };
 let input = {
     pitch:  Math.PI*0.25,
@@ -210,6 +216,12 @@ let input = {
     lmb_down_translation_x: 0,
     lmb_down_translation_y: 0,
     lmb_down_translation_z: 0,
+    lmb_down_scale_x: 1,
+    lmb_down_scale_y: 1,
+    lmb_down_scale_z: 1,
+    lmb_down_rotation_x: 0,
+    lmb_down_rotation_y: 0,
+    lmb_down_rotation_z: 0,
 
     rmb_down: false,
     mouse_x: 0,
@@ -250,9 +262,15 @@ window.onmousedown = ev => {
         input.lmb_down   = true,
         input.lmb_down_x = ev.offsetX,
         input.lmb_down_y = ev.offsetY,
-        input.lmb_down_translation_x = save.translation_x,
-        input.lmb_down_translation_y = save.translation_y,
+        input.lmb_down_translation_x = save.translation_x;
+        input.lmb_down_translation_y = save.translation_y;
         input.lmb_down_translation_z = save.translation_z;
+        input.lmb_down_scale_x = save.scale_x;
+        input.lmb_down_scale_y = save.scale_y;
+        input.lmb_down_scale_z = save.scale_z;
+        input.lmb_down_rotation_x = save.rotation_x;
+        input.lmb_down_rotation_y = save.rotation_y;
+        input.lmb_down_rotation_z = save.rotation_z;
     }
 };
 window.onmousemove = ev => {
@@ -332,9 +350,17 @@ requestAnimationFrame(function frame(timestamp) {
     {
         const model = mat4_create();
         {
-            /* default cube is in -1..1, (and 0 ..2 on Z) */
-            // mat4_from_scaling(scratch, 0.5)
-            // mat4_mul(model, scratch, model);
+            mat4_from_scaling(scratch, save.scale_x, save.scale_y, save.scale_z);
+            mat4_mul(model, scratch, model);
+
+            mat4_from_z_rotation(scratch, save.rotation_z);
+            mat4_mul(model, scratch, model);
+
+            mat4_from_y_rotation(scratch, save.rotation_y);
+            mat4_mul(model, scratch, model);
+
+            mat4_from_x_rotation(scratch, save.rotation_x);
+            mat4_mul(model, scratch, model);
 
             mat4_from_translation(scratch, save.translation_x, save.translation_y, save.translation_z);
             mat4_mul(model, scratch, model);
@@ -466,11 +492,27 @@ requestAnimationFrame(function frame(timestamp) {
     const gizmo_pos   = [];
     const gizmo_color = [];
     {
+        const gizmo_mvp = mat4_create();
+
+        mat4_from_z_rotation(scratch, save.rotation_z);
+        mat4_mul(gizmo_mvp, scratch, gizmo_mvp);
+
+        mat4_from_y_rotation(scratch, save.rotation_y);
+        mat4_mul(gizmo_mvp, scratch, gizmo_mvp);
+
+        mat4_from_x_rotation(scratch, save.rotation_x);
+        mat4_mul(gizmo_mvp, scratch, gizmo_mvp);
+
+        mat4_from_translation(scratch, save.translation_x, save.translation_y, save.translation_z)
+        mat4_mul(gizmo_mvp, scratch, gizmo_mvp);
+
+        mat4_mul(gizmo_mvp, u_vp, gizmo_mvp);
+
         function line(a, b, a_thick, b_thick, color, z_push=0) {
             const aspect_ratio = window.innerWidth / window.innerHeight;
 
-            mat4_transform_vec4(a, a, u_cube_mvp);
-            mat4_transform_vec4(b, b, u_cube_mvp);
+            mat4_transform_vec4(a, a, gizmo_mvp);
+            mat4_transform_vec4(b, b, gizmo_mvp);
 
             const dx = b[0] - a[0];
             const dy = b[1] - a[1];
@@ -515,7 +557,7 @@ requestAnimationFrame(function frame(timestamp) {
                 (a[2] + b[2]) * 0.5,
                 1
             ];
-            mat4_transform_vec4(center, center, u_cube_mvp);
+            mat4_transform_vec4(center, center, gizmo_mvp);
             const w = center[3];
             center[0] = (0 + (center[0]/w*0.5 + 0.5))*window.innerWidth;
             center[1] = (1 - (center[1]/w*0.5 + 0.5))*window.innerHeight;
@@ -527,6 +569,31 @@ requestAnimationFrame(function frame(timestamp) {
         }
 
         {
+            function screen_to_plane(plane_vector_x, plane_vector_y, plane_vector_z, vec) {
+                vec[0] = -1 + (vec[0] / window.innerWidth )*2;
+                vec[1] = +1 - (vec[1] / window.innerHeight)*2;
+                vec[2] = 1;
+                vec[3] = 1;
+
+                mat4_transform_vec4(vec, vec, u_vp_inv);
+                vec[0] /= vec[3];
+                vec[1] /= vec[3];
+                vec[2] /= vec[3];
+
+                const eye = input.eye;
+
+                ray_hit_plane(
+                    vec,
+                             eye[0],          eye[1],          eye[2],
+                    vec[0] - eye[0], vec[1] - eye[1], vec[2] - eye[2],
+
+                    input.lmb_down_translation_x, input.lmb_down_translation_y, input.lmb_down_translation_z,
+                    plane_vector_x, plane_vector_y, plane_vector_z,
+                );
+
+                return vec;
+            }
+
             function gizmo(line, doInput) {
                 doInput &&= input.lmb_down;
                 const ev = input.damped_event;
@@ -545,12 +612,12 @@ requestAnimationFrame(function frame(timestamp) {
                     line([        0,         0, LINE_BASE, 1], [         0,          0, ARROW_BASE, 1], 0.04, 0.04, BLUE,  null);
                 }
 
+                const tip = [0, 0, 0, 1];
+                const base = [0, 0, 0, 1];
+                const colors = [RED, GREEN, BLUE];
+
                 /* translation arrows */
                 {
-                    const tip = [0, 0, 0, 1];
-                    const base = [0, 0, 0, 1];
-                    const colors = [RED, GREEN, BLUE];
-
                     for (let i = 0; i < colors.length; i++) {
                         tip[0] = base[0] = 0;
                         tip[1] = base[1] = 0;
@@ -563,34 +630,8 @@ requestAnimationFrame(function frame(timestamp) {
                         line(tip, base, 0.00, 0.10, colors[i], gizmo_i);
 
                         if (doInput && input.captured_mouse == gizmo_i) {
-
-                            function screen_to_plane(vec) {
-                                vec[0] = -1 + (vec[0] / window.innerWidth )*2;
-                                vec[1] = +1 - (vec[1] / window.innerHeight)*2;
-                                vec[2] = 1;
-                                vec[3] = 1;
-
-                                mat4_transform_vec4(vec, vec, u_vp_inv);
-                                vec[0] /= vec[3];
-                                vec[1] /= vec[3];
-                                vec[2] /= vec[3];
-
-                                const eye = input.eye;
-                                
-                                ray_hit_plane(
-                                    vec,
-                                             eye[0],          eye[1],          eye[2],
-                                    vec[0] - eye[0], vec[1] - eye[1], vec[2] - eye[2],
-
-                                    input.lmb_down_translation_x, input.lmb_down_translation_y, input.lmb_down_translation_z,
-                                    +(i != 0), +(i != 1), +(i != 2)
-                                );
-
-                                return vec;
-                            }
-
-                            const current  = screen_to_plane([input.   mouse_x, input.   mouse_y, 1, 1]);
-                            const lmb_down = screen_to_plane([input.lmb_down_x, input.lmb_down_y, 1, 1]);
+                            const current  = screen_to_plane(+(i != 0), +(i != 1), +(i != 2), [input.   mouse_x, input.   mouse_y, 1, 1]);
+                            const lmb_down = screen_to_plane(+(i != 0), +(i != 1), +(i != 2), [input.lmb_down_x, input.lmb_down_y, 1, 1]);
 
                             if (i == 0) save.translation_x = input.lmb_down_translation_x + current[0] - lmb_down[0];
                             if (i == 1) save.translation_y = input.lmb_down_translation_y + current[1] - lmb_down[1];
@@ -603,9 +644,28 @@ requestAnimationFrame(function frame(timestamp) {
                 /* scale boxes */
                 {
                     const S = 0.075;
-                    line([SCALE_P-S,         0,         0, 1], [SCALE_P+S,         0,         0, 1], 0.10, 0.10, RED,   gizmo_i++);
-                    line([        0, SCALE_P-S,         0, 1], [        0, SCALE_P+S,         0, 1], 0.10, 0.10, GREEN, gizmo_i++);
-                    line([        0,         0, SCALE_P-S, 1], [        0,         0, SCALE_P+S, 1], 0.10, 0.10, BLUE,  gizmo_i++);
+
+                    for (let i = 0; i < colors.length; i++) {
+                        tip[0] = base[0] = 0;
+                        tip[1] = base[1] = 0;
+                        tip[2] = base[2] = 0;
+                        tip[3] = base[3] = 1;
+
+                        tip[i] = SCALE_P - S;
+                        base[i] = SCALE_P + S;
+
+                        line(tip, base, 0.10, 0.10, colors[i], gizmo_i);
+                        if (doInput && input.captured_mouse == gizmo_i) {
+                            const current  = screen_to_plane(+(i != 0), +(i != 1), +(i != 2), [input.   mouse_x, input.   mouse_y, 1, 1]);
+                            const lmb_down = screen_to_plane(+(i != 0), +(i != 1), +(i != 2), [input.lmb_down_x, input.lmb_down_y, 1, 1]);
+
+                            if (i == 0) save.scale_x = input.lmb_down_scale_x + current[0] - lmb_down[0];
+                            if (i == 1) save.scale_y = input.lmb_down_scale_y + current[1] - lmb_down[1];
+                            if (i == 2) save.scale_z = input.lmb_down_scale_z + current[2] - lmb_down[2];
+                        }
+
+                        gizmo_i++;
+                    }
                 }
 
                 /* rotation arcs */
@@ -618,16 +678,36 @@ requestAnimationFrame(function frame(timestamp) {
                         const b_y = Math.sin((i + 1.01)/RESOLUTION * Math.PI*0.5)*LINE_BASE;
 
                         if (axis == 0)
-                            line([a_x, 0, a_y, 1],
-                                 [b_x, 0, b_y, 1], 0.04, 0.04, RED,   gizmo_i + 0);
+                            line([0, a_x, a_y, 1],
+                                 [0, b_x, b_y, 1], 0.04, 0.04, RED,   gizmo_i + 0);
 
                         if (axis == 1)
-                            line([0, a_x, a_y, 1],
-                                 [0, b_x, b_y, 1], 0.04, 0.04, BLUE,  gizmo_i + 1);
+                            line([a_x, 0, a_y, 1],
+                                 [b_x, 0, b_y, 1], 0.04, 0.04, GREEN,  gizmo_i + 1);
 
                         if (axis == 2)
                             line([a_x, a_y, 0, 1],
-                                 [b_x, b_y, 0, 1], 0.04, 0.04, GREEN, gizmo_i + 2);
+                                 [b_x, b_y, 0, 1], 0.04, 0.04, BLUE, gizmo_i + 2);
+                    }
+
+                    if (doInput && input.captured_mouse == (gizmo_i + axis)) {
+                        let plane_x = +(axis == 0);
+                        let plane_y = +(axis == 1);
+                        let plane_z = +(axis == 2);
+                        const current  = screen_to_plane(plane_x, plane_y, plane_z, [input.   mouse_x, input.   mouse_y, 1, 1]);
+                        const lmb_down = screen_to_plane(plane_x, plane_y, plane_z, [input.lmb_down_x, input.lmb_down_y, 1, 1]);
+
+                        const dx = current[0] - save.translation_x;
+                        const dy = current[1] - save.translation_y;
+                        const dz = current[2] - save.translation_z;
+
+                        const px = lmb_down[0] - save.translation_x;
+                        const py = lmb_down[1] - save.translation_y;
+                        const pz = lmb_down[2] - save.translation_z;
+
+                        if (axis == 0) save.rotation_x = input.lmb_down_rotation_x + (Math.atan2(dz, dy) - Math.atan2(pz, py));
+                        if (axis == 1) save.rotation_y = input.lmb_down_rotation_y + (Math.atan2(dx, dz) - Math.atan2(px, pz));
+                        if (axis == 2) save.rotation_z = input.lmb_down_rotation_z + (Math.atan2(dy, dx) - Math.atan2(py, px));
                     }
                 }
             }
@@ -928,18 +1008,18 @@ function mat4_from_z_rotation(out, rad) {
     return out;
 }
 
-function mat4_from_scaling(out, f) {
-    out[0] = f;
+function mat4_from_scaling(out, x, y, z) {
+    out[0] = x;
     out[1] = 0;
     out[2] = 0;
     out[3] = 0;
     out[4] = 0;
-    out[5] = f;
+    out[5] = y;
     out[6] = 0;
     out[7] = 0;
     out[8] = 0;
     out[9] = 0;
-    out[10] = f;
+    out[10] = z;
     out[11] = 0;
     out[12] = 0;
     out[13] = 0;
