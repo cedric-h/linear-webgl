@@ -422,9 +422,10 @@ requestAnimationFrame(function frame(timestamp) {
     input.zoom += 0.025*input.scroll*input.zoom;
 
     const ORTHO = false;
-    const u_vp       = mat4_create();
-    const u_vp_inv   = input.last_u_vp_inv;
-    const scratch    = mat4_create();
+    const u_vp     = mat4_create();
+    const u_vp_inv = input.last_u_vp_inv;
+    const u_view   = mat4_create();
+    const scratch  = mat4_create();
     {
         const model = save.transform;
 
@@ -438,7 +439,6 @@ requestAnimationFrame(function frame(timestamp) {
             const ar = window.innerWidth / window.innerHeight;
             const projection = mat4_perspective(mat4_create(), FIELD_OF_VIEW, ar, 0.01, 100.0);
 
-            const view = mat4_create();
             {
                 input.eye[0] = input.zoom;
                 input.eye[1] = 0;
@@ -446,27 +446,27 @@ requestAnimationFrame(function frame(timestamp) {
                 input.eye[3] = 1;
                 {
                     mat4_from_z_rotation(scratch, input.pitch);
-                    mat4_mul(view, view, scratch);
+                    mat4_mul(u_view, u_view, scratch);
 
                     mat4_from_y_rotation(scratch, input.yaw);
-                    mat4_mul(view, view, scratch);
+                    mat4_mul(u_view, u_view, scratch);
 
-                    mat4_transform_vec4(input.eye, input.eye, view);
+                    mat4_transform_vec4(input.eye, input.eye, u_view);
                 }
 
                 input.eye[0] += input.cam_pivot_x;
                 input.eye[1] += input.cam_pivot_y;
                 input.eye[2] += input.cam_pivot_z;
                 mat4_target_to(
-                    view,
+                    u_view,
                     input.eye,
                     [input.cam_pivot_x, input.cam_pivot_y, input.cam_pivot_z],
                     [                0,                 0,                 1]
                 );
-                mat4_invert(view, view);
+                mat4_invert(u_view, u_view);
             }
 
-            mat4_mul(u_vp, projection, view);
+            mat4_mul(u_vp, projection, u_view);
 
             mat4_invert(u_vp_inv, u_vp);
         }
@@ -553,14 +553,34 @@ requestAnimationFrame(function frame(timestamp) {
     const gizmo_color = [];
     {
         const gizmo_mvp = mat4_create();
-        if (input.entity_selected >= 0) {
-            gizmo_mvp[12] = save.entities[input.entity_selected].transform[12];
-            gizmo_mvp[13] = save.entities[input.entity_selected].transform[13];
-            gizmo_mvp[14] = save.entities[input.entity_selected].transform[14];
+
+        const vp = mat4_create();
+        const SCALE = 7.0;
+        {
+            const ar = SCALE * (window.innerWidth / window.innerHeight);
+            mat4_ortho(vp, -ar, ar, -SCALE, SCALE, 0.01, 100.0); /* projection */
+
+            mat4_mul(vp, vp, u_view);
+            mat4_mul(gizmo_mvp, vp, gizmo_mvp);
         }
-        mat4_mul(gizmo_mvp, u_vp, gizmo_mvp);
+
+        if (input.entity_selected >= 0) {
+            const p = [0, 0, 0, 1];
+            mat4_transform_vec4(p, p, save.entities[input.entity_selected].transform);
+            mat4_transform_vec4(p, p, u_vp);
+
+            p[0] /= p[3];
+            p[1] /= p[3];
+            p[2] /= p[3];
+
+            gizmo_mvp[12] = p[0];
+            gizmo_mvp[13] = p[1];
+            gizmo_mvp[14] = p[2];
+        }
 
         function line(a, b, a_thick, b_thick, color, z_push=0) {
+            a_thick /= SCALE;
+            b_thick /= SCALE;
             const aspect_ratio = window.innerWidth / window.innerHeight;
 
             mat4_transform_vec4(a, a, gizmo_mvp);
