@@ -214,6 +214,7 @@ let input = {
 
         /* picking */
         last_u_vp_inv: mat4_create(),
+        last_u_vp:     mat4_create(),
     /* } */
 
     /* globalized input */
@@ -334,9 +335,29 @@ requestAnimationFrame(function frame(timestamp) {
                 input.cam_pivot_z += unit[2];
             }
 
-            if (!(input.lmb_down || input.rmb_down)) {
-                input.entity_selected = -1;
+            if (!(input.lmb_down || input.rmb_down)) do {
+                /* instead of ray vs. box intersection, for the last selected, since their gizmos
+                 * are being displayed/interacted with, we simply do a screenspace distance check
+                 * (since the gizmos have constant screenspace size) */
+                if (input.entity_selected > -1) {
+                    const p = [0, 0, 0, 1];
+                    mat4_transform_vec4(p, p, save.entities[input.entity_selected].transform);
+                    mat4_transform_vec4(p, p, input.last_u_vp);
 
+                    const normalized_mouse_x = -1 + (input.mouse_x / window.innerWidth )*2;
+                    const normalized_mouse_y = +1 - (input.mouse_y / window.innerHeight)*2;
+
+                    const dx = normalized_mouse_x - p[0];
+                    const dy = normalized_mouse_y - p[1];
+                    const dist = Math.sqrt(dx*dx + dy*dy);
+
+                    /* ~45% of the screen */
+                    if (dist < 0.45) {
+                        continue;
+                    }
+                }
+
+                input.entity_selected = -1;
                 for (let entity_i = 0; entity_i < save.entities.length; entity_i++) {
                     const b = {
                         min: [-1, -1, -1, 1],
@@ -354,7 +375,7 @@ requestAnimationFrame(function frame(timestamp) {
                         ray_origin_z = eye[2];
 
                         /* screen to world projection */
-                        const vec = [input.mouse_x, input.mouse_y, 1, 1, 0, 1];
+                        const vec = [input.mouse_x, input.mouse_y, 0, 1];
                         {
                             vec[0] = -1 + (vec[0] / window.innerWidth )*2;
                             vec[1] = +1 - (vec[1] / window.innerHeight)*2;
@@ -411,7 +432,7 @@ requestAnimationFrame(function frame(timestamp) {
                         break;
                     }
                 }
-            }
+            } while (false);
         }
 
         ev.button    *= 0.8;
@@ -422,7 +443,7 @@ requestAnimationFrame(function frame(timestamp) {
     input.zoom += 0.025*input.scroll*input.zoom;
 
     const ORTHO = false;
-    const u_vp     = mat4_create();
+    const u_vp     = input.last_u_vp;
     const u_vp_inv = input.last_u_vp_inv;
     const u_view   = mat4_create();
     const scratch  = mat4_create();
