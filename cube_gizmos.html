@@ -609,16 +609,53 @@ requestAnimationFrame(function frame(timestamp) {
 
                         line(tip, base, 0.10, 0.10, colors[i], gizmo_i);
                         if (doInput && input.captured_mouse == gizmo_i) {
+
+                            /* there are three possible scale vectors; find the one visually closest
+                             * to the scale box they're pulling right now.
+                             *
+                             * this still works if you don't shadow and override `i`, but the user experience
+                             * is ever so slightly worse. the box you're pulling doesn't always visually
+                             * match up with the resulting scale.
+                             * */
+                            let diverted_axis_i;
+                            {
+                                let axis_best_dot = 0;
+
+                                const world_i = i;
+                                const grabby_vec = [
+                                    +(world_i == 0),
+                                    +(world_i == 1),
+                                    +(world_i == 2)
+                                ];
+                                for (let axis_i = 0; axis_i < 3; axis_i++) {
+                                    const a = [0, 0, 0, 1];
+                                    a[axis_i] = 1;
+                                    mat4_transform_vec4(a, a, input.lmb_down_transform);
+                                    const a_len = Math.sqrt(a[0]*a[0] + a[1]*a[1] + a[2]*a[2]);
+                                    a[0] /= a_len;
+                                    a[1] /= a_len;
+                                    a[2] /= a_len;
+
+                                    let dot = a[0]*grabby_vec[0] + a[1]*grabby_vec[1] + a[2]*grabby_vec[2];
+                                    if (Math.abs(axis_best_dot) < Math.abs(dot)) {
+                                        diverted_axis_i = axis_i;
+                                        axis_best_dot = dot;
+                                    }
+                                }
+                            }
+
                             const current  = screen_to_plane(+(i != 0), +(i != 1), +(i != 2), [input.   mouse_x, input.   mouse_y, 1, 1]);
                             const lmb_down = screen_to_plane(+(i != 0), +(i != 1), +(i != 2), [input.lmb_down_x, input.lmb_down_y, 1, 1]);
 
+                            let delta = current[i] - lmb_down[i];
                             mat4_from_scaling(
                                 scratch,
-                                1 + ((i == 0) ? (current[0] - lmb_down[0]) : 0),
-                                1 + ((i == 1) ? (current[1] - lmb_down[1]) : 0),
-                                1 + ((i == 2) ? (current[2] - lmb_down[2]) : 0)
+                                1 + (diverted_axis_i == 0) * delta,
+                                1 + (diverted_axis_i == 1) * delta,
+                                1 + (diverted_axis_i == 2) * delta
                             );
 
+                            /* cache and undo the translation */
                             const x = input.lmb_down_transform[12];
                             const y = input.lmb_down_transform[13];
                             const z = input.lmb_down_transform[14];
@@ -627,8 +664,9 @@ requestAnimationFrame(function frame(timestamp) {
                             input.lmb_down_transform[13] = 0;
                             input.lmb_down_transform[14] = 0;
 
-                            mat4_mul(save.transform, scratch, input.lmb_down_transform);
+                            mat4_mul(save.transform, input.lmb_down_transform, scratch);
 
+                            /* reapply the translation */
                             save.transform[12] = input.lmb_down_transform[12] = x;
                             save.transform[13] = input.lmb_down_transform[13] = y;
                             save.transform[14] = input.lmb_down_transform[14] = z;
