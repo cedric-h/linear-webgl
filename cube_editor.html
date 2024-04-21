@@ -194,13 +194,53 @@ const buf = {
     grid_i:      gl.createBuffer(),
 };
 
+const ACTION_TRANSFORM = 0;
+const ACTION_SPAWN     = 1;
+const ACTION_DELETE    = 2;
+
+const ACT_DO          = 1 << 0;
+const ACT_UNDO        = 1 << 1;
+const ACT_KEEP_UNDONE = 1 << 2;
+
+/* TODO: look into refactoring ACTION_TRANSFORM (usage of, i.e. outside of this function)
+ * so that a save.entities[i].transform isn't modified until the action is complete,
+ * to prevent leaving the world in invalid states where actions are half-applied?
+ *
+ * maybe only do this if related bugs are found. */
+
+function action_apply(dir, action) {
+    if (dir & ACT_DO  ) save.actions.push(action);
+    if (dir & ACT_UNDO) save.actions_undone.push(action = save.actions.pop());
+
+    if ((dir & ACT_DO) && !(dir & ACT_KEEP_UNDONE)) save.actions_undone = [];
+
+    if (action.kind == ACTION_TRANSFORM) {
+        if (dir & ACT_DO  ) action.removed_transform = mat4_create(),
+                            action.removed_transform.set(save.entities[action.index].transform);
+
+        if (dir & ACT_DO  ) save.entities[action.index].transform.set(action.transform);
+        if (dir & ACT_UNDO) save.entities[action.index].transform.set(action.removed_transform);
+    }
+    if (action.kind == ACTION_SPAWN) {
+        if (dir & ACT_DO  ) save.entities.push(action.ent);
+        if (dir & ACT_UNDO) save.entities.pop();
+    }
+    if (action.kind == ACTION_DELETE) {
+        if (dir & ACT_DO  ) action.removed_ent = save.entities.splice(action.index, 1)[0];
+        if (dir & ACT_UNDO) save.entities.push(action.removed_ent);
+    }
+}
+
 const save = {
-    entities: [
-        { transform: mat4_from_translation(mat4_create(), 1,  1, 1) },
-        { transform: mat4_from_translation(mat4_create(), 1, -2, 1) },
-        { transform: mat4_from_translation(mat4_create(), 2,  0, 1) } 
-    ],
+    actions: [],
+    actions_undone: [],
+    entities: [],
 };
+action_apply(ACT_DO, { kind: ACTION_SPAWN , ent: { transform: mat4_from_translation(mat4_create(), 1,  1, 1) } });
+action_apply(ACT_DO, { kind: ACTION_SPAWN , ent: { transform: mat4_from_translation(mat4_create(), 1, -2, 1) } });
+action_apply(ACT_DO, { kind: ACTION_SPAWN , ent: { transform: mat4_from_translation(mat4_create(), 2,  0, 1) } });
+action_apply(ACT_UNDO);
+
 let input = {
     /* camera/controls: */
     /* { */
@@ -243,6 +283,19 @@ let input = {
         lmb_down_transform: mat4_create(),
         captured_mouse: -1,
     /* } */
+}
+window.onkeydown = e => {
+    if (e.ctrlKey && e.code == "KeyZ") {
+        if (!e.shiftKey) {
+            action_apply(ACT_UNDO);
+        } else {
+            /* TODO: message here explaining actions_undone stack is empty */
+            if (save.actions_undone.length > 0) {
+                action_apply(ACT_DO | ACT_KEEP_UNDONE, save.actions_undone.pop());
+            }
+        }
+        input.entity_selected = -1;
+    }
 }
 let wheelTimeout;
 window.addEventListener("wheel", e => {
@@ -293,6 +346,18 @@ window.onmouseup = ev => {
 
     if (ev.button == 2) input.rmb_down = false;
     if (ev.button == 0) input.lmb_down = false;
+
+    /* record undo/redo for the action you just released */
+    if (ev.button == 0 && input.entity_selected >= 0) {
+        const tmp = mat4_create();
+        tmp.set(save.entities[input.entity_selected].transform);
+        save.entities[input.entity_selected].transform.set(input.lmb_down_transform);
+        action_apply(ACT_DO, {
+            kind: ACTION_TRANSFORM,
+            index: input.entity_selected,
+            transform: tmp
+        });
+    }
 };
 
 requestAnimationFrame(function frame(timestamp) {
