@@ -652,8 +652,9 @@ requestAnimationFrame(function frame(timestamp) {
             mat4_mul(gizmo_mvp, vp, gizmo_mvp);
         }
 
+        const gizmo_world_pos = [0, 0, 0, 1];
         if (input.entity_selected >= 0) {
-            const p = [0, 0, 0, 1];
+            const p = gizmo_world_pos;
             mat4_transform_vec4(p, p, save.entities[input.entity_selected].transform);
             mat4_transform_vec4(p, p, u_vp);
 
@@ -664,6 +665,18 @@ requestAnimationFrame(function frame(timestamp) {
             gizmo_mvp[12] = p[0];
             gizmo_mvp[13] = p[1];
             gizmo_mvp[14] = p[2];
+        }
+
+        /* flip gizmo as appropriate so it's gookin at you
+         * (think mona lisa, but more discretized rather than continuous) */
+        {
+            const face_user = mat4_from_scaling(
+                scratch,
+                Math.sign(input.eye[0] - gizmo_world_pos[0]),
+                Math.sign(input.eye[1] - gizmo_world_pos[1]),
+                Math.sign(input.eye[2] - gizmo_world_pos[2])
+            );
+            mat4_mul(gizmo_mvp, gizmo_mvp, face_user);
         }
 
         function line(a, b, a_thick, b_thick, color, z_push=0) {
