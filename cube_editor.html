@@ -11,6 +11,7 @@
   <body>
     <canvas id="glcanvas"></canvas>
     <script>
+/* materials (cube selection state), have ctrl + d, ctrl + z, ctrl + shift + z show up onscreen when they become possible */
 const canvas = document.getElementById('glcanvas');
 const gl = canvas.getContext('webgl2', {antialias: true});
 if (!gl) { alert('Failed to initialize WebGL'); }
@@ -54,10 +55,10 @@ let shaders;
     const fs_geo = `
         precision mediump float;
 
-        varying vec4 v_color;
+        uniform vec4 u_color;
 
         void main() {
-            gl_FragColor = vec4(v_color.xyz*0.35, 1.0);
+            gl_FragColor = u_color;// vec4(1.0, 1.0, 1.0, 1.0);// vec4(u_color.xyz*0.35, 1.0);
         }`;
 
 
@@ -241,6 +242,17 @@ action_apply(ACT_DO, { kind: ACTION_SPAWN , ent: { transform: mat4_from_translat
 action_apply(ACT_DO, { kind: ACTION_SPAWN , ent: { transform: mat4_from_translation(mat4_create(), 2,  0, 1) } });
 action_apply(ACT_UNDO);
 
+const palette = [
+    [1, 0, 0, 1],
+    [0, 1, 0, 1],
+    [0, 0, 1, 1],
+    [1, 1, 0, 1],
+    [0, 1, 1, 1],
+    [1, 0, 1, 1],
+    [1, 1, 1, 1],
+    [0, 0, 0, 1]
+];
+
 let input = {
     /* camera/controls: */
     /* { */
@@ -275,13 +287,14 @@ let input = {
 
     /* global selection state */
     /* { */
-        entity_selected: -1,
+        entity_hovered:  -1, /* this is an index into save.entities */
+        entity_selected: -1, /* this is an index into save.entities */
     /* } */
 
     /* gizmo */
     /* { */
         lmb_down_transform: mat4_create(),
-        captured_mouse: -1,
+        captured_mouse: -1, /* this is a "gizmo ID" as defined in the context of "function gizmo" */
     /* } */
 }
 window.onkeydown = e => {
@@ -298,14 +311,14 @@ window.onkeydown = e => {
             }
         }
 
-        input.entity_selected = -1;
+        input.entity_hovered = -1;
 
         /* undo/redoing should probably clear your active hover-state */
         input.captured_mouse = -1;
     }
 
     if (e.ctrlKey && e.code == "KeyD") {
-        const selected = save.entities[input.entity_selected]
+        const selected = save.entities[input.entity_hovered]
         let ent = {
             transform: new Float32Array(selected.transform),
         };
@@ -338,8 +351,8 @@ window.onmousedown = ev => {
         input.lmb_down   = true;
         input.lmb_down_x = ev.offsetX;
         input.lmb_down_y = ev.offsetY;
-        if (input.entity_selected >= 0) {
-            input.lmb_down_transform.set(save.entities[input.entity_selected].transform);
+        if (input.entity_hovered >= 0) {
+            input.lmb_down_transform.set(save.entities[input.entity_hovered].transform);
         }
     }
 };
@@ -364,13 +377,13 @@ window.onmouseup = ev => {
     if (ev.button == 0) input.lmb_down = false;
 
     /* record undo/redo for the action you just released */
-    if (ev.button == 0 && input.entity_selected >= 0) {
+    if (ev.button == 0 && input.entity_hovered >= 0) {
         const tmp = mat4_create();
-        tmp.set(save.entities[input.entity_selected].transform);
-        save.entities[input.entity_selected].transform.set(input.lmb_down_transform);
+        tmp.set(save.entities[input.entity_hovered].transform);
+        save.entities[input.entity_hovered].transform.set(input.lmb_down_transform);
         action_apply(ACT_DO, {
             kind: ACTION_TRANSFORM,
-            index: input.entity_selected,
+            index: input.entity_hovered,
             transform: tmp
         });
     }
@@ -420,9 +433,9 @@ requestAnimationFrame(function frame(timestamp) {
                 /* instead of ray vs. box intersection, for the last selected, since their gizmos
                  * are being displayed/interacted with, we simply do a screenspace distance check
                  * (since the gizmos have constant screenspace size) */
-                if (input.entity_selected > -1) {
+                if (input.entity_hovered > -1) {
                     const p = [0, 0, 0, 1];
-                    mat4_transform_vec4(p, p, save.entities[input.entity_selected].transform);
+                    mat4_transform_vec4(p, p, save.entities[input.entity_hovered].transform);
                     mat4_transform_vec4(p, p, input.last_u_vp);
                     p[0] /= p[3];
                     p[1] /= p[3];
@@ -440,7 +453,7 @@ requestAnimationFrame(function frame(timestamp) {
                     }
                 }
 
-                input.entity_selected = -1;
+                input.entity_hovered = -1;
                 for (let entity_i = 0; entity_i < save.entities.length; entity_i++) {
                     const b = {
                         min: [-1, -1, -1, 1],
@@ -511,7 +524,7 @@ requestAnimationFrame(function frame(timestamp) {
                     }
 
                     if (tmax >= tmin) {
-                        input.entity_selected = entity_i;
+                        input.entity_selected = input.entity_hovered = entity_i;
                         break;
                     }
                 }
@@ -669,9 +682,9 @@ requestAnimationFrame(function frame(timestamp) {
         }
 
         const gizmo_world_pos = [0, 0, 0, 1];
-        if (input.entity_selected >= 0) {
+        if (input.entity_hovered >= 0) {
             const p = gizmo_world_pos;
-            mat4_transform_vec4(p, p, save.entities[input.entity_selected].transform);
+            mat4_transform_vec4(p, p, save.entities[input.entity_hovered].transform);
             mat4_transform_vec4(p, p, u_vp);
 
             p[0] /= p[3];
@@ -832,7 +845,7 @@ requestAnimationFrame(function frame(timestamp) {
                             mat4_from_translation(scratch, x, y, z);
 
                             mat4_mul(
-                                save.entities[input.entity_selected].transform,
+                                save.entities[input.entity_hovered].transform,
                                 scratch,
                                 input.lmb_down_transform
                             );
@@ -910,14 +923,14 @@ requestAnimationFrame(function frame(timestamp) {
                             input.lmb_down_transform[14] = 0;
 
                             mat4_mul(
-                                save.entities[input.entity_selected].transform,
+                                save.entities[input.entity_hovered].transform,
                                 input.lmb_down_transform,
                                 scratch
                             );
 
-                            save.entities[input.entity_selected].transform[12] = input.lmb_down_transform[12] = x;
-                            save.entities[input.entity_selected].transform[13] = input.lmb_down_transform[13] = y;
-                            save.entities[input.entity_selected].transform[14] = input.lmb_down_transform[14] = z;
+                            save.entities[input.entity_hovered].transform[12] = input.lmb_down_transform[12] = x;
+                            save.entities[input.entity_hovered].transform[13] = input.lmb_down_transform[13] = y;
+                            save.entities[input.entity_hovered].transform[14] = input.lmb_down_transform[14] = z;
                         }
 
                         gizmo_i++;
@@ -973,16 +986,16 @@ requestAnimationFrame(function frame(timestamp) {
                         input.lmb_down_transform[13] = 0;
                         input.lmb_down_transform[14] = 0;
 
-                        mat4_mul(save.entities[input.entity_selected].transform, scratch, input.lmb_down_transform);
+                        mat4_mul(save.entities[input.entity_hovered].transform, scratch, input.lmb_down_transform);
 
-                        save.entities[input.entity_selected].transform[12] = input.lmb_down_transform[12] = x;
-                        save.entities[input.entity_selected].transform[13] = input.lmb_down_transform[13] = y;
-                        save.entities[input.entity_selected].transform[14] = input.lmb_down_transform[14] = z;
+                        save.entities[input.entity_hovered].transform[12] = input.lmb_down_transform[12] = x;
+                        save.entities[input.entity_hovered].transform[13] = input.lmb_down_transform[13] = y;
+                        save.entities[input.entity_hovered].transform[14] = input.lmb_down_transform[14] = z;
                     }
                 }
             }
 
-            if (input.entity_selected >= 0) {
+            if (input.entity_hovered >= 0) {
                 /* first pass - find closest */
                 let selected_i = input.captured_mouse;
                 if (!input.lmb_down) {
@@ -1012,6 +1025,7 @@ requestAnimationFrame(function frame(timestamp) {
                 );
 
                 input.captured_mouse = selected_i;
+                // if (selected_i 
             }
         }
     }
@@ -1034,10 +1048,9 @@ requestAnimationFrame(function frame(timestamp) {
             gl.enableVertexAttribArray(shaders.geo.a_color);
 
             /* geo pass */
-            const u_cube_mvp = mat4_create();
-            for (const ent of save.entities) {
-                mat4_mul(u_cube_mvp, u_vp, ent.transform);
-                gl.uniformMatrix4fv(shaders.geo.u_matrix, false, u_cube_mvp);
+            function draw_cube(transform, color) {
+                gl.uniformMatrix4fv(shaders.geo.u_matrix, false, transform);
+                gl.uniform4fv(shaders.geo.u_color, color);
 
                 /* upload/bind geometry */
                 {
@@ -1054,6 +1067,42 @@ requestAnimationFrame(function frame(timestamp) {
                 }
 
                 gl.drawElements(gl.TRIANGLES, geo_idx.length, gl.UNSIGNED_SHORT, 0);
+            }
+
+            const u_cube_mvp = mat4_create();
+            for (let i = 0; i < save.entities.length; i++) {
+                const ent = save.entities[i];
+                mat4_mul(u_cube_mvp, u_vp, ent.transform);
+
+                draw_cube(u_cube_mvp, [0.2, 0.3, 0.4, 1.0]);
+                if (i == input.entity_selected) {
+                    const m = mat4_from_scaling(mat4_create(), -1.05, -1.05, -1.05);
+                    mat4_mul(m, ent.transform, m);
+                    mat4_mul(m, u_vp, m);
+                    mat4_mul(m, mat4_from_translation(scratch, 0, 0, 0.0003), m);
+
+                    const c = 0.1 * Math.abs(Math.sin(Date.now() / 500));
+                    draw_cube(m, [0.3+c, 0.4+c, 0.5+c, 1.0]);
+                    // draw_cube(m, [0.7, 0.5, 0.4, 1.0]);
+                }
+            }
+
+            if (input.entity_selected > -1) {
+                const start_x = -0.95;
+                const start_y = -0.95;
+                for (let i = 0; i < palette.length; i++) {
+                    const color = palette[i];
+
+                    const size = 0.10;
+                    const m = mat4_from_scaling(mat4_create(), size*0.5, size*0.5, 1);
+
+                    const pad = size*0.1;
+                    const x = start_x + (size + pad)*i;
+                    const y = start_y;
+                    mat4_mul(m, mat4_from_translation(scratch, x, y, 0.0), m);
+
+                    draw_cube(m, color);
+                }
             }
         }
 
