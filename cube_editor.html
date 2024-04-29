@@ -243,15 +243,33 @@ action_apply(ACT_DO, { kind: ACTION_SPAWN , ent: { transform: mat4_from_translat
 action_apply(ACT_UNDO);
 
 const palette = [
-    [1, 0, 0, 1],
-    [0, 1, 0, 1],
-    [0, 0, 1, 1],
-    [1, 1, 0, 1],
-    [0, 1, 1, 1],
-    [1, 0, 1, 1],
-    [1, 1, 1, 1],
-    [0, 0, 0, 1]
-];
+    /* lamp */
+    [
+        [0.148438, 0.273438, 0.324219, 1],
+        [0.164063, 0.613281, 0.558594, 1],
+        [0.910156, 0.765625, 0.414063, 1],
+        [0.953125, 0.632813, 0.378906, 1],
+        [0.902344, 0.433594, 0.316406, 1]
+    ],
+
+    /* forest */
+    [
+        [0.937500, 0.914063, 0.820313, 1],
+        [0.863281, 0.894531, 0.710938, 1],
+        [0.675781, 0.753906, 0.468750, 1],
+        [0.660156, 0.515625, 0.402344, 1],
+        [0.421875, 0.343750, 0.296875, 1]
+    ],
+
+    /* truck */
+    [
+        [0.468750, 0.000000, 0.000000, 1],
+        [0.753906, 0.070313, 0.121094, 1],
+        [0.988281, 0.937500, 0.832031, 1],
+        [0.000000, 0.187500, 0.285156, 1],
+        [0.398438, 0.605469, 0.734375, 1]
+    ]
+][0];
 
 let input = {
     /* camera/controls: */
@@ -1094,12 +1112,35 @@ requestAnimationFrame(function frame(timestamp) {
                     const color = palette[i];
 
                     const size = 0.10;
-                    const m = mat4_from_scaling(mat4_create(), size*0.5, size*0.5, 1);
+                    let m, cube_x, cube_y;
+                    {
+                        m = mat4_from_scaling(mat4_create(), size*0.5, size*0.5, 1)
 
-                    const pad = size*0.1;
-                    const x = start_x + (size + pad)*i;
-                    const y = start_y;
-                    mat4_mul(m, mat4_from_translation(scratch, x, y, 0.0), m);
+                        const pad = size*0.1;
+                        cube_x = start_x + pad + (size + pad)*i;
+                        cube_y = start_y + pad;
+                        mat4_mul(m, mat4_from_translation(scratch, cube_x, cube_y, 0.0), m);
+                    }
+
+
+                    {
+                        let hovered;
+                        {
+                            const normalized_mouse_x = -1 + (input.mouse_x / window.innerWidth )*2;
+                            const normalized_mouse_y = +1 - (input.mouse_y / window.innerHeight)*2;
+
+                            hovered = (Math.abs(normalized_mouse_x - cube_x) < (size*0.5)) && 
+                                      (Math.abs(normalized_mouse_y - cube_y) < (size*0.5)) ;
+                        }
+
+                        if (hovered) {
+                            const c = 0.1 * Math.sin(Date.now() / 500);
+                            draw_cube(
+                                mat4_mul(mat4_create(), m, mat4_from_scaling(scratch, 1.12, 1.12, 0.0)),
+                                [color[0]+c, color[1]+c, color[2]+c, 1]
+                            );
+                        }
+                    }
 
                     draw_cube(m, color);
                 }
