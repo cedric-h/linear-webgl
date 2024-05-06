@@ -39,7 +39,7 @@ Ergo: flat, linear WebGL.
 | [cube gizmos](https://cedric-h.github.io/linear-webgl/cube_gizmos.html)        | cube, grid, mouse-based camera controls, and "gizmos" (translate, rotate, scale                                       |
 | [cube editor](https://cedric-h.github.io/linear-webgl/cube_editor.html)        | everything in gizmos + support for multiple things, undo/redo, etc.                                                   |
 
-<img width="851" alt="Screenshot 2024-05-06 at 12 48 29 PM" src="https://github.com/cedric-h/linear-webgl/assets/25539554/0a29393a-fd07-4b64-bdca-1bc77735678f">
+<img width="400"  alt="Screenshot 2024-05-06 at 12 48 29 PM" src="https://github.com/cedric-h/linear-webgl/assets/25539554/0a29393a-fd07-4b64-bdca-1bc77735678f">
 
 
 ## shadows and lighting
@@ -49,7 +49,7 @@ Ergo: flat, linear WebGL.
 | [shadow       ](https://cedric-h.github.io/linear-webgl/shadow.html)           | super simple shadow with no PCF, etc. just reprojection                                                               |
 | [lighting     ](https://cedric-h.github.io/linear-webgl/shadow.html)           | soft shadows + ambient occlusion + shadows dynamically from progressive lightmap                                      |
 
-<img width="738" alt="Screenshot 2024-05-06 at 12 45 15 PM" src="https://github.com/cedric-h/linear-webgl/assets/25539554/293a9cff-318e-48b1-8859-baeb620c8317">
+<img width="400"  alt="Screenshot 2024-05-06 at 12 45 15 PM" src="https://github.com/cedric-h/linear-webgl/assets/25539554/293a9cff-318e-48b1-8859-baeb620c8317">
 
 
 ## nodes
@@ -105,5 +105,5 @@ also: example of how to clip text without scissor rects, useful for doing a lot 
 | [galaxy      ](https://cedric-h.github.io/linear-webgl/image_atlas_prebake.html)| see above + fun with gaussian blur                                                                                             |
 | [skybox      ](https://cedric-h.github.io/linear-webgl/skybox.html)             | all that, inside a spinning cube!                                                                                              |
 
-<img width="751" alt="Screenshot 2024-05-06 at 12 49 59 PM" src="https://github.com/cedric-h/linear-webgl/assets/25539554/f8bcb3ee-8e0c-4da9-bc79-739b839778aa">
+<img width="400"  alt="Screenshot 2024-05-06 at 12 49 59 PM" src="https://github.com/cedric-h/linear-webgl/assets/25539554/f8bcb3ee-8e0c-4da9-bc79-739b839778aa">
 
