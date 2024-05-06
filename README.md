@@ -14,6 +14,11 @@ So raw, unadulterated WebGL it is. [Webglfundamentals.org](https://webglfundamen
 
 Ergo: flat, linear WebGL.
 
+See also:
+- [WebGL2Samples](https://github.com/WebGLSamples/WebGL2Samples)
+- [Webglfundamentals.org](https://webglfundamentals.org) 
+- [Webgl2fundamentals.org](https://webgl2fundamentals.org/) 
+
 ## simple
 
 | **link**                                                                       | **desc**                                                                                                              |
