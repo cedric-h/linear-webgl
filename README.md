@@ -101,4 +101,5 @@ also: example of how to clip text without scissor rects, useful for doing a lot 
 | [galaxy      ](https://cedric-h.github.io/linear-webgl/image_atlas_prebake.html)| see above + fun with gaussian blur                                                                                             |
 | [skybox      ](https://cedric-h.github.io/linear-webgl/skybox.html)             | all that, inside a spinning cube!                                                                                              |
 
+<img width="751" alt="Screenshot 2024-05-06 at 12 49 59 PM" src="https://github.com/cedric-h/linear-webgl/assets/25539554/f8bcb3ee-8e0c-4da9-bc79-739b839778aa">
 
