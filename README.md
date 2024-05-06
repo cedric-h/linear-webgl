@@ -21,14 +21,24 @@ Ergo: flat, linear WebGL.
 | [tri        ](https://cedric-h.github.io/linear-webgl/tri.html)                | triangle; starting-off point; _well, I tri-d._                                                                        |
 | [lines      ](https://cedric-h.github.io/linear-webgl/lines.html)              | shows how to do constant-screenspace-thickness 3D-based lines.                                                        |
 | [gazebo     ](https://cedric-h.github.io/linear-webgl/gazebo.html)             | simple OBJ model                                                                                                      |
+
+<img width="400" alt="Screenshot 2024-03-08 at 2 54 01 PM" src="https://github.com/cedric-h/linear-webgl/assets/25539554/b1d41550-0d5b-4051-af55-6846f1738175">
+
+## from cube to simple 3D editor
+
+| **link**                                                                       | **desc**                                                                                                              |
+|--------------------------------------------------------------------------------|-----------------------------------------------------------------------------------------------------------------------|
 | [cube       ](https://cedric-h.github.io/linear-webgl/cube.html)               | it's a cube.                                                                                                          |
 | [cube grid  ](https://cedric-h.github.io/linear-webgl/cube_grid.html)          | this cube has a grid!                                                                                                 |
 | [cube camera](https://cedric-h.github.io/linear-webgl/cube_camera.html)        | this cube has a grid AND mouse-based camera controls!                                                                 |
 | [cube gizmos](https://cedric-h.github.io/linear-webgl/cube_gizmos.html)        | cube, grid, mouse-based camera controls, and "gizmos" (translate, rotate, scale                                       |
 | [cube editor](https://cedric-h.github.io/linear-webgl/cube_editor.html)        | everything in gizmos + support for multiple things, undo/redo, etc.                                                   |
 
-<img width="400" alt="Screenshot 2024-03-08 at 2 54 01 PM" src="https://github.com/cedric-h/linear-webgl/assets/25539554/b1d41550-0d5b-4051-af55-6846f1738175">
+## shadows and lighting
 
+| **link**                                                                       | **desc**                                                                                                              |
+|--------------------------------------------------------------------------------|-----------------------------------------------------------------------------------------------------------------------|
+| [shadow       ](https://cedric-h.github.io/linear-webgl/shadow.html)           | super simple shadow with no PCF, etc. just reprojection                                                               |
 
 ## nodes
 
