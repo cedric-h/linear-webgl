@@ -427,7 +427,7 @@ requestAnimationFrame(function frame(timestamp) {
             gl.enableVertexAttribArray(shaders.paint.a_uv);
 
             gl.uniformMatrix4fv(shaders.paint.u_matrix, false, mvp);
-            gl.uniform4fv(shaders.paint.u_color, hsl_to_rgb([Math.sin(Date.now() / 3000), 0.8, 0.8, 1.0]));
+            gl.uniform4fv(shaders.paint.u_color, hsl_to_rgb([Date.now() / 3000, 0.8, 0.8, 1.0]));
             gl.uniform2f(
                 shaders.paint.u_brush,
                 -1 + (input.mouse_x / window.innerWidth )*2,
