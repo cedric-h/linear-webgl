@@ -208,13 +208,13 @@ window.onwheel = e => {
     clearTimeout(wheelTimeout);
     wheelTimeout = setTimeout(() => input.scroll = 0, 100)
 };
-window.onmousedown = ev => {
+window.onpointerdown = ev => {
     ev.preventDefault();
 
     if (ev.button == 0) input.lmb_down = true;
     if (ev.button == 2) input.rmb_down = true;
 };
-window.onmousemove = ev => {
+window.onpointermove = ev => {
     input.dampedEvent.button    = ev.button;
     input.dampedEvent.movementX = ev.movementX;
     input.dampedEvent.movementY = ev.movementY;
@@ -223,7 +223,7 @@ window.onmousemove = ev => {
     input.mouse_y = ev.offsetY;
 };
 window.oncontextmenu = ev => ev.preventDefault();
-window.onmouseup = ev => {
+window.onpointerup = ev => {
     ev.preventDefault();
 
     if (ev.button == 0) input.lmb_down = false;
