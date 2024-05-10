@@ -205,27 +205,50 @@ window.onwheel = e => {
     clearTimeout(wheelTimeout);
     wheelTimeout = setTimeout(() => input.scroll = 0, 100)
 };
-window.onpointerdown = ev => {
-    ev.preventDefault();
 
-    if (ev.button == 0) input.lmb_down = true;
-    if (ev.button == 2) input.rmb_down = true;
-};
-window.onpointermove = ev => {
-    input.dampedEvent.button    = ev.button;
-    input.dampedEvent.movementX = ev.movementX;
-    input.dampedEvent.movementY = ev.movementY;
+/* pointer */
+{
+    window.onpointerdown = ev => {
+        if (ev.pointerType == "mouse") return;
+        ev.preventDefault();
+        input.lmb_down = true;
+    };
+    window.onpointermove = ev => {
+        if (ev.pointerType == "mouse") return;
+        input.mouse_x = ev.offsetX;
+        input.mouse_y = ev.offsetY;
+    };
+    window.onpointerup = ev => {
+        if (ev.pointerType == "mouse") return;
+        ev.preventDefault();
+        input.lmb_down = false;
+    }
+}
 
-    input.mouse_x = ev.offsetX;
-    input.mouse_y = ev.offsetY;
-};
-window.oncontextmenu = ev => ev.preventDefault();
-window.onpointerup = ev => {
-    ev.preventDefault();
+/* mouse */
+{
+    window.onmousedown = ev => {
+        ev.preventDefault();
 
-    if (ev.button == 0) input.lmb_down = false;
-    if (ev.button == 2) input.rmb_down = false;
-};
+        if (ev.button == 0) input.lmb_down = true;
+        if (ev.button == 2) input.rmb_down = true;
+    };
+    window.onmousemove = ev => {
+        input.dampedEvent.button    = ev.button;
+        input.dampedEvent.movementX = ev.movementX;
+        input.dampedEvent.movementY = ev.movementY;
+
+        input.mouse_x = ev.offsetX;
+        input.mouse_y = ev.offsetY;
+    };
+    window.oncontextmenu = ev => ev.preventDefault();
+    window.onmouseup = ev => {
+        ev.preventDefault();
+
+        if (ev.button == 0) input.lmb_down = false;
+        if (ev.button == 2) input.rmb_down = false;
+    };
+}
 
 requestAnimationFrame(function frame(timestamp) {
     requestAnimationFrame(frame);
@@ -424,7 +447,7 @@ requestAnimationFrame(function frame(timestamp) {
             gl.enableVertexAttribArray(shaders.paint.a_uv);
 
             gl.uniformMatrix4fv(shaders.paint.u_matrix, false, mvp);
-            gl.uniform4fv(shaders.paint.u_color, hsl_to_rgb([Date.now() / 3000 % 1, 0.8, 0.8, 1.0]));
+            gl.uniform4fv(shaders.paint.u_color, hsl_to_rgb([Date.now() / 3000 % 1, 0.9, 0.7, 1.0]));
             gl.uniform2f(
                 shaders.paint.u_brush,
                 -1 + (input.mouse_x / window.innerWidth )*2,
