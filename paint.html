@@ -214,13 +214,13 @@ window.onwheel = e => {
     };
     window.ontouchmove = ev => {
         ev.preventDefault();
-        input.mouse_x = ev.offsetX;
-        input.mouse_y = ev.offsetY;
+        input.mouse_x = ev.touches[0].clientX;
+        input.mouse_y = ev.touches[0].clientY;
 
         if (ev.touches.length >= 2) {
             input.dampedEvent.button    = (ev.touches.length == 2) ? 0 : 2;
-            input.dampedEvent.movementX = ev.movementX;
-            input.dampedEvent.movementY = ev.movementY;
+            input.dampedEvent.movementX = ev.touches[0].movementX;
+            input.dampedEvent.movementY = ev.touches[0].movementY;
         }
     };
     window.ontouchup = ev => {
