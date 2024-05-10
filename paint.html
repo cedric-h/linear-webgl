@@ -206,20 +206,23 @@ window.onwheel = e => {
     wheelTimeout = setTimeout(() => input.scroll = 0, 100)
 };
 
-/* pointer */
+/* touch */
 {
-    window.onpointerdown = ev => {
-        if (ev.pointerType == "mouse") return;
+    window.ontouchdown = ev => {
         ev.preventDefault();
         input.lmb_down = true;
     };
-    window.onpointermove = ev => {
-        if (ev.pointerType == "mouse") return;
+    window.ontouchmove = ev => {
         input.mouse_x = ev.offsetX;
         input.mouse_y = ev.offsetY;
+
+        if (ev.touches.length >= 2) {
+            input.dampedEvent.button    = (ev.touches.length == 2) ? 0 : 2;
+            input.dampedEvent.movementX = ev.movementX;
+            input.dampedEvent.movementY = ev.movementY;
+        }
     };
-    window.onpointerup = ev => {
-        if (ev.pointerType == "mouse") return;
+    window.ontouchup = ev => {
         ev.preventDefault();
         input.lmb_down = false;
     }
