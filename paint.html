@@ -213,6 +213,7 @@ window.onwheel = e => {
         input.lmb_down = true;
     };
     window.ontouchmove = ev => {
+        ev.preventDefault();
         input.mouse_x = ev.offsetX;
         input.mouse_y = ev.offsetY;
 
