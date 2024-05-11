@@ -65,12 +65,13 @@ let shaders;
 
 
     const geo_vs = 
-        'attribute vec3 a_pos;' +
-        'attribute vec2 a_uv;' +
+        '#version 300 es\n' +
+        'in vec3 a_pos;' +
+        'in vec2 a_uv;' +
 
         'uniform mat4 u_matrix;' +
 
-        'varying vec2 v_uv;' +
+        'centroid out vec2 v_uv;' +
 
         'void main() {' +
         '    gl_Position = u_matrix * vec4(a_pos.xyz, 1.0);' +
@@ -78,15 +79,18 @@ let shaders;
         '}';
 
     const geo_fs = 
+        '#version 300 es\n' +
         'precision mediump float;' +
 
         'uniform sampler2D u_texture;' +
 
-        'varying vec2 v_uv;' +
+        'centroid in vec2 v_uv;' +
+
+        'out vec4 color;' +
 
         'void main() {' +
         // '  gl_FragColor = vec4(vec3(1.0 - v_uv*v_uv, 0.6)*0.2 + 0.8*texture2D(u_texture, v_uv).xyz, 1.0);' +
-        '  gl_FragColor = vec4(texture2D(u_texture, v_uv).xyz, 1.0);' +
+        '  color = vec4(texture(u_texture, v_uv).xyz, 1.0);' +
         '}';
 
 
@@ -462,12 +466,13 @@ requestAnimationFrame(function frame(timestamp) {
 
                 const u = (           atlas_index % ATLAS_SIZE );
                 const v = (Math.floor(atlas_index / ATLAS_SIZE));
+                const texel = 2 / (ATLAS_SIZE * TEXELS_PER_QUAD);
 
                 geo_uv.push(
-                    (u+1)/ATLAS_SIZE, (v+1)/ATLAS_SIZE,
-                    (u+0)/ATLAS_SIZE, (v+1)/ATLAS_SIZE,
-                    (u+0)/ATLAS_SIZE, (v+0)/ATLAS_SIZE,
-                    (u+1)/ATLAS_SIZE, (v+0)/ATLAS_SIZE,
+                    (u+1 - texel)/ATLAS_SIZE, (v+1 - texel)/ATLAS_SIZE,
+                    (u+0 + texel)/ATLAS_SIZE, (v+1 - texel)/ATLAS_SIZE,
+                    (u+0 + texel)/ATLAS_SIZE, (v+0 + texel)/ATLAS_SIZE,
+                    (u+1 - texel)/ATLAS_SIZE, (v+0 + texel)/ATLAS_SIZE,
                 );
             }
 
