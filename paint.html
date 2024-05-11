@@ -208,25 +208,97 @@ window.onwheel = e => {
 
 /* touch */
 {
-    window.ontouchdown = ev => {
+    const opts = { passive: false };
+
+    const last_touch_positions = [{ x: 0, y: 0 },
+                                  { x: 0, y: 0 },
+                                  { x: 0, y: 0 }]; /* do we care about more than 3 touches? seems excessive */
+    let start_avg_dist_from_center = 0;  /* used for pinch */
+    let start_zoom = 1.0;
+    let painting_touch = false;
+
+    window.addEventListener("touchstart", ev => {
         ev.preventDefault();
         input.lmb_down = true;
-    };
-    window.ontouchmove = ev => {
-        ev.preventDefault();
-        input.mouse_x = ev.touches[0].clientX;
-        input.mouse_y = ev.touches[0].clientY;
 
-        if (ev.touches.length >= 2) {
-            input.dampedEvent.button    = (ev.touches.length == 2) ? 0 : 2;
-            input.dampedEvent.movementX = ev.touches[0].movementX;
-            input.dampedEvent.movementY = ev.touches[0].movementY;
+        painting_touch = ev.touches.length == 1;
+
+        let center_x = 0;
+        let center_y = 0;
+        const touch_count = Math.min(ev.touches.length, last_touch_positions.length);
+        {
+            for (let i = 0; i < touch_count; i++) {
+                center_x += last_touch_positions[i].x = ev.touches[i].clientX;
+                center_y += last_touch_positions[i].y = ev.touches[i].clientY;
+            }
+            center_x /= touch_count;
+            center_y /= touch_count;
         }
-    };
-    window.ontouchup = ev => {
+
+        {
+            let avg_dist_from_center = 0;
+            for (let i = 0; i < touch_count; i++) {
+                avg_dist_from_center += Math.sqrt(Math.pow(ev.touches[i].clientX - center_x, 2) +
+                                                  Math.pow(ev.touches[i].clientY - center_y, 2));
+            }
+            start_avg_dist_from_center = avg_dist_from_center / touch_count;
+            start_zoom = input.zoom;
+        }
+    }, opts);
+
+    window.addEventListener("touchmove", ev => {
+        ev.preventDefault();
+        const touch_count = Math.min(ev.touches.length, last_touch_positions.length);
+
+        let center_x = 0;
+        let center_y = 0;
+        let movement_x = 0;
+        let movement_y = 0;
+        {
+            for (let i = 0; i < touch_count; i++) {
+                movement_x += ev.touches[i].clientX - last_touch_positions[i].x;
+                movement_y += ev.touches[i].clientY - last_touch_positions[i].y;
+
+                center_x += ev.touches[i].clientX;
+                center_y += ev.touches[i].clientY;
+
+                last_touch_positions[i].x = ev.touches[i].clientX;
+                last_touch_positions[i].y = ev.touches[i].clientY;
+            }
+            center_x /= touch_count;
+            center_y /= touch_count;
+        }
+
+        if (painting_touch) {
+            input.mouse_x = ev.touches[0].clientX;
+            input.mouse_y = ev.touches[0].clientY;
+        } else {
+            input.dampedEvent.button    = (ev.touches.length == 2) ? 0 : 2;
+            input.dampedEvent.movementX = movement_x*2;
+            input.dampedEvent.movementY = movement_y*2;
+
+            input.mouse_x = -100; /* weak attempt to prevent painting while panning */
+            input.mouse_y = -100;
+        }
+
+        if (touch_count > 1) {
+            let new_dist_from_center = 0;
+            {
+                for (let i = 0; i < touch_count; i++) {
+                    new_dist_from_center += Math.sqrt(Math.pow(ev.touches[i].clientX - center_x, 2) +
+                                                      Math.pow(ev.touches[i].clientY - center_y, 2));
+                }
+                new_dist_from_center /= touch_count;
+            }
+
+            let ratio = start_avg_dist_from_center / new_dist_from_center;
+            input.zoom = start_zoom * ratio;
+        }
+    }, opts);
+    window.addEventListener("touchend", ev => {
         ev.preventDefault();
         input.lmb_down = false;
-    }
+    }, opts);
 }
 
 /* mouse */
