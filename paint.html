@@ -56,9 +56,11 @@ let shaders;
 
         'uniform vec4 u_color;' +
         'uniform vec2 u_brush;' +
+        'uniform vec2 u_aspect_ratio;' +
 
         'void main() {' +
-        '  gl_FragColor = step(length(v_pos - u_brush), 0.03) * u_color;' +
+        '  vec2 delta = (v_pos - u_brush)*u_aspect_ratio;' +
+        '  gl_FragColor = step(length(delta), 0.03) * u_color;' +
         '}';
 
 
@@ -198,13 +200,15 @@ let input = {
     rmb_down: false,
 }
 let wheelTimeout;
-window.onwheel = e => {
+window.addEventListener('wheel', e => {
+    e.preventDefault();
+
     if (input.mouse_down) return;
     input.scroll = Math.sign(e.deltaY);
 
     clearTimeout(wheelTimeout);
     wheelTimeout = setTimeout(() => input.scroll = 0, 100)
-};
+}, { passive: false });;
 
 /* touch */
 {
@@ -528,6 +532,11 @@ requestAnimationFrame(function frame(timestamp) {
                 shaders.paint.u_brush,
                 -1 + (input.mouse_x / window.innerWidth )*2,
                 +1 - (input.mouse_y / window.innerHeight)*2
+            );
+            gl.uniform2f(
+                shaders.paint.u_aspect_ratio,
+                (window.innerWidth  / window.innerWidth),
+                (window.innerHeight / window.innerWidth)
             );
 
             /* upload/bind paint */
@@ -932,4 +941,3 @@ function hsl_to_rgb(arr) {
     </script>
   </body>
 </html>
-/html>
