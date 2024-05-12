@@ -60,7 +60,7 @@ let shaders;
 
         'void main() {' +
         '  vec2 delta = (v_pos - u_brush)*u_aspect_ratio;' +
-        '  gl_FragColor = step(length(delta), 0.03) * u_color;' +
+        '  gl_FragColor = smoothstep(0.03, 0.02, length(delta)) * u_color;' +
         '}';
 
 
@@ -156,8 +156,8 @@ const paint_atlas_fb = gl.createFramebuffer();
         /* type,          */ gl.UNSIGNED_BYTE,
         /* data           */ null
     );
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
 
@@ -303,9 +303,13 @@ window.addEventListener('wheel', e => {
             input.zoom = start_zoom * ratio;
         }
     }, opts);
+
     window.addEventListener("touchend", ev => {
         ev.preventDefault();
         input.lmb_down = false;
+
+        input.mouse_x = -100; /* weak attempt to prevent painting while panning */
+        input.mouse_y = -100;
     }, opts);
 }
 
@@ -352,6 +356,7 @@ requestAnimationFrame(function frame(timestamp) {
         if (input.lmb_down) {
             input.pitch -= ev.movementX * 0.0035 * zoom_fudge;
             input.yaw   -= ev.movementY * 0.0035 * zoom_fudge;
+            input.yaw = Math.max(-Math.PI*0.5 + 0.01, Math.min(Math.PI*0.5 - 0.01, input.yaw));
         }
         if (input.rmb_down) {
             const unit = [0, -ev.movementX*0.0075*zoom_fudge, ev.movementY*0.0075*zoom_fudge, 1];
