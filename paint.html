@@ -61,7 +61,7 @@ let shaders;
         'void main() {' +
         '  vec2 delta = (v_pos - u_brush)*u_aspect_ratio;' +
         '  const float scale = 1.0;' + // 0.6
-        '  gl_FragColor = smoothstep(0.03*scale, 0.02*scale, length(delta)) * u_color;' +
+        '  gl_FragColor = smoothstep(0.023*scale, 0.02*scale, length(delta)) * u_color;' +
         '}';
 
 
