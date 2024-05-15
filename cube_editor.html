@@ -44,21 +44,22 @@ let shaders;
         attribute vec4 a_color;
 
         uniform mat4 u_matrix;
+        uniform vec4 u_color;
 
         varying vec4 v_color;
 
         void main() {
             gl_Position = u_matrix * vec4(a_pos.xyz, 1);
-            v_color = a_color;
+            v_color = u_color*0.85 + 0.15*a_color;
         }`;
 
     const fs_geo = `
         precision mediump float;
 
-        uniform vec4 u_color;
+        varying vec4 v_color;
 
         void main() {
-            gl_FragColor = u_color;// vec4(1.0, 1.0, 1.0, 1.0);// vec4(u_color.xyz*0.35, 1.0);
+            gl_FragColor = v_color;
         }`;
 
 
@@ -481,15 +482,8 @@ requestAnimationFrame(function frame(timestamp) {
                     }
                 }
 
-                input.entity_hovered = -1;
-                for (let entity_i = 0; entity_i < save.entities.length; entity_i++) {
-                    const b = {
-                        min: [-1, -1, -1, 1],
-                        max: [ 1,  1,  1, 1],
-                    };
-                    mat4_transform_vec4(b.min, b.min, save.entities[entity_i].transform);
-                    mat4_transform_vec4(b.max, b.max, save.entities[entity_i].transform);
-
+                /* select new entity */
+                {
                     let ray_normal_x, ray_normal_y, ray_normal_z;
                     let ray_origin_x, ray_origin_y, ray_origin_z;
                     {
@@ -525,35 +519,47 @@ requestAnimationFrame(function frame(timestamp) {
                         ray_normal_z /= nlen;
                     }
 
-                    /* ray vs. box intersection */
 
-                    let tmin = -Infinity, tmax = Infinity;
+                    input.entity_hovered = -1;
+                    let selected_tmin = Infinity;
+                    for (let entity_i = 0; entity_i < save.entities.length; entity_i++) {
+                        const b = {
+                            min: [-1, -1, -1, 1],
+                            max: [ 1,  1,  1, 1],
+                        };
+                        mat4_transform_vec4(b.min, b.min, save.entities[entity_i].transform);
+                        mat4_transform_vec4(b.max, b.max, save.entities[entity_i].transform);
 
-                    if (ray_normal_x != 0.0) {
-                        const tx1 = (b.min[0] - ray_origin_x)/ray_normal_x;
-                        const tx2 = (b.max[0] - ray_origin_x)/ray_normal_x;
+                        /* ray vs. box intersection */
 
-                        tmin = Math.max(tmin, Math.min(tx1, tx2));
-                        tmax = Math.min(tmax, Math.max(tx1, tx2));
-                    }
-                    if (ray_normal_y != 0.0) {
-                        const tx1 = (b.min[1] - ray_origin_y)/ray_normal_y;
-                        const tx2 = (b.max[1] - ray_origin_y)/ray_normal_y;
+                        let tmin = -Infinity, tmax = Infinity;
 
-                        tmin = Math.max(tmin, Math.min(tx1, tx2));
-                        tmax = Math.min(tmax, Math.max(tx1, tx2));
-                    }
-                    if (ray_normal_z != 0.0) {
-                        const tx1 = (b.min[2] - ray_origin_z)/ray_normal_z;
-                        const tx2 = (b.max[2] - ray_origin_z)/ray_normal_z;
+                        if (ray_normal_x != 0.0) {
+                            const tx1 = (b.min[0] - ray_origin_x)/ray_normal_x;
+                            const tx2 = (b.max[0] - ray_origin_x)/ray_normal_x;
 
-                        tmin = Math.max(tmin, Math.min(tx1, tx2));
-                        tmax = Math.min(tmax, Math.max(tx1, tx2));
-                    }
+                            tmin = Math.max(tmin, Math.min(tx1, tx2));
+                            tmax = Math.min(tmax, Math.max(tx1, tx2));
+                        }
+                        if (ray_normal_y != 0.0) {
+                            const tx1 = (b.min[1] - ray_origin_y)/ray_normal_y;
+                            const tx2 = (b.max[1] - ray_origin_y)/ray_normal_y;
 
-                    if (tmax >= tmin) {
-                        input.entity_selected = input.entity_hovered = entity_i;
-                        break;
+                            tmin = Math.max(tmin, Math.min(tx1, tx2));
+                            tmax = Math.min(tmax, Math.max(tx1, tx2));
+                        }
+                        if (ray_normal_z != 0.0) {
+                            const tx1 = (b.min[2] - ray_origin_z)/ray_normal_z;
+                            const tx2 = (b.max[2] - ray_origin_z)/ray_normal_z;
+
+                            tmin = Math.max(tmin, Math.min(tx1, tx2));
+                            tmax = Math.min(tmax, Math.max(tx1, tx2));
+                        }
+
+                        if (tmax >= tmin && tmin < selected_tmin) {
+                            selected_tmin = tmin;
+                            input.entity_selected = input.entity_hovered = entity_i;
+                        }
                     }
                 }
             } while (false);
