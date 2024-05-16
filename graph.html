@@ -22,6 +22,9 @@ const sdfs = {};
 /* higher number = prettier text using more VRAM */
 const SDF_FONT_SIZE = 32;
 
+/* how big text on screen */
+const FONT_WORLD_SPACE_SIZE = 32;
+
 const updateSDF = (() => {
 
     const chars = ' abcdefghijklmnopqrstuvwxyzZABCDEFGHIJKLMNOPQRSTUVWXYZ!@#$%^&*()1234567890<,>./?;:\'"\\|{}[]';
@@ -245,9 +248,9 @@ let viewMatrix = mat4_create();
     );
 })();
 {
-    /* scale viewMatrix to fit 5000 logical pixels */
+    /* scale viewMatrix to fit 600 logical pixels */
     const aspect_ratio = window.innerHeight/window.innerWidth;
-    const width = 5000;
+    const width = 350;
     mat4_ortho(viewMatrix, -width, width, width*aspect_ratio, -width*aspect_ratio, 1, -1)
     mat4_mul(viewMatrix, mat4_invert(mat4_create(), pMatrix), viewMatrix);
 }
@@ -282,6 +285,10 @@ const texture = gl.createTexture();
 const buf = {
     text_v_pos: gl.createBuffer(),
     text_v_uv: gl.createBuffer(),
+
+    geo_v_pos: gl.createBuffer(),
+    geo_v_color: gl.createBuffer(),
+    geo_idx: gl.createBuffer(),
 }
 
 
@@ -318,6 +325,30 @@ let shaders;
             float alpha = smoothstep(u_buffer - u_gamma, u_buffer + u_gamma, dist);
             gl_FragColor = vec4(u_color.rgb, alpha * u_color.a);
         }`;
+
+
+    const geo_vs = `
+        attribute vec2 a_pos;
+        attribute vec4 a_color;
+
+        uniform mat4 u_matrix;
+
+        varying vec4 v_color;
+
+        void main() {
+            gl_Position = u_matrix * vec4(a_pos.xy, 0, 1);
+            v_color = a_color;
+        }`;
+
+    const geo_fs = `
+        precision mediump float;
+
+        varying vec4 v_color;
+
+        void main() {
+            gl_FragColor = v_color;
+        }`;
+
 
     function createProgram(gl, vertexSource, fragmentSource) {
         function createShader(gl, type, source) {
@@ -362,6 +393,7 @@ let shaders;
 
     shaders = {
         text: createProgram(gl, text_vs, text_fs),
+        geo : createProgram(gl,  geo_vs,  geo_fs),
     }
 }
 
@@ -390,12 +422,72 @@ let shaders;
 requestAnimationFrame(function frame(timestamp) {
     requestAnimationFrame(frame);
 
+
+    /* camera transform */
+    let fontscale;
+    let view;
+    {
+        let total_zoom;
+        {
+            const zoom = 1.0 + 0.03*scroll;
+
+            /* this block thinks about things in terms of one pixel which is cursed */
+            const focal = [mouseX, mouseY, 0, 1];
+            const tl = [-1, -1, -1,  1];
+            const br = [ 1,  1,  1,  1];
+            const inv = mat4_invert(mat4_create(), viewMatrix);
+            mat4_transform_vec4(tl, tl, inv);
+            mat4_transform_vec4(br, br, inv);
+            mat4_transform_vec4(focal, focal, inv);
+
+            let left = (tl[0] - focal[0])*zoom + focal[0];
+            let right = (br[0] - focal[0])*zoom + focal[0];
+
+            total_zoom = br[0] - tl[0];
+
+            mat4_ortho(
+                viewMatrix,
+                left, right,
+                tl[1], br[1],
+                br[2], tl[2]
+            );
+        }
+
+        /* mouse drag */
+        let dragX = 0;
+        if (mouseDown) {
+            dragX += (mouseX - mouseDownX)
+
+            if (mouseReleased) {
+                mouseReleased = mouseDown = false;
+
+                mat4_mul(viewMatrix, mat4_create_translate(dragX, 0), viewMatrix);
+
+                dragX = 0;
+            }
+        }
+
+        /* text rendering wants the pen pixel-aligned, so scale here */
+        /* our pMatrix puts things in 0..1, but everything before that is in pixels */ 
+        // const view = mat4_create_translate(dragX + mouseX, dragY + mouseY)
+        view = mat4_create_translate(dragX, 0)
+        mat4_mul(view, view, viewMatrix);
+
+        fontscale = FONT_WORLD_SPACE_SIZE * 2;
+    }
+
     const text_pos = [];
     const text_uv = [];
 
+    const geo_pos   = [];
+    const geo_color = [];
+    const geo_idx   = [];
+
     const ALIGN_LEFT = 0;
     const ALIGN_CENTER = 1;
-    function drawText(str, worldX, worldY, view, size, align = ALIGN_LEFT) {
+    function drawText(str, worldX, worldY, align = ALIGN_LEFT) {
+        const size = fontscale;
+
         const pos = [worldX, worldY, 0, 1]
         mat4_transform_vec4(pos, pos, view);
         const x = Math.round(pos[0]);
@@ -443,104 +535,141 @@ requestAnimationFrame(function frame(timestamp) {
         }
     }
 
-    /* use "drawText" to fill the text buffer with interesting data */
-    let fontscale;
-    {
-        /* zoom toward mouse */
-        if (scroll) {
-            const zoom = 1.0 + 0.03*scroll;
+    function drawBox( min_x, min_y,   max_x, max_y,   color ) {
+        geo_color.push(
+            color[0], color[1], color[2], color[3],
+            color[0], color[1], color[2], color[3],
+            color[0], color[1], color[2], color[3],
+            color[0], color[1], color[2], color[3]
+        );
 
-            const focal = [mouseX, mouseY, 0, 1];
-            const tl = [-1, -1, -1,  1]
-            const br = [ 1,  1,  1,  1]
-            const inv = mat4_invert(mat4_create(), viewMatrix);
-            mat4_transform_vec4(tl, tl, inv);
-            mat4_transform_vec4(br, br, inv);
-            mat4_transform_vec4(focal, focal, inv);
+        const vbuf_i = geo_pos.length / 2;
 
-            mat4_ortho(
-                viewMatrix,
-                (tl[0] - focal[0])*zoom + focal[0],
-                (br[0] - focal[0])*zoom + focal[0],
-                (tl[1] - focal[1])*zoom + focal[1],
-                (br[1] - focal[1])*zoom + focal[1],
-                br[2],
-                tl[2]
-            )
-        }
+        const pos = [0, 0, 0, 1]
+        pos[0] = max_x, pos[1] = min_y, mat4_transform_vec4(pos, pos, view), geo_pos.push(pos[0], pos[1])
+        pos[0] = min_x, pos[1] = min_y, mat4_transform_vec4(pos, pos, view), geo_pos.push(pos[0], pos[1])
+        pos[0] = min_x, pos[1] = max_y, mat4_transform_vec4(pos, pos, view), geo_pos.push(pos[0], pos[1])
+        pos[0] = max_x, pos[1] = max_y, mat4_transform_vec4(pos, pos, view), geo_pos.push(pos[0], pos[1])
 
-        /* mouse drag */
-        let dragX = 0, dragY = 0;
-        if (mouseDown) {
-            dragX += (mouseX - mouseDownX)
-            dragY += (mouseY - mouseDownY)
-
-            if (mouseReleased) {
-                mouseReleased = mouseDown = false;
-
-                mat4_mul(viewMatrix, mat4_create_translate(dragX, dragY), viewMatrix);
-
-                dragX = dragY = 0;
-            }
-        }
-
-        /* text rendering wants the pen pixel-aligned, so scale here */
-        /* our pMatrix puts things in 0..1, but everything before that is in pixels */ 
-        // const view = mat4_create_translate(dragX + mouseX, dragY + mouseY)
-        const view = mat4_create_translate(dragX, dragY)
-        mat4_mul(view, view, viewMatrix);
-
-        fontscale = 256 * Math.sqrt(view[0]*view[0] + view[1]*view[1]);
-
-        for (let i = 0; i < 40; i++) {
-            const theta = i/40 * Math.PI*2;
-            const radius = 1800;
-            const circleX = Math.cos(theta) * radius;
-            const circleY = Math.sin(theta) * radius;
-
-            drawText('x', circleX, circleY, view, fontscale, ALIGN_CENTER);
-        }
-        drawText('accelerated instance graph', 0, 0, view, fontscale, ALIGN_CENTER);
+        geo_idx.push(vbuf_i + 0, vbuf_i + 1, vbuf_i + 2, vbuf_i + 2, vbuf_i + 3, vbuf_i + 0);
     }
 
-    /* render the contents of the text buffer */
+    /* use "drawText" to fill the text buffer with interesting data */
     {
+
+        // for (let i = 0; i < 40; i++) {
+        //     const theta = i/40 * Math.PI*2;
+        //     const radius = 1800;
+        //     const circleX = Math.cos(theta) * radius;
+        //     const circleY = Math.sin(theta) * radius;
+
+        //     drawText('x', circleX, circleY, ALIGN_CENTER);
+        // }
+        // drawText('accelerated instance graph', 0, 0, ALIGN_CENTER);
+
         {
-            /* set up premultiplied alpha */
-            gl.blendFuncSeparate(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA, gl.ONE, gl.ONE);
-            gl.enable(gl.BLEND);
+            const SECOND = 1000;
+            const MINUTE = 60 * SECOND;
+            const HOUR   = 60 * MINUTE;
+            const DAY    = 24 * HOUR;
 
-            /* clear all */
-            gl.clearColor(0.93, 0.9, 0.89, 1);
-            gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+            const ts_min = Date.parse("2024-04-01T22:15:00Z");
+            const ts_max = Date.parse("2024-04-08T19:30:00Z");
 
-            /* bind uniforms */
-            {
-                gl.uniformMatrix4fv(shaders.text.u_matrix, false, pMatrix);
+            const x_min = -500 + 0;
+            const x_max = -500 + 1000;
+            const y_min = -100 + 000;
+            const y_max = -100 + 200;
 
-                gl.uniform4fv(shaders.text.u_color, [0, 0, 0, 1]);
-                gl.uniform1f(shaders.text.u_buffer, 0.75);
-                const gamma = 2;
-                gl.uniform1f(shaders.text.u_gamma, gamma * 1.4142 / fontscale);
+            drawBox(x_min, y_min, x_max, y_max, [25, 25, 25, 25]);
 
-                gl.activeTexture(gl.TEXTURE0);
-                gl.bindTexture(gl.TEXTURE_2D, texture);
-                gl.uniform1i(shaders.text.u_texture, 0);
+            const bar_count = 1 + Math.ceil((ts_max - ts_min) / DAY);
+            for (let i = 0; i < bar_count; i++) {
+                const ts = Math.min(ts_max, ts_min + i*DAY);
+                const x = lerp(x_min, x_max, inv_lerp(ts_min, ts_max, ts));
+
+                drawBox( 
+                    x - 1.25, y_min,
+                    x + 1.25, y_max,
+                    [0, 0, 0, 100]
+                );
+
+
+                const date = new Date(ts);
+                drawText(
+                    `${date.getDate()}/${date.getMonth()}`,
+                    x,
+                    y_min - FONT_WORLD_SPACE_SIZE,
+                    ALIGN_CENTER
+                );
             }
-
-            /* bind text geometry */
-            {
-                gl.bindBuffer(gl.ARRAY_BUFFER, buf.text_v_pos);
-                gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(text_pos), gl.STATIC_DRAW);
-                gl.vertexAttribPointer(shaders.text.a_pos, 2, gl.FLOAT, false, 0, 0);
-
-                gl.bindBuffer(gl.ARRAY_BUFFER, buf.text_v_uv);
-                gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(text_uv), gl.STATIC_DRAW);
-                gl.vertexAttribPointer(shaders.text.a_texcoord, 2, gl.FLOAT, false, 0, 0);
-            }
-
-            gl.drawArrays(gl.TRIANGLES, 0, text_pos.length / 2);
         }
+    }
+
+    /* text pass */
+    {
+        gl.useProgram(shaders.text.program);
+
+        /* set up premultiplied alpha */
+        gl.blendFuncSeparate(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA, gl.ONE, gl.ONE);
+        gl.enable(gl.BLEND);
+
+        /* clear all */
+        gl.clearColor(0.93, 0.9, 0.89, 1);
+        gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+
+        /* bind uniforms */
+        {
+            gl.uniformMatrix4fv(shaders.text.u_matrix, false, pMatrix);
+
+            gl.uniform4fv(shaders.text.u_color, [0, 0, 0, 1]);
+            gl.uniform1f(shaders.text.u_buffer, 0.75);
+            const gamma = 2;
+            gl.uniform1f(shaders.text.u_gamma, gamma * 1.4142 / fontscale);
+
+            gl.activeTexture(gl.TEXTURE0);
+            gl.bindTexture(gl.TEXTURE_2D, texture);
+            gl.uniform1i(shaders.text.u_texture, 0);
+        }
+
+        /* bind text geometry */
+        {
+            gl.bindBuffer(gl.ARRAY_BUFFER, buf.text_v_pos);
+            gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(text_pos), gl.STATIC_DRAW);
+            gl.vertexAttribPointer(shaders.text.a_pos, 2, gl.FLOAT, false, 0, 0);
+
+            gl.bindBuffer(gl.ARRAY_BUFFER, buf.text_v_uv);
+            gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(text_uv), gl.STATIC_DRAW);
+            gl.vertexAttribPointer(shaders.text.a_texcoord, 2, gl.FLOAT, false, 0, 0);
+        }
+
+        gl.drawArrays(gl.TRIANGLES, 0, text_pos.length / 2);
+    }
+
+    /* geo pass */
+    {
+        gl.useProgram(shaders.geo.program);
+        gl.enableVertexAttribArray(shaders.geo.a_pos);
+        gl.enableVertexAttribArray(shaders.geo.a_color);
+
+        gl.uniformMatrix4fv(shaders.geo.u_matrix, false, pMatrix);
+
+        /* upload/bind geometry */
+
+        {
+            gl.bindBuffer(gl.ARRAY_BUFFER, buf.geo_v_pos);
+            gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(geo_pos), gl.STATIC_DRAW);
+            gl.vertexAttribPointer(shaders.geo.a_pos, 2, gl.FLOAT, false, 0, 0);
+
+            gl.bindBuffer(gl.ARRAY_BUFFER, buf.geo_v_color);
+            gl.bufferData(gl.ARRAY_BUFFER, new Uint8Array(geo_color), gl.STATIC_DRAW);
+            gl.vertexAttribPointer(shaders.geo.a_color, 4, gl.UNSIGNED_BYTE, true, 0, 0);
+
+            gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, buf.geo_idx);
+            gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, new Uint16Array(geo_idx), gl.STATIC_DRAW);
+        }
+
+        gl.drawElements(gl.TRIANGLES, geo_idx.length, gl.UNSIGNED_SHORT, 0);
     }
 
 })
