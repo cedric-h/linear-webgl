@@ -239,7 +239,12 @@ let viewMatrix = mat4_create();
         graphCanvas.height *= window.devicePixelRatio;
     }
 
-    pMatrix = mat4_ortho(pMatrix, 0, gl.canvas.width, gl.canvas.height, 0, 1, -1);
+    pMatrix = mat4_ortho(
+        pMatrix,
+        gl.canvas.width *-0.5, gl.canvas.width * 0.5,
+        gl.canvas.height* 0.5, gl.canvas.height*-0.5,
+        1, -1
+    );
     gl.viewport(
         0,
         0,
@@ -256,6 +261,8 @@ let viewMatrix = mat4_create();
 }
 
 let scroll = 0, 
+    zoom = 1,
+    cameraX = 1,
     mouseX = 0, mouseY = 0,
     mouseDownX = 0, mouseDownY = 0,
     mouseDown = false, mouseReleased = false;
@@ -424,56 +431,44 @@ requestAnimationFrame(function frame(timestamp) {
 
 
     /* camera transform */
-    let fontscale;
-    let view;
+    let fontscale = 32;
+    let view = mat4_create();
     {
-        let total_zoom;
-        {
-            const zoom = 1.0 + 0.03*scroll;
+        const full_width = window.innerWidth*window.devicePixelRatio;
 
-            /* this block thinks about things in terms of one pixel which is cursed */
-            const focal = [mouseX, mouseY, 0, 1];
-            const tl = [-1, -1, -1,  1];
-            const br = [ 1,  1,  1,  1];
-            const inv = mat4_invert(mat4_create(), viewMatrix);
-            mat4_transform_vec4(tl, tl, inv);
-            mat4_transform_vec4(br, br, inv);
-            mat4_transform_vec4(focal, focal, inv);
+        const zoom_b4 = zoom;
+        zoom *= 1.0 - 0.03*scroll;
+        zoom = Math.min(zoom, 1.0);
+        const zoom_delta = zoom - zoom_b4;
 
-            let left = (tl[0] - focal[0])*zoom + focal[0];
-            let right = (br[0] - focal[0])*zoom + focal[0];
+        let cx = cameraX;
 
-            total_zoom = br[0] - tl[0];
-
-            mat4_ortho(
-                viewMatrix,
-                left, right,
-                tl[1], br[1],
-                br[2], tl[2]
-            );
+        if (scroll) {
+            const bias = (0.5 - mouseX / full_width);
+            const delta = full_width * zoom_delta*bias;
+            cx += delta;
         }
 
-        /* mouse drag */
-        let dragX = 0;
-        if (mouseDown) {
-            dragX += (mouseX - mouseDownX)
+        {
+            cx += mouseDown ? (mouseDownX - mouseX) * zoom : 0;
+            cx = Math.max(cx, -full_width*(1.0 - zoom)*0.5);
+            cx = Math.min(cx,  full_width*(1.0 - zoom)*0.5);
 
             if (mouseReleased) {
                 mouseReleased = mouseDown = false;
-
-                mat4_mul(viewMatrix, mat4_create_translate(dragX, 0), viewMatrix);
-
-                dragX = 0;
+                cameraX = cx;
             }
         }
 
-        /* text rendering wants the pen pixel-aligned, so scale here */
-        /* our pMatrix puts things in 0..1, but everything before that is in pixels */ 
-        // const view = mat4_create_translate(dragX + mouseX, dragY + mouseY)
-        view = mat4_create_translate(dragX, 0)
-        mat4_mul(view, view, viewMatrix);
+        if (scroll) cameraX = cx;
 
-        fontscale = FONT_WORLD_SPACE_SIZE * 2;
+        mat4_ortho(
+            view,
+            cx - zoom,
+            cx + zoom,
+            -1, 1,
+            -1, 1
+        );
     }
 
     const text_pos = [];
@@ -576,10 +571,10 @@ requestAnimationFrame(function frame(timestamp) {
             const ts_min = Date.parse("2024-04-01T22:15:00Z");
             const ts_max = Date.parse("2024-04-08T19:30:00Z");
 
-            const x_min = -500 + 0;
-            const x_max = -500 + 1000;
-            const y_min = -100 + 000;
-            const y_max = -100 + 200;
+            const x_min = -0.5 * window.innerWidth  * window.devicePixelRatio;
+            const x_max =  0.5 * window.innerWidth  * window.devicePixelRatio;
+            const y_min = -0.1 * window.innerHeight * window.devicePixelRatio;
+            const y_max =  0.1 * window.innerHeight * window.devicePixelRatio;
 
             drawBox(x_min, y_min, x_max, y_max, [25, 25, 25, 25]);
 
@@ -587,10 +582,11 @@ requestAnimationFrame(function frame(timestamp) {
             for (let i = 0; i < bar_count; i++) {
                 const ts = Math.min(ts_max, ts_min + i*DAY);
                 const x = lerp(x_min, x_max, inv_lerp(ts_min, ts_max, ts));
+                const text_x = Math.max(x_min + 30, Math.min(x_max - 30, x));
 
                 drawBox( 
-                    x - 1.25, y_min,
-                    x + 1.25, y_max,
+                    x - 1, y_min,
+                    x + 1, y_max,
                     [0, 0, 0, 100]
                 );
 
@@ -598,7 +594,7 @@ requestAnimationFrame(function frame(timestamp) {
                 const date = new Date(ts);
                 drawText(
                     `${date.getDate()}/${date.getMonth()}`,
-                    x,
+                    text_x,
                     y_min - FONT_WORLD_SPACE_SIZE,
                     ALIGN_CENTER
                 );
