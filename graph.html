@@ -465,7 +465,8 @@ requestAnimationFrame(function frame(timestamp) {
 
         /* offset the camera to keep us centered on what we're scrolling toward */
         if (input.scroll) {
-            const bias = (0.5 - input.mouseX / full_width);
+            let bias = (0.5 - input.mouseX / (full_width - RIGHT_PAD));
+            bias = Math.max(-0.5, bias);
             const delta = full_width * zoom_delta*bias;
             cx += delta;
         }
