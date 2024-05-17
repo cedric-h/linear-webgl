@@ -17,6 +17,11 @@
  * [ ] have frame ring buffer for scratch mats
  */
 
+const SECOND = 1000;
+const MINUTE = 60 * SECOND;
+const HOUR   = 60 * MINUTE;
+const DAY    = 24 * HOUR;
+            
 /* maps character to location in spritesheet */
 const sdfs = {};
 /* higher number = prettier text using more VRAM */
@@ -25,218 +30,61 @@ const SDF_FONT_SIZE = 32;
 /* how big text on screen */
 const FONT_WORLD_SPACE_SIZE = 32;
 
-/* right side of graph with units */
-const RIGHT_PAD = 2.5 * FONT_WORLD_SPACE_SIZE;
+const RIGHT_PAD = 2.5 * FONT_WORLD_SPACE_SIZE; /* right side of graph with units */
+const SOURCE_DATA_INTERVAL = MINUTE*5;         /* how spaced out are the entries in your source data? */
 
-const updateSDF = (() => {
-
-    const chars = ' abcdefghijklmnopqrstuvwxyzZABCDEFGHIJKLMNOPQRSTUVWXYZ!@#$%^&*()1234567890<,>./?;:\'"\\|{}[]°';
-    const fontCanvas = document.createElement('canvas');
-    fontCanvas.width = fontCanvas.height = 512
-    const ctx = fontCanvas.getContext('2d');
-
-    const TinySDF = (() => {
-        const INF = 1e20;
-
-        class TinySDF {
-            constructor({
-                fontSize = 24,
-                buffer = 3,
-                radius = 8,
-                cutoff = 0.25,
-                fontFamily = 'sans-serif',
-                fontWeight = 'normal',
-                fontStyle = 'normal'
-            } = {}) {
-                this.buffer = buffer;
-                this.cutoff = cutoff;
-                this.radius = radius;
-
-                // make the canvas size big enough to both have the specified buffer around the glyph
-                // for "halo", and account for some glyphs possibly being larger than their font size
-                const size = this.size = fontSize + buffer * 4;
-
-                const canvas = this._createCanvas(size);
-                const ctx = this.ctx = canvas.getContext('2d', {willReadFrequently: true});
-                ctx.font = `${fontStyle} ${fontWeight} ${fontSize}px ${fontFamily}`;
-
-                ctx.textBaseline = 'alphabetic';
-                ctx.textAlign = 'left'; // Necessary so that RTL text doesn't have different alignment
-                ctx.fillStyle = 'black';
-
-                // temporary arrays for the distance transform
-                this.gridOuter = new Float64Array(size * size);
-                this.gridInner = new Float64Array(size * size);
-                this.f = new Float64Array(size);
-                this.z = new Float64Array(size + 1);
-                this.v = new Uint16Array(size);
-            }
-
-            _createCanvas(size) {
-                const canvas = document.createElement('canvas');
-                canvas.width = canvas.height = size;
-                return canvas;
-            }
-
-            draw(char) {
-                const {
-                    width: glyphAdvance,
-                    actualBoundingBoxAscent,
-                    actualBoundingBoxDescent,
-                    actualBoundingBoxLeft,
-                    actualBoundingBoxRight
-                } = this.ctx.measureText(char);
-
-                // The integer/pixel part of the top alignment is encoded in metrics.glyphTop
-                // The remainder is implicitly encoded in the rasterization
-                const glyphTop = Math.ceil(actualBoundingBoxAscent);
-                const glyphLeft = 0;
-
-                // If the glyph overflows the canvas size, it will be clipped at the bottom/right
-                const glyphWidth = Math.max(0, Math.min(this.size - this.buffer, Math.ceil(actualBoundingBoxRight - actualBoundingBoxLeft)));
-                const glyphHeight = Math.min(this.size - this.buffer, glyphTop + Math.ceil(actualBoundingBoxDescent));
-
-                const width = glyphWidth + 2 * this.buffer;
-                const height = glyphHeight + 2 * this.buffer;
-
-                const len = Math.max(width * height, 0);
-                const data = new Uint8ClampedArray(len);
-                const glyph = {data, width, height, glyphWidth, glyphHeight, glyphTop, glyphLeft, glyphAdvance};
-                if (glyphWidth === 0 || glyphHeight === 0) return glyph;
-
-                const {ctx, buffer, gridInner, gridOuter} = this;
-                ctx.clearRect(buffer, buffer, glyphWidth, glyphHeight);
-                ctx.fillText(char, buffer, buffer + glyphTop);
-                const imgData = ctx.getImageData(buffer, buffer, glyphWidth, glyphHeight);
-
-                // Initialize grids outside the glyph range to alpha 0
-                gridOuter.fill(INF, 0, len);
-                gridInner.fill(0, 0, len);
-
-                for (let y = 0; y < glyphHeight; y++) {
-                    for (let x = 0; x < glyphWidth; x++) {
-                        const a = imgData.data[4 * (y * glyphWidth + x) + 3] / 255; // alpha value
-                        if (a === 0) continue; // empty pixels
-
-                        const j = (y + buffer) * width + x + buffer;
-
-                        if (a === 1) { // fully drawn pixels
-                            gridOuter[j] = 0;
-                            gridInner[j] = INF;
-
-                        } else { // aliased pixels
-                            const d = 0.5 - a;
-                            gridOuter[j] = d > 0 ? d * d : 0;
-                            gridInner[j] = d < 0 ? d * d : 0;
-                        }
-                    }
-                }
-
-                edt(gridOuter, 0, 0, width, height, width, this.f, this.v, this.z);
-                edt(gridInner, buffer, buffer, glyphWidth, glyphHeight, width, this.f, this.v, this.z);
-
-                for (let i = 0; i < len; i++) {
-                    const d = Math.sqrt(gridOuter[i]) - Math.sqrt(gridInner[i]);
-                    data[i] = Math.round(255 - 255 * (d / this.radius + this.cutoff));
-                }
-
-                return glyph;
-            }
-        }
-
-        // 2D Euclidean squared distance transform by Felzenszwalb & Huttenlocher https://cs.brown.edu/~pff/papers/dt-final.pdf
-        function edt(data, x0, y0, width, height, gridSize, f, v, z) {
-            for (let x = x0; x < x0 + width; x++) edt1d(data, y0 * gridSize + x, gridSize, height, f, v, z);
-            for (let y = y0; y < y0 + height; y++) edt1d(data, y * gridSize + x0, 1, width, f, v, z);
-        }
-
-        // 1D squared distance transform
-        function edt1d(grid, offset, stride, length, f, v, z) {
-            v[0] = 0;
-            z[0] = -INF;
-            z[1] = INF;
-            f[0] = grid[offset];
-
-            for (let q = 1, k = 0, s = 0; q < length; q++) {
-                f[q] = grid[offset + q * stride];
-                const q2 = q * q;
-                do {
-                    const r = v[k];
-                    s = (f[q] - f[r] + q2 - r * r) / (q - r) / 2;
-                } while (s <= z[k] && --k > -1);
-
-                k++;
-                v[k] = q;
-                z[k] = s;
-                z[k + 1] = INF;
-            }
-
-            for (let q = 0, k = 0; q < length; q++) {
-                while (z[k + 1] < q) k++;
-                const r = v[k];
-                const qr = q - r;
-                grid[offset + q * stride] = f[r] + qr * qr;
-            }
-        }
-
-        return TinySDF
-    })()
-
-    return function updateSDF() {
-        // Convert alpha-only to RGBA so we can use `putImageData` for building the composite bitmap
-        function makeRGBAImageData(alphaChannel, width, height) {
-            const imageData = ctx.createImageData(width, height);
-            for (let i = 0; i < alphaChannel.length; i++) {
-                imageData.data[4 * i + 0] = alphaChannel[i];
-                imageData.data[4 * i + 1] = alphaChannel[i];
-                imageData.data[4 * i + 2] = alphaChannel[i];
-                imageData.data[4 * i + 3] = 255;
-            }
-            return imageData;
-        }
-
-        const charWidths = Array.from({ length: chars.length }, _ => 0);
-
-        ctx.clearRect(0, 0, fontCanvas.width, fontCanvas.height);
-        const fontSize = +SDF_FONT_SIZE;
-        const fontWeight = +SDF_FONT_SIZE;
-        const fontStyle = 'normal';
-        const buffer = Math.ceil(fontSize / 8);
-        const radius = Math.ceil(fontSize / 3);
-        const sdf = new TinySDF({fontSize, buffer, radius, fontWeight, fontStyle});
-        const size = fontSize + buffer * 2;
-
-        const now = performance.now();
-        let i = 0;
-        for (let y = 0; y + size <= fontCanvas.height && i < chars.length; y += size) {
-            for (let x = 0; x + size <= fontCanvas.width && i < chars.length; x += size) {
-                const glyph = sdf.draw(chars[i]);
-                const {data, width, height} = glyph;
-                delete glyph.data;
-                sdfs[chars[i]] = { x, y, glyph };
-                ctx.putImageData(makeRGBAImageData(data, width, height), x, y);
-                i++;
-            }
-        }
-        console.log(`${i} characters (${fontSize}px, font-weight: ${fontWeight} with ${buffer}px buffer) rendered in ${Math.round(performance.now() - now)}ms.`)
-
-        return ctx.getImageData(0, 0, fontCanvas.width, fontCanvas.height)
+const graphs = [
+    {
+        name: 'temp',
+        unit_suffix: '°F',
+        units_per_stripe: 5,
+        lines: new Map()
+    },
+    {
+        name: 'rad temp',
+        unit_suffix: '°F',
+        units_per_stripe: 10,
+        lines: new Map()
+    },
+    {
+        name: 'humidity',
+        unit_suffix: '%',
+        units_per_stripe: 10,
+        lines: new Map()
+    },
+    {
+        name: 'pressure',
+        unit_suffix: '',
+        units_per_stripe: 0.25,
+        lines: new Map()
+    },
+    {
+        name: 'light',
+        unit_suffix: '',
+        units_per_stripe: 100,
+        lines: new Map()
     }
-})()
+];
 
-const lines = new Map();
+/* [temp, rad temp, humidity, pressure, light] */
 {
     const GOLDEN_RATIO = 1.618033988749894;
     for (const row of csv().split('\n')) {
-        const [timestamp, id, name, temp] = row.split(',');
+        const columns = row.split(',');
+        const [timestamp, id, name] = columns;
 
-        if (!lines.has(id))
-            lines.set(id, {
-                data: [],
-                color: hsl_to_rgb([(GOLDEN_RATIO * lines.size)%1.0, 0.6, 0.75, 255])
-            });
+        const data = columns.slice(3);
+        for (let i = 0; i < data.length; i++) {
+            const lines = graphs[i].lines;
 
-        lines.get(id).data.push(temp);
+            if (!lines.has(id))
+                lines.set(id, {
+                    data: [],
+                    color: hsl_to_rgb([(GOLDEN_RATIO * lines.size)%1.0, 0.6, 0.75, 255])
+                });
+
+            lines.get(id).data.push(data[i]);
+        }
     }
 }
 
@@ -620,78 +468,70 @@ requestAnimationFrame(function frame(timestamp) {
 
     /* use "draw*" to fill buffers with interesting data */
     {
+        const ts_data_min = Date.parse("2024-04-01T22:15:00Z");
+        const ts_data_max = Date.parse("2024-04-08T19:30:00Z");
 
-        // for (let i = 0; i < 40; i++) {
-        //     const theta = i/40 * Math.PI*2;
-        //     const radius = 1800;
-        //     const circleX = Math.cos(theta) * radius;
-        //     const circleY = Math.sin(theta) * radius;
-
-        //     drawText('x', circleX, circleY, ALIGN_CENTER);
-        // }
-        // drawText('accelerated instance graph', 0, 0, ALIGN_CENTER);
-
+        /* abuse the view and pixel matrix to stop us from rendering stuff that's offscreen */
+        let screen_min_x, screen_max_x;
         {
+            let p = [0, 0, 0, 1]
 
-            const ts_data_min = Date.parse("2024-04-01T22:15:00Z");
-            const ts_data_max = Date.parse("2024-04-08T19:30:00Z");
+            p = [-0.500 * window.innerWidth  * window.devicePixelRatio, 0, 0, 1];
+            mat4_transform_vec4(p, p, view);
+            mat4_transform_vec4(p, p, pMatrix);
+            screen_min_x = p[0];
 
-            /* abuse the view and pixel matrix to stop us from rendering stuff that's offscreen */
-            let screen_min_x, screen_max_x;
-            {
-                let p = [0, 0, 0, 1]
+            p = [ 0.500 * window.innerWidth  * window.devicePixelRatio, 0, 0, 1];
+            mat4_transform_vec4(p, p, view);
+            mat4_transform_vec4(p, p, pMatrix);
+            screen_max_x = p[0];
+        }
 
-                p = [-0.500 * window.innerWidth  * window.devicePixelRatio, 0, 0, 1];
-                mat4_transform_vec4(p, p, view);
-                mat4_transform_vec4(p, p, pMatrix);
-                screen_min_x = p[0];
+        let interval = DAY;
+        {
+            const ts_delta_ms = ts_data_max - ts_data_min;
 
-                p = [ 0.500 * window.innerWidth  * window.devicePixelRatio, 0, 0, 1];
-                mat4_transform_vec4(p, p, view);
-                mat4_transform_vec4(p, p, pMatrix);
-                screen_max_x = p[0];
-            }
+            const intervals_ms = [
+                MINUTE*3,
+                MINUTE*15,
+                HOUR*2,
+                HOUR*8,
+                DAY*2
+            ];
 
-            const SECOND = 1000;
-            const MINUTE = 60 * SECOND;
-            const HOUR   = 60 * MINUTE;
-            const DAY    = 24 * HOUR;
-            
-            let interval = DAY;
-            {
-                const ts_delta_ms = ts_data_max - ts_data_min;
+            let closest_interval_delta = Infinity;
+            for (let i = 0; i < intervals_ms.length; i++) {
+                const delta = Math.abs(input.zoom*ts_delta_ms - intervals_ms[i]);
 
-                const intervals_ms = [
-                    MINUTE*3,
-                    MINUTE*15,
-                    HOUR*2,
-                    HOUR*8,
-                    DAY*2
-                ];
-
-                let closest_interval_delta = Infinity;
-                for (let i = 0; i < intervals_ms.length; i++) {
-                    const delta = Math.abs(input.zoom*ts_delta_ms - intervals_ms[i]);
-
-                    if (delta < closest_interval_delta) {
-                        closest_interval_delta = delta;
-                        interval = intervals_ms[i] * 0.25;
-                    }
+                if (delta < closest_interval_delta) {
+                    closest_interval_delta = delta;
+                    interval = intervals_ms[i] * 0.25;
                 }
             }
+        }
 
-            /* now that we know the interval, you could adjust the start time to align nicely with it */
-            const ts_min = ts_data_min; // Math.floor(ts_data_min / DAY) * DAY;
-            const ts_max = ts_data_max;
+        /* now that we know the interval, you could adjust the start time to align nicely with it */
+        const ts_min = ts_data_min; // Math.floor(ts_data_min / DAY) * DAY;
+        const ts_max = ts_data_max;
+
+        for (let graph_idx = 0; graph_idx < graphs.length; graph_idx++) {
+            const { unit_suffix, units_per_stripe, lines } = graphs[graph_idx];
 
             const full_width  = window.innerWidth  * window.devicePixelRatio;
             const full_height = window.innerHeight * window.devicePixelRatio;
+
+            const TOP_PAD    = 40;
+            const BOTTOM_PAD = 15;
+
+            const GRAPH_HEIGHT = 0.16;
+
+            const top = -0.492 + TOP_PAD/full_height;
             const x_min = -0.500 * full_width;
             const x_max =  0.500 * full_width;
-            const y_min = -0.115 * full_height;
-            const y_max =  0.115 * full_height;
+            const y_min = (top + (1.25*graph_idx + 0)*GRAPH_HEIGHT)*full_height;
+            const y_max = (top + (1.25*graph_idx + 1)*GRAPH_HEIGHT)*full_height;
 
-            drawBox(x_min, y_min-40, x_max, y_max+15, [255, 255, 255, 255]);
+            drawBox(x_min, y_min-TOP_PAD, x_max, y_max+BOTTOM_PAD, [255, 255, 255, 255]);
 
             /* data */
             let data_range_min = Infinity, data_range_max = -Infinity;
@@ -704,15 +544,15 @@ requestAnimationFrame(function frame(timestamp) {
 
             /* vertical detail */
             {
-                const UNITS_PER_STRIPE = 5;
-
-                const stripe_first = Math.floor(data_range_min/UNITS_PER_STRIPE);
-                const stripe_last  = Math. ceil(data_range_max/UNITS_PER_STRIPE);
-                const stripe_count = (data_range_max - data_range_min)/UNITS_PER_STRIPE;
+                const stripe_first = Math.floor(data_range_min/units_per_stripe)*units_per_stripe;
+                const stripe_last  = Math. ceil(data_range_max/units_per_stripe)*units_per_stripe;
+                const stripe_count = (data_range_max - data_range_min)/units_per_stripe;
                 const stripe_thickness = (y_min - y_max)/stripe_count*0.25;
 
-                for (let i = stripe_first; i <= stripe_last; i++) {
-                    const t = inv_lerp(data_range_min, data_range_max, i*UNITS_PER_STRIPE);
+                for (let i = stripe_first; i <= stripe_last; i += units_per_stripe) {
+                    const units = i;
+
+                    const t = inv_lerp(data_range_max, data_range_min, units);
                     if (Math.abs(t - 0.5) > 0.5) continue;
 
                     const y = lerp(y_min, y_max, t);
@@ -724,9 +564,9 @@ requestAnimationFrame(function frame(timestamp) {
 
                     drawTextWithView(
                         units_view,
-                        i + '°F',
+                        i + unit_suffix,
                         x_max + RIGHT_PAD - FONT_WORLD_SPACE_SIZE - 5,
-                        y + FONT_WORLD_SPACE_SIZE * 0.75,
+                        Math.max(y_min, Math.min(y_max, y + FONT_WORLD_SPACE_SIZE * 0.75)),
                         ALIGN_CENTER
                     );
                 }
@@ -788,12 +628,11 @@ requestAnimationFrame(function frame(timestamp) {
 
             /* data lines */
             {
-                const SOURCE_DATA_INTERVAL = MINUTE*5;
                 for (const { data, color } of lines.values()) {
                     const y_map = datapoint => lerp(
                         y_min,
                         y_max,
-                        inv_lerp(data_range_min, data_range_max, datapoint)
+                        inv_lerp(data_range_max, data_range_min, datapoint)
                     );
 
                     let last_y = y_map(data[0]);
@@ -1065,6 +904,201 @@ function mat4_invert(out, a) {
   out[14] = (a31 * b01 - a30 * b03 - a32 * b00) * det;
   out[15] = (a20 * b03 - a21 * b01 + a22 * b00) * det;
   return out;
+}
+
+function updateSDF() {
+    const chars = ' abcdefghijklmnopqrstuvwxyzZABCDEFGHIJKLMNOPQRSTUVWXYZ!@#$%^&*()1234567890<,>./?;:\'"\\|{}[]°';
+    const fontCanvas = document.createElement('canvas');
+    fontCanvas.width = fontCanvas.height = 512
+    const ctx = fontCanvas.getContext('2d');
+
+    const TinySDF = (() => {
+        const INF = 1e20;
+
+        class TinySDF {
+            constructor({
+                fontSize = 24,
+                buffer = 3,
+                radius = 8,
+                cutoff = 0.25,
+                fontFamily = 'sans-serif',
+                fontWeight = 'normal',
+                fontStyle = 'normal'
+            } = {}) {
+                this.buffer = buffer;
+                this.cutoff = cutoff;
+                this.radius = radius;
+
+                // make the canvas size big enough to both have the specified buffer around the glyph
+                // for "halo", and account for some glyphs possibly being larger than their font size
+                const size = this.size = fontSize + buffer * 4;
+
+                const canvas = this._createCanvas(size);
+                const ctx = this.ctx = canvas.getContext('2d', {willReadFrequently: true});
+                ctx.font = `${fontStyle} ${fontWeight} ${fontSize}px ${fontFamily}`;
+
+                ctx.textBaseline = 'alphabetic';
+                ctx.textAlign = 'left'; // Necessary so that RTL text doesn't have different alignment
+                ctx.fillStyle = 'black';
+
+                // temporary arrays for the distance transform
+                this.gridOuter = new Float64Array(size * size);
+                this.gridInner = new Float64Array(size * size);
+                this.f = new Float64Array(size);
+                this.z = new Float64Array(size + 1);
+                this.v = new Uint16Array(size);
+            }
+
+            _createCanvas(size) {
+                const canvas = document.createElement('canvas');
+                canvas.width = canvas.height = size;
+                return canvas;
+            }
+
+            draw(char) {
+                const {
+                    width: glyphAdvance,
+                    actualBoundingBoxAscent,
+                    actualBoundingBoxDescent,
+                    actualBoundingBoxLeft,
+                    actualBoundingBoxRight
+                } = this.ctx.measureText(char);
+
+                // The integer/pixel part of the top alignment is encoded in metrics.glyphTop
+                // The remainder is implicitly encoded in the rasterization
+                const glyphTop = Math.ceil(actualBoundingBoxAscent);
+                const glyphLeft = 0;
+
+                // If the glyph overflows the canvas size, it will be clipped at the bottom/right
+                const glyphWidth = Math.max(0, Math.min(this.size - this.buffer, Math.ceil(actualBoundingBoxRight - actualBoundingBoxLeft)));
+                const glyphHeight = Math.min(this.size - this.buffer, glyphTop + Math.ceil(actualBoundingBoxDescent));
+
+                const width = glyphWidth + 2 * this.buffer;
+                const height = glyphHeight + 2 * this.buffer;
+
+                const len = Math.max(width * height, 0);
+                const data = new Uint8ClampedArray(len);
+                const glyph = {data, width, height, glyphWidth, glyphHeight, glyphTop, glyphLeft, glyphAdvance};
+                if (glyphWidth === 0 || glyphHeight === 0) return glyph;
+
+                const {ctx, buffer, gridInner, gridOuter} = this;
+                ctx.clearRect(buffer, buffer, glyphWidth, glyphHeight);
+                ctx.fillText(char, buffer, buffer + glyphTop);
+                const imgData = ctx.getImageData(buffer, buffer, glyphWidth, glyphHeight);
+
+                // Initialize grids outside the glyph range to alpha 0
+                gridOuter.fill(INF, 0, len);
+                gridInner.fill(0, 0, len);
+
+                for (let y = 0; y < glyphHeight; y++) {
+                    for (let x = 0; x < glyphWidth; x++) {
+                        const a = imgData.data[4 * (y * glyphWidth + x) + 3] / 255; // alpha value
+                        if (a === 0) continue; // empty pixels
+
+                        const j = (y + buffer) * width + x + buffer;
+
+                        if (a === 1) { // fully drawn pixels
+                            gridOuter[j] = 0;
+                            gridInner[j] = INF;
+
+                        } else { // aliased pixels
+                            const d = 0.5 - a;
+                            gridOuter[j] = d > 0 ? d * d : 0;
+                            gridInner[j] = d < 0 ? d * d : 0;
+                        }
+                    }
+                }
+
+                edt(gridOuter, 0, 0, width, height, width, this.f, this.v, this.z);
+                edt(gridInner, buffer, buffer, glyphWidth, glyphHeight, width, this.f, this.v, this.z);
+
+                for (let i = 0; i < len; i++) {
+                    const d = Math.sqrt(gridOuter[i]) - Math.sqrt(gridInner[i]);
+                    data[i] = Math.round(255 - 255 * (d / this.radius + this.cutoff));
+                }
+
+                return glyph;
+            }
+        }
+
+        // 2D Euclidean squared distance transform by Felzenszwalb & Huttenlocher https://cs.brown.edu/~pff/papers/dt-final.pdf
+        function edt(data, x0, y0, width, height, gridSize, f, v, z) {
+            for (let x = x0; x < x0 + width; x++) edt1d(data, y0 * gridSize + x, gridSize, height, f, v, z);
+            for (let y = y0; y < y0 + height; y++) edt1d(data, y * gridSize + x0, 1, width, f, v, z);
+        }
+
+        // 1D squared distance transform
+        function edt1d(grid, offset, stride, length, f, v, z) {
+            v[0] = 0;
+            z[0] = -INF;
+            z[1] = INF;
+            f[0] = grid[offset];
+
+            for (let q = 1, k = 0, s = 0; q < length; q++) {
+                f[q] = grid[offset + q * stride];
+                const q2 = q * q;
+                do {
+                    const r = v[k];
+                    s = (f[q] - f[r] + q2 - r * r) / (q - r) / 2;
+                } while (s <= z[k] && --k > -1);
+
+                k++;
+                v[k] = q;
+                z[k] = s;
+                z[k + 1] = INF;
+            }
+
+            for (let q = 0, k = 0; q < length; q++) {
+                while (z[k + 1] < q) k++;
+                const r = v[k];
+                const qr = q - r;
+                grid[offset + q * stride] = f[r] + qr * qr;
+            }
+        }
+
+        return TinySDF
+    })()
+
+    {
+        // Convert alpha-only to RGBA so we can use `putImageData` for building the composite bitmap
+        function makeRGBAImageData(alphaChannel, width, height) {
+            const imageData = ctx.createImageData(width, height);
+            for (let i = 0; i < alphaChannel.length; i++) {
+                imageData.data[4 * i + 0] = alphaChannel[i];
+                imageData.data[4 * i + 1] = alphaChannel[i];
+                imageData.data[4 * i + 2] = alphaChannel[i];
+                imageData.data[4 * i + 3] = 255;
+            }
+            return imageData;
+        }
+
+        const charWidths = Array.from({ length: chars.length }, _ => 0);
+
+        ctx.clearRect(0, 0, fontCanvas.width, fontCanvas.height);
+        const fontSize = +SDF_FONT_SIZE;
+        const fontWeight = +SDF_FONT_SIZE;
+        const fontStyle = 'normal';
+        const buffer = Math.ceil(fontSize / 8);
+        const radius = Math.ceil(fontSize / 3);
+        const sdf = new TinySDF({fontSize, buffer, radius, fontWeight, fontStyle});
+        const size = fontSize + buffer * 2;
+
+        const now = performance.now();
+        let i = 0;
+        for (let y = 0; y + size <= fontCanvas.height && i < chars.length; y += size) {
+            for (let x = 0; x + size <= fontCanvas.width && i < chars.length; x += size) {
+                const glyph = sdf.draw(chars[i]);
+                const {data, width, height} = glyph;
+                delete glyph.data;
+                sdfs[chars[i]] = { x, y, glyph };
+                ctx.putImageData(makeRGBAImageData(data, width, height), x, y);
+                i++;
+            }
+        }
+        console.log(`${i} characters (${fontSize}px, font-weight: ${fontWeight} with ${buffer}px buffer) rendered in ${Math.round(performance.now() - now)}ms.`)
+
+        return ctx.getImageData(0, 0, fontCanvas.width, fontCanvas.height)
+    }
 }
 
 function hsl_to_rgb(arr) {
