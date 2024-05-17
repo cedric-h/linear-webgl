@@ -458,7 +458,6 @@ requestAnimationFrame(function frame(timestamp) {
 
         const zoom_b4 = input.zoom;
         input.zoom *= 1.0 - 0.08*input.scroll;
-        input.scroll *= 0.8; /* exponential decay */
         input.zoom = Math.min(input.zoom, 1.0);
         input.zoom = Math.max(input.zoom, 0.0001); /* hack; look at interval to determine proper value */
         const zoom_delta = input.zoom - zoom_b4;
@@ -486,7 +485,7 @@ requestAnimationFrame(function frame(timestamp) {
 
         /* this just makes it so w/o bias you don't zoom back in and out to the same place,
          * may not be necessary. try deleting it!  */
-        if (input.scroll) input.cameraX = cx;
+        if (Math.abs(input.scroll) == 1) input.cameraX = cx;
 
         mat4_ortho(
             view,
@@ -495,6 +494,8 @@ requestAnimationFrame(function frame(timestamp) {
             -1, 1,
             -1, 1
         );
+
+        input.scroll *= 0.2; /* exponential decay */
     }
 
     const text_pos = [];
@@ -602,7 +603,7 @@ requestAnimationFrame(function frame(timestamp) {
         geo_idx.push(vbuf_i + 0, vbuf_i + 1, vbuf_i + 2, vbuf_i + 2, vbuf_i + 1, vbuf_i + 3);
     }
 
-    /* use "drawText" to fill the text buffer with interesting data */
+    /* use "draw*" to fill buffers with interesting data */
     {
 
         // for (let i = 0; i < 40; i++) {
@@ -733,20 +734,43 @@ requestAnimationFrame(function frame(timestamp) {
             }
 
             /* data */
+            let data_range_min = Infinity, data_range_max = -Infinity;
+            {
+                for (const { data, color } of lines.values()) {
+                    data_range_min = Math.min(data_range_min, Math.min(...data));
+                    data_range_max = Math.max(data_range_max, Math.max(...data));
+                }
+            }
+
             for (const { data, color } of lines.values()) {
-                const min = Math.min(...data);
-                const max = Math.max(...data);
+                const y_map = datapoint => lerp(
+                    y_min,
+                    y_max,
+                    inv_lerp(data_range_min, data_range_max, datapoint)
+                );
 
-                let last_y = lerp(y_min, y_max, inv_lerp(min, max, data[0]));
+                let last_y = y_map(data[0]);
+                let last_x = x_min;
 
-                const step = 15;
-                for (let i = 1; i < data.length; i += step) {
+                const interval = HOUR;
+                const interval_count = 1 + Math.ceil((ts_max - ts_min) / interval);
+                for (let interval_i = 0; interval_i < interval_count; interval_i += (1/3)) {
+                    const ts = Math.min(ts_max, ts_min + interval_i*interval);
+                    const t = inv_lerp(ts_min, ts_max, ts);
+
+                    const x = lerp(x_min, x_max, t);
+                    if (Math.abs(lerp(screen_min_x, screen_max_x, t)) > 1.05) continue;
+
+                    const data_index = Math.round((ts - ts_min) / (MINUTE*5));
+                    const y = y_map(data[data_index]);
                     drawLine(
-                        i-step - full_width*0.5, last_y,
-                        i + 0  - full_width*0.5, last_y = lerp(y_min, y_max, inv_lerp(min, max, data[i])),
+                        last_x, last_y,
+                        x, y,
                         5,
                         color
                     );
+                    last_y = y;
+                    last_x = x;
                 }
             }
 
