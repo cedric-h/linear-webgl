@@ -289,11 +289,8 @@ const input = {
     mouseDown:     false,
     mouseReleased: false,
 }
-let wheelTimeout;
 window.onwheel = e => {
     input.scroll = Math.sign(e.deltaY);
-    clearTimeout(wheelTimeout)
-    wheelTimeout = setTimeout(() => input.scroll = 0, 100)
 }
 window.onmousedown = e => {
     input.mouseDown = true;
@@ -460,7 +457,8 @@ requestAnimationFrame(function frame(timestamp) {
         const full_width = window.innerWidth*window.devicePixelRatio;
 
         const zoom_b4 = input.zoom;
-        input.zoom *= 1.0 - 0.06*input.scroll;
+        input.zoom *= 1.0 - 0.08*input.scroll;
+        input.scroll *= 0.8; /* exponential decay */
         input.zoom = Math.min(input.zoom, 1.0);
         input.zoom = Math.max(input.zoom, 0.0001); /* hack; look at interval to determine proper value */
         const zoom_delta = input.zoom - zoom_b4;
