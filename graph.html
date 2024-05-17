@@ -220,14 +220,25 @@ const updateSDF = (() => {
         return ctx.getImageData(0, 0, fontCanvas.width, fontCanvas.height)
     }
 })()
-const data = [...new Map(csv().split('\n').map(x => {
-    const rows = x.split(',');
-    const ts = rows.shift();
-    return [ts, (rows[3] - 32) / 1.8];
-})).values()];
+
+const lines = new Map();
+{
+    const GOLDEN_RATIO = 1.618033988749894;
+    for (const row of csv().split('\n')) {
+        const [timestamp, id, name, temp] = row.split(',');
+
+        if (!lines.has(id))
+            lines.set(id, {
+                data: [],
+                color: hsl_to_rgb([(GOLDEN_RATIO * lines.size)%1.0, 0.6, 0.75, 255])
+            });
+
+        lines.get(id).data.push(temp);
+    }
+}
 
 const graphCanvas = document.getElementById('inspectorGraphCanvas');
-const gl = graphCanvas.getContext('webgl', {antialias: false});
+const gl = graphCanvas.getContext('webgl', {antialias: true});
 if (!gl) { alert('Failed to initialize WebGL'); }
 
 let pMatrix = mat4_create();
@@ -570,10 +581,10 @@ requestAnimationFrame(function frame(timestamp) {
         const dx = b_x - a_x;
         const dy = b_y - a_y;
         const nx = -dy; /* perp */
-        const ny =  dx;
+        const ny =  dx / input.zoom;
         const tlen = Math.sqrt(nx*nx + ny*ny) / (thickness * 0.5);
         if (tlen <= 0) return;
-        const tx = nx/tlen;
+        const tx = nx/tlen * input.zoom;
         const ty = ny/tlen;
 
         geo_color.push(
@@ -583,7 +594,7 @@ requestAnimationFrame(function frame(timestamp) {
             color[0], color[1], color[2], color[3]
         );
 
-        const vbuf_i = geo_pos.length / 3;
+        const vbuf_i = geo_pos.length / 2;
         const p = [0, 0, 0, 1]
         p[0] = a_x + tx, p[1] = a_y + ty, mat4_transform_vec4(p, p, view), geo_pos.push(p[0], p[1]);
         p[0] = a_x - tx, p[1] = a_y - ty, mat4_transform_vec4(p, p, view), geo_pos.push(p[0], p[1]);
@@ -658,10 +669,12 @@ requestAnimationFrame(function frame(timestamp) {
             /* now that we know the interval, let's adjust the start time to align nicely with it */
             ts_min = Math.floor(ts_min / DAY) * DAY;
 
-            const x_min = -0.500 * window.innerWidth  * window.devicePixelRatio;
-            const x_max =  0.500 * window.innerWidth  * window.devicePixelRatio;
-            const y_min = -0.115 * window.innerHeight * window.devicePixelRatio;
-            const y_max =  0.115 * window.innerHeight * window.devicePixelRatio;
+            const full_width  = window.innerWidth  * window.devicePixelRatio;
+            const full_height = window.innerHeight * window.devicePixelRatio;
+            const x_min = -0.500 * full_width;
+            const x_max =  0.500 * full_width;
+            const y_min = -0.115 * full_height;
+            const y_max =  0.115 * full_height;
 
             drawBox(x_min, y_min-40, x_max, y_max+15, [255, 255, 255, 255]);
 
@@ -689,7 +702,7 @@ requestAnimationFrame(function frame(timestamp) {
                     const t = inv_lerp(ts_min, ts_max, ts);
 
                     const x = lerp(x_min, x_max, t);
-                    if (Math.abs(lerp(screen_min_x, screen_max_x, t)) > 1.0) continue;
+                    if (Math.abs(lerp(screen_min_x, screen_max_x, t)) > 1.05) continue;
 
                     const pad = input.zoom*30;
                     const text_x = Math.max(x_min + pad, Math.min(x_max - pad, x));
@@ -711,7 +724,7 @@ requestAnimationFrame(function frame(timestamp) {
                     const t = inv_lerp(ts_min, ts_max, ts);
 
                     const x = lerp(x_min, x_max, t);
-                    if (Math.abs(lerp(screen_min_x, screen_max_x, t)) > 1.0) continue;
+                    if (Math.abs(lerp(screen_min_x, screen_max_x, t)) > 1.05) continue;
 
                     drawBox( 
                         x - input.zoom, y_min + 10,
@@ -722,14 +735,19 @@ requestAnimationFrame(function frame(timestamp) {
             }
 
             /* data */
-            {
-                let last_y = data[0];
-                for (let i = 1; i < data.length; i += 10) {
+            for (const { data, color } of lines.values()) {
+                const min = Math.min(...data);
+                const max = Math.max(...data);
+
+                let last_y = lerp(y_min, y_max, inv_lerp(min, max, data[0]));
+
+                const step = 15;
+                for (let i = 1; i < data.length; i += step) {
                     drawLine(
-                        i, last_y,
-                        i, last_y = data[i],
-                        input.zoom * 40,
-                        [255, 200, 200, 255]
+                        i-step - full_width*0.5, last_y,
+                        i + 0  - full_width*0.5, last_y = lerp(y_min, y_max, inv_lerp(min, max, data[i])),
+                        5,
+                        color
                     );
                 }
             }
@@ -738,7 +756,7 @@ requestAnimationFrame(function frame(timestamp) {
     }
 
     /* clear all */
-    gl.clearColor(0.7, 0.8, 0.7, 1);
+    gl.clearColor(0.95, 0.95, 1.00, 1);
     gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
 
     /* geo pass */
@@ -960,6 +978,36 @@ function mat4_invert(out, a) {
   out[14] = (a31 * b01 - a30 * b03 - a32 * b00) * det;
   out[15] = (a20 * b03 - a21 * b01 + a22 * b00) * det;
   return out;
+}
+
+function hsl_to_rgb(arr) {
+    function hue_to_rgb(p, q, t) {
+      if (t < 0) t += 1;
+      if (t > 1) t -= 1;
+      if (t < 1/6) return p + (q - p) * 6 * t;
+      if (t < 1/2) return q;
+      if (t < 2/3) return p + (q - p) * (2/3 - t) * 6;
+      return p;
+    }
+
+    const h = arr[0];
+    const s = arr[1];
+    const l = arr[2];
+
+    if (s === 0) {
+        r = g = b = l; // achromatic
+    } else {
+        const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
+        const p = 2 * l - q;
+        r = hue_to_rgb(p, q, h + 1/3);
+        g = hue_to_rgb(p, q, h);
+        b = hue_to_rgb(p, q, h - 1/3);
+    }
+
+    arr[0] = r*256;
+    arr[1] = g*256;
+    arr[2] = b*256;
+    return arr;
 }
 
 
