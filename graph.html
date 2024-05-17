@@ -25,9 +25,12 @@ const SDF_FONT_SIZE = 32;
 /* how big text on screen */
 const FONT_WORLD_SPACE_SIZE = 32;
 
+/* right side of graph with units */
+const RIGHT_PAD = 2.5 * FONT_WORLD_SPACE_SIZE;
+
 const updateSDF = (() => {
 
-    const chars = ' abcdefghijklmnopqrstuvwxyzZABCDEFGHIJKLMNOPQRSTUVWXYZ!@#$%^&*()1234567890<,>./?;:\'"\\|{}[]';
+    const chars = ' abcdefghijklmnopqrstuvwxyzZABCDEFGHIJKLMNOPQRSTUVWXYZ!@#$%^&*()1234567890<,>./?;:\'"\\|{}[]°';
     const fontCanvas = document.createElement('canvas');
     fontCanvas.width = fontCanvas.height = 512
     const ctx = fontCanvas.getContext('2d');
@@ -256,12 +259,6 @@ let viewMatrix = mat4_create();
         graphCanvas.height *= window.devicePixelRatio;
     }
 
-    pMatrix = mat4_ortho(
-        pMatrix,
-        gl.canvas.width *-0.5, gl.canvas.width * 0.5,
-        gl.canvas.height* 0.5, gl.canvas.height*-0.5,
-        1, -1
-    );
     gl.viewport(
         0,
         0,
@@ -452,6 +449,7 @@ requestAnimationFrame(function frame(timestamp) {
 
 
     /* camera transform */
+    const units_view = mat4_create();
     let fontscale = 32;
     let view = mat4_create();
     {
@@ -496,8 +494,15 @@ requestAnimationFrame(function frame(timestamp) {
             -1, 1
         );
 
-        input.scroll *= 0.2; /* exponential decay */
+        input.scroll = 0; /* tried exponential decay; needs more tweaking though */
     }
+
+    pMatrix = mat4_ortho(
+        pMatrix,
+        gl.canvas.width *-0.5, gl.canvas.width * 0.5 + RIGHT_PAD,
+        gl.canvas.height* 0.5, gl.canvas.height*-0.5,
+        1, -1
+    );
 
     const text_pos = [];
     const text_uv = [];
@@ -508,7 +513,7 @@ requestAnimationFrame(function frame(timestamp) {
 
     const ALIGN_LEFT = 0;
     const ALIGN_CENTER = 1;
-    function drawText(str, worldX, worldY, align = ALIGN_LEFT) {
+    function drawTextWithView(view, str, worldX, worldY, align = ALIGN_LEFT) {
         const size = fontscale;
 
         const pos = [worldX, worldY, 0, 1]
@@ -558,7 +563,11 @@ requestAnimationFrame(function frame(timestamp) {
         }
     }
 
-    function drawBox( min_x, min_y,   max_x, max_y,   color ) {
+    function drawText(str, worldX, worldY, align = ALIGN_LEFT) {
+        drawTextWithView(view, str, worldX, worldY, align = ALIGN_LEFT);
+    }
+
+    function drawBoxWithView(view,  min_x, min_y,   max_x, max_y,   color ) {
         geo_color.push(
             color[0], color[1], color[2], color[3],
             color[0], color[1], color[2], color[3],
@@ -575,6 +584,10 @@ requestAnimationFrame(function frame(timestamp) {
         pos[0] = max_x, pos[1] = max_y, mat4_transform_vec4(pos, pos, view), geo_pos.push(pos[0], pos[1])
 
         geo_idx.push(vbuf_i + 0, vbuf_i + 1, vbuf_i + 2, vbuf_i + 2, vbuf_i + 3, vbuf_i + 0);
+    }
+
+    function drawBox( min_x, min_y,   max_x, max_y,   color ) {
+        drawBoxWithView(view,  min_x, min_y,   max_x, max_y,   color);
     }
 
     function drawLine( a_x, a_y,   b_x, b_y,  thickness,  color ) {
@@ -618,9 +631,9 @@ requestAnimationFrame(function frame(timestamp) {
         // drawText('accelerated instance graph', 0, 0, ALIGN_CENTER);
 
         {
-            let   ts_min = Date.parse("2024-04-01T22:15:00Z");
-            const ts_max = Date.parse("2024-04-08T19:30:00Z");
 
+            const ts_data_min = Date.parse("2024-04-01T22:15:00Z");
+            const ts_data_max = Date.parse("2024-04-08T19:30:00Z");
 
             /* abuse the view and pixel matrix to stop us from rendering stuff that's offscreen */
             let screen_min_x, screen_max_x;
@@ -645,7 +658,7 @@ requestAnimationFrame(function frame(timestamp) {
             
             let interval = DAY;
             {
-                const ts_delta_ms = ts_max - ts_min;
+                const ts_delta_ms = ts_data_max - ts_data_min;
 
                 const intervals_ms = [
                     MINUTE*3,
@@ -666,8 +679,9 @@ requestAnimationFrame(function frame(timestamp) {
                 }
             }
 
-            /* now that we know the interval, let's adjust the start time to align nicely with it */
-            ts_min = Math.floor(ts_min / DAY) * DAY;
+            /* now that we know the interval, you could adjust the start time to align nicely with it */
+            const ts_min = ts_data_min; // Math.floor(ts_data_min / DAY) * DAY;
+            const ts_max = ts_data_max;
 
             const full_width  = window.innerWidth  * window.devicePixelRatio;
             const full_height = window.innerHeight * window.devicePixelRatio;
@@ -678,18 +692,54 @@ requestAnimationFrame(function frame(timestamp) {
 
             drawBox(x_min, y_min-40, x_max, y_max+15, [255, 255, 255, 255]);
 
+            /* data */
+            let data_range_min = Infinity, data_range_max = -Infinity;
+            {
+                for (const { data, color } of lines.values()) {
+                    data_range_min = Math.min(data_range_min, Math.min(...data));
+                    data_range_max = Math.max(data_range_max, Math.max(...data));
+                }
+            }
+
             /* vertical detail */
             {
-                const stripe_count = 3;
-                const y_delta = y_max - y_min;
-                for (let i = 0; i < stripe_count; i++) {
-                    const y = lerp(y_min, y_max, inv_lerp(0, stripe_count, 0.5 + i));
+                const UNITS_PER_STRIPE = 5;
+
+                const stripe_first = Math.floor(data_range_min/UNITS_PER_STRIPE);
+                const stripe_last  = Math. ceil(data_range_max/UNITS_PER_STRIPE);
+                const stripe_count = (data_range_max - data_range_min)/UNITS_PER_STRIPE;
+                const stripe_thickness = (y_min - y_max)/stripe_count*0.25;
+
+                for (let i = stripe_first; i <= stripe_last; i++) {
+                    const t = inv_lerp(data_range_min, data_range_max, i*UNITS_PER_STRIPE);
+                    if (Math.abs(t - 0.5) > 0.5) continue;
+
+                    const y = lerp(y_min, y_max, t);
                     drawBox(
-                        x_min, y - (y_delta/stripe_count*0.25),
-                        x_max, y + (y_delta/stripe_count*0.25),
+                        x_min, Math.max(y_min, Math.min(y_max, y - stripe_thickness)),
+                        x_max, Math.min(y_max, Math.max(y_min, y + stripe_thickness)),
                         [245, 250, 255, 255]
                     );
+
+                    drawTextWithView(
+                        units_view,
+                        i + '°F',
+                        x_max + RIGHT_PAD - FONT_WORLD_SPACE_SIZE - 5,
+                        y + FONT_WORLD_SPACE_SIZE * 0.75,
+                        ALIGN_CENTER
+                    );
                 }
+
+                // const stripe_count = Math.ceil(data_range_max - data_range_min);
+                // const y_delta = y_max - y_min;
+                // for (let i = 0; i < stripe_count; i++) {
+                //     const y = lerp(y_min, y_max, inv_lerp(0, stripe_count, 0.5 + i));
+                //     drawBox(
+                //         x_min, y - (y_delta/stripe_count*0.25),
+                //         x_max, y + (y_delta/stripe_count*0.25),
+                //         [245, 250, 255, 255]
+                //     );
+                // }
             }
 
             /* horizontal detail */
@@ -727,54 +777,67 @@ requestAnimationFrame(function frame(timestamp) {
                     if (Math.abs(lerp(screen_min_x, screen_max_x, t)) > 1.05) continue;
 
                     drawBox( 
-                        x - input.zoom, y_min + 10,
+                        x - input.zoom, y_min,
                         x + input.zoom, y_max,
                         [0, 0, 0, 20]
+
                     );
                 }
             }
 
-            /* data */
-            let data_range_min = Infinity, data_range_max = -Infinity;
+            /* data lines */
             {
+                const SOURCE_DATA_INTERVAL = MINUTE*5;
                 for (const { data, color } of lines.values()) {
-                    data_range_min = Math.min(data_range_min, Math.min(...data));
-                    data_range_max = Math.max(data_range_max, Math.max(...data));
-                }
-            }
-
-            for (const { data, color } of lines.values()) {
-                const y_map = datapoint => lerp(
-                    y_min,
-                    y_max,
-                    inv_lerp(data_range_min, data_range_max, datapoint)
-                );
-
-                let last_y = y_map(data[0]);
-                let last_x = x_min;
-
-                const interval = MINUTE*5;
-                const interval_count = 1 + Math.ceil((ts_max - ts_min) / interval);
-                for (let interval_i = 0; interval_i < interval_count; interval_i += (1/3)) {
-                    const ts = Math.min(ts_max, ts_min + interval_i*interval);
-                    const t = inv_lerp(ts_min, ts_max, ts);
-
-                    const x = lerp(x_min, x_max, t);
-                    if (Math.abs(lerp(screen_min_x, screen_max_x, t)) > 1.05) continue;
-
-                    const data_index = Math.round((ts - ts_min) / (MINUTE*5));
-                    const y = y_map(data[data_index]);
-                    drawLine(
-                        last_x, last_y,
-                        x, y,
-                        5,
-                        color
+                    const y_map = datapoint => lerp(
+                        y_min,
+                        y_max,
+                        inv_lerp(data_range_min, data_range_max, datapoint)
                     );
-                    last_y = y;
-                    last_x = x;
+
+                    let last_y = y_map(data[0]);
+                    let last_x = lerp(x_min, x_max, inv_lerp(ts_min, ts_max, ts_data_min));
+
+                    const interval = MINUTE*5;
+                    const interval_count = 1 + Math.ceil((ts_max - ts_min) / interval);
+                    for (let interval_i = 0; interval_i < interval_count; interval_i += (1/3)) {
+                        const ts_offset = interval_i*interval;
+                        const ts = Math.min(ts_max, ts_data_min + ts_offset);
+                        const t = inv_lerp(ts_min, ts_max, ts);
+
+                        const x = lerp(x_min, x_max, t);
+                        if (Math.abs(lerp(screen_min_x, screen_max_x, t)) > 1.05) continue;
+
+                        const data_index = Math.round(ts_offset / SOURCE_DATA_INTERVAL);
+                        // if (isNaN(data[data_index])) debugger;
+
+                        const y = y_map(data[data_index]);
+                        drawLine(
+                            last_x, last_y,
+                            x, y,
+                            5,
+                            color
+                        );
+                        last_y = y;
+                        last_x = x;
+                    }
                 }
             }
 
+            drawBoxWithView(
+                units_view,
+                x_max +         0, y_min - 40,
+                x_max + RIGHT_PAD, y_max + 15,
+                [255, 255, 255, 255]
+            );
+
+            /* ending line */
+            drawBoxWithView( 
+                units_view,
+                (x_max + 0) - 1, y_min,
+                (x_max + 0) + 1, y_max,
+                [0, 0, 0, 20]
+            );
         }
     }
 
