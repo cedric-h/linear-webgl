@@ -704,47 +704,27 @@ requestAnimationFrame(function frame(timestamp) {
     const gizmo_color = [];
     {
         const gizmo_mvp = mat4_create();
-
-        const vp = mat4_create();
-        const SCALE = 7.0;
-        {
-            const ar = SCALE * (window.innerWidth / window.innerHeight);
-            mat4_ortho(vp, -ar, ar, -SCALE, SCALE, 0.01, 100000.0); /* projection */
-
-            mat4_mul(vp, vp, u_view);
-            mat4_mul(gizmo_mvp, vp, gizmo_mvp);
+        if (input.entity_hovered > -1) {
+            gizmo_mvp[12] = save.entities[input.entity_hovered].transform[12];
+            gizmo_mvp[13] = save.entities[input.entity_hovered].transform[13];
+            gizmo_mvp[14] = save.entities[input.entity_hovered].transform[14];
         }
 
-        const gizmo_world_pos = [0, 0, 0, 1];
-        if (input.entity_hovered >= 0) {
-            const p = gizmo_world_pos;
-            mat4_transform_vec4(p, p, save.entities[input.entity_hovered].transform);
-            mat4_transform_vec4(p, p, u_vp);
-
-            p[0] /= p[3];
-            p[1] /= p[3];
-            p[2] /= p[3];
-
-            gizmo_mvp[12] = p[0];
-            gizmo_mvp[13] = p[1];
-            gizmo_mvp[14] = p[2];
-        }
-
-        /* flip gizmo as appropriate so it's gookin at you
+        /* flip gizmo as appropriate so it's lookin at you
          * (think mona lisa, but more discretized rather than continuous) */
         {
             const face_user = mat4_from_scaling(
                 scratch,
-                Math.sign(input.eye[0] - gizmo_world_pos[0]),
-                Math.sign(input.eye[1] - gizmo_world_pos[1]),
-                Math.sign(input.eye[2] - gizmo_world_pos[2])
+                Math.sign(input.eye[0] - gizmo_mvp[12]),
+                Math.sign(input.eye[1] - gizmo_mvp[13]),
+                Math.sign(input.eye[2] - gizmo_mvp[14])
             );
             mat4_mul(gizmo_mvp, gizmo_mvp, face_user);
         }
 
+        mat4_mul(gizmo_mvp, u_vp, gizmo_mvp);
+
         function line(a, b, a_thick, b_thick, color, z_push=0) {
-            a_thick /= SCALE;
-            b_thick /= SCALE;
             const aspect_ratio = window.innerWidth / window.innerHeight;
 
             mat4_transform_vec4(a, a, gizmo_mvp);
@@ -805,10 +785,6 @@ requestAnimationFrame(function frame(timestamp) {
         }
 
         {
-            const RED   = [[204.0,  25.5,  25.5, 255.0], [255.0, 102.0, 102.0, 255.0]];
-            const GREEN = [[ 25.5, 204.0,  25.5, 255.0], [102.0, 255.0, 102.0, 255.0]];
-            const BLUE  = [[ 25.5,  25.5, 204.0, 255.0], [102.0, 102.0, 255.0, 255.0]];
-
             function eye_to_mouse_world_dir(vec) {
                 vec[0] = -1 + (vec[0] / window.innerWidth )*2;
                 vec[1] = +1 - (vec[1] / window.innerHeight)*2;
@@ -863,26 +839,6 @@ requestAnimationFrame(function frame(timestamp) {
             }
 
             function gizmo(line, doInput) {
-                /*
-
-                 * - scale goes insane
-                   - fix: ???
-
-                 * - rotation does icky
-                   - fix: if they're basically facing the axis they're rotating on, just directly translate vertical movement to zoom
-
-                 * - scaling does the wrong scale
-                   - fix: doesn't exist when the gizmo is alone, y?
-
-                 ----
-
-                 * - hard to select something then change the color,
-                   - fix: double click to select? yeah probably
-
-                 * - can't delete thing
-                   - fix: delete key
-
-                 */
                 doInput &&= input.lmb_down;
                 const ev = input.damped_event;
 
@@ -918,6 +874,19 @@ requestAnimationFrame(function frame(timestamp) {
                         line(tip, base, 0.00, 0.10, colors[i], gizmo_i);
 
                         if (doInput && input.captured_mouse == gizmo_i) {
+                            const current  = screen_to_plane(+(i != 0), +(i != 1), +(i != 2), [input.   mouse_x, input.   mouse_y, 1, 1]);
+                            const lmb_down = screen_to_plane(+(i != 0), +(i != 1), +(i != 2), [input.lmb_down_x, input.lmb_down_y, 1, 1]);
+
+                            const x = (i == 0) ? (current[0] - lmb_down[0]) : 0;
+                            const y = (i == 1) ? (current[1] - lmb_down[1]) : 0;
+                            const z = (i == 2) ? (current[2] - lmb_down[2]) : 0;
+                            mat4_from_translation(scratch, x, y, z);
+
+                            mat4_mul(
+                                save.entities[input.entity_hovered].transform,
+                                scratch,
+                                input.lmb_down_transform
+                            );
                         }
                         gizmo_i++;
                     }
@@ -937,7 +906,143 @@ requestAnimationFrame(function frame(timestamp) {
                         base[i] = SCALE_P + S;
 
                         line(tip, base, 0.10, 0.10, colors[i], gizmo_i);
+
                         if (doInput && input.captured_mouse == gizmo_i) {
+                        }
+
+                        if (doInput && input.captured_mouse == gizmo_i) {
+
+                            /* there are three possible scale vectors; find the one visually closest
+                             * to the scale box they're pulling right now.
+                             *
+                             * this still works if you don't shadow and override `i`, but the user experience
+                             * is ever so slightly worse. the box you're pulling doesn't always visually
+                             * match up with the resulting scale.
+                             * */
+                            let diverted_axis_i;
+                            {
+                                let axis_best_dot = 0;
+
+                                const world_i = i;
+                                const grabby_vec = [
+                                    +(world_i == 0),
+                                    +(world_i == 1),
+                                    +(world_i == 2)
+                                ];
+                                for (let axis_i = 0; axis_i < 3; axis_i++) {
+                                    /* the last 0 is important here; you definitely don't want to apply translation. */
+                                    const a = [0, 0, 0, 0];
+                                    a[axis_i] = 1;
+                                    mat4_transform_vec4(a, a, input.lmb_down_transform);
+                                    const a_len = Math.sqrt(a[0]*a[0] + a[1]*a[1] + a[2]*a[2]);
+                                    a[0] /= a_len;
+                                    a[1] /= a_len;
+                                    a[2] /= a_len;
+
+                                    let dot = a[0]*grabby_vec[0] + a[1]*grabby_vec[1] + a[2]*grabby_vec[2];
+                                    if (Math.abs(axis_best_dot) < Math.abs(dot)) {
+                                        diverted_axis_i = axis_i;
+                                        axis_best_dot = dot;
+                                    }
+                                }
+                            }
+
+                            let u;
+                            {
+                                /* base is different now, so I reset both */
+                                {
+                                    tip[0] = base[0] = 0;
+                                    tip[1] = base[1] = 0;
+                                    tip[2] = base[2] = 0;
+                                    tip[3] = base[3] = 1;
+
+                                    tip[i] = SCALE_P + S;
+                                    /* correct for perspective projection. */
+                                    mat4_transform_vec4(tip , tip , gizmo_mvp);
+                                    mat4_transform_vec4(base, base, gizmo_mvp);
+
+                                    tip[0] /= tip[3];
+                                    tip[1] /= tip[3];
+                                    tip[2] /= tip[3];
+
+                                    base[0] /= base[3];
+                                    base[1] /= base[3];
+                                    base[2] /= base[3];
+                                }
+
+                                /* gotta get mouse in the same space */
+                                const mouse_x = -1 + (input.mouse_x / window.innerWidth )*2;
+                                const mouse_y = +1 - (input.mouse_y / window.innerHeight)*2;
+
+                                const m2t_x = mouse_x - tip[0];
+                                const m2t_y = mouse_y - tip[1];
+
+                                const b2t_x = base[0] - tip[0];
+                                const b2t_y = base[1] - tip[1];
+
+                                const dot = m2t_x*b2t_x + m2t_y*b2t_y;
+
+                                /* squared length of vector from mouse to tip */
+                                u = dot / (b2t_x*b2t_x + b2t_y*b2t_y);
+                                u = -u;
+
+                                if (0) {
+                                    {
+                                        tip[0] = base[0] = 0;
+                                        tip[1] = base[1] = 0;
+                                        tip[2] = base[2] = 0;
+                                        tip[3] = base[3] = 1;
+
+                                        tip[i] = SCALE_P + S;
+                                    }
+
+                                    line(
+                                        [
+                                            base[0],
+                                            base[1],
+                                            base[2],
+                                            1
+                                        ],
+                                        [
+                                            lerp(tip[0], base[0], -u),
+                                            lerp(tip[1], base[1], -u),
+                                            lerp(tip[2], base[2], -u),
+                                            1
+                                        ],
+                                        0.15,
+                                        0.15,
+                                        colors[i],
+                                        -1
+                                    );
+                                }
+                            }
+
+                            mat4_from_scaling(
+                                scratch,
+                                1 + (diverted_axis_i == 0) * u,
+                                1 + (diverted_axis_i == 1) * u,
+                                1 + (diverted_axis_i == 2) * u
+                            );
+
+                            /* cache and undo the translation */
+                            const x = input.lmb_down_transform[12];
+                            const y = input.lmb_down_transform[13];
+                            const z = input.lmb_down_transform[14];
+
+                            input.lmb_down_transform[12] = 0;
+                            input.lmb_down_transform[13] = 0;
+                            input.lmb_down_transform[14] = 0;
+
+                            mat4_mul(
+                                save.entities[input.entity_hovered].transform,
+                                input.lmb_down_transform,
+                                scratch
+                            );
+
+                            /* reapply the translation */
+                            save.entities[input.entity_hovered].transform[12] = input.lmb_down_transform[12] = x;
+                            save.entities[input.entity_hovered].transform[13] = input.lmb_down_transform[13] = y;
+                            save.entities[input.entity_hovered].transform[14] = input.lmb_down_transform[14] = z;
                         }
 
                         gizmo_i++;
@@ -976,8 +1081,10 @@ requestAnimationFrame(function frame(timestamp) {
                         const ldot = eye_to_mouse[0]*plane_x +
                                      eye_to_mouse[1]*plane_y +
                                      eye_to_mouse[2]*plane_z ;
-                        console.log({ ldot });
 
+                        /* if you're looking at the plane you're trying to rotate on,
+                         * simply translate your mouse movement in screenspace directly
+                         * into rotation; no need to do plane intersection */
                         if (Math.abs(Math.abs(ldot) - 0.5) < 0.25) {
                             const flip = -Math.sign(ldot);
                             const delta = -0.01 * (input.lmb_down_y-input.mouse_y +
@@ -1021,9 +1128,14 @@ requestAnimationFrame(function frame(timestamp) {
                 }
             }
 
-            if (input.entity_hovered >= 0) {
-                /* first pass - find closest */
+            const RED   = [[204.0,  25.5,  25.5, 255.0], [255.0, 102.0, 102.0, 255.0]];
+            const GREEN = [[ 25.5, 204.0,  25.5, 255.0], [102.0, 255.0, 102.0, 255.0]];
+            const BLUE  = [[ 25.5,  25.5, 204.0, 255.0], [102.0, 102.0, 255.0, 255.0]];
+
+            /* first pass - find closest */
+            if (input.entity_hovered > -1) {
                 let selected_i = input.captured_mouse;
+
                 if (!input.lmb_down) {
                     selected_i = -1;
                     let selected_dist = Infinity;
@@ -1051,7 +1163,6 @@ requestAnimationFrame(function frame(timestamp) {
                 );
 
                 input.captured_mouse = selected_i;
-                // if (selected_i 
             }
         }
     }
@@ -1546,6 +1657,9 @@ function ray_hit_plane(
 
     return out;
 }
+
+function lerp(v0, v1, t) { return (1 - t) * v0 + t * v1; }
+
     </script>
   </body>
 </html>
