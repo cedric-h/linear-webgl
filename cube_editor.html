@@ -325,6 +325,13 @@ let input = {
     /* } */
 }
 window.onkeydown = e => {
+
+    if (e.code == "Delete") {
+        action_apply(ACT_DO, { kind: ACTION_DELETE, index: input.entity_hovered });
+        input.entity_hovered = -1;
+        input.captured_mouse = -1;
+    }
+
     if (e.ctrlKey && e.code == "KeyZ") {
         if (!e.shiftKey) {
             action_apply(ACT_UNDO);
