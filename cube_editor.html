@@ -956,7 +956,7 @@ requestAnimationFrame(function frame(timestamp) {
                                     tip[2] = base[2] = 0;
                                     tip[3] = base[3] = 1;
 
-                                    tip[i] = SCALE_P + S;
+                                    tip[diverted_axis_i] = SCALE_P + S;
                                     /* correct for perspective projection. */
                                     mat4_transform_vec4(tip , tip , gizmo_mvp);
                                     mat4_transform_vec4(base, base, gizmo_mvp);
@@ -993,7 +993,7 @@ requestAnimationFrame(function frame(timestamp) {
                                         tip[2] = base[2] = 0;
                                         tip[3] = base[3] = 1;
 
-                                        tip[i] = SCALE_P + S;
+                                        tip[diverted_axis_i] = SCALE_P + S;
                                     }
 
                                     line(
