@@ -1,0 +1,2274 @@
+<!-- vim: sw=4 ts=4 expandtab smartindent ft=javascript
+-->
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>WebGL Demo</title>
+    <style> document, body { margin: 0px; padding: 0px; overflow: hidden; } </style>
+  </head>
+
+  <body>
+    <canvas id="glcanvas"></canvas>
+    <script>
+/* materials (cube selection state), have ctrl + d, ctrl + z, ctrl + shift + z show up onscreen when they become possible */
+const canvas = document.getElementById('glcanvas');
+const gl = canvas.getContext('webgl2', {antialias: true});
+if (!gl) { alert('Failed to initialize WebGL'); }
+
+(window.onresize = () => {
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+
+    /* account for e.g. high-retina macbook screens */
+    if (window.devicePixelRatio > 1) {
+        canvas.style.width = `${canvas.width}px`;
+        canvas.style.height = `${canvas.height}px`;
+        canvas.width *= window.devicePixelRatio;
+        canvas.height *= window.devicePixelRatio;
+    }
+
+    gl.viewport(
+        0,
+        0,
+        canvas.width,
+        canvas.height
+    );
+})();
+
+let shaders;
+/* compile shaders */
+{
+    const vs_geo = `
+        attribute vec3 a_pos;
+        attribute vec4 a_color;
+
+        uniform mat4 u_matrix;
+        uniform vec4 u_color;
+
+        varying vec4 v_color;
+
+        void main() {
+            gl_Position = u_matrix * vec4(a_pos.xyz, 1);
+            v_color = u_color*0.85 + 0.15*a_color;
+        }`;
+
+    const fs_geo = `
+        precision mediump float;
+
+        varying vec4 v_color;
+
+        void main() {
+            gl_FragColor = v_color;
+        }`;
+
+
+    /* one notable difference in gizmo's shaders (compared to geo's) is that
+     * gizmo passes in the 4th coordinate from CPU-side. */
+    const vs_gizmo = `
+        attribute vec4 a_pos;
+        attribute vec4 a_color;
+
+        varying vec4 v_color;
+
+        void main() {
+            gl_Position = a_pos;
+            v_color = a_color;
+        }`;
+
+    const fs_gizmo = `
+        precision mediump float;
+
+        varying vec4 v_color;
+
+        void main() {
+            gl_FragColor = v_color;
+        }`;
+
+
+    const vs_grid = `#version 300 es
+        in vec3 a_pos;
+        in vec2 a_uv;
+
+        uniform mat4 u_matrix;
+
+        out vec2 v_uv;
+
+        void main() {
+            gl_Position = u_matrix * vec4(a_pos.xyz, 1);
+            v_uv = (a_uv - 0.5)*abs(a_pos.xy);
+        }`;
+
+    const fs_grid = `#version 300 es
+        precision mediump float;
+
+        in vec2 v_uv;
+
+        /* https://iquilezles.org/articles/filterableprocedurals/ */
+
+        const float N = 30.0; // grid ratio
+        float gridTextureGradBox(in vec2 p, in vec2 ddx, in vec2 ddy) {
+            // filter kernel
+            vec2 w = max(abs(ddx), abs(ddy)) + 0.01;
+
+            // analytic (box) filtering
+            vec2 a = p + 0.5*w;
+            vec2 b = p - 0.5*w;
+            vec2 i = (floor(a)+min(fract(a)*N,1.0)-
+                      floor(b)-min(fract(b)*N,1.0))/(N*w);
+            //pattern
+            return (1.0-i.x)*(1.0-i.y);
+        }
+
+        out vec4 frag_color;
+
+        void main() {
+            // vec2 d = 1.0 - step(0.01, fract(v_uv*10.0));
+            // gl_FragColor = vec4(max(d.x, d.y));
+
+            vec2 uv = (v_uv - 0.5) + 0.5/N;
+            float grid = gridTextureGradBox(uv, dFdx(uv), dFdy(uv));
+            frag_color = vec4(1.0 - grid);
+            frag_color *= 0.25;
+            frag_color *= 0.3 + 0.6*smoothstep(0.0, 0.1, 1.0 - length(v_uv)/5.5);
+        }`;
+
+
+    function createProgram(gl, vertexSource, fragmentSource) {
+        function createShader(gl, type, source) {
+            const shader = gl.createShader(type);
+            gl.shaderSource(shader, source);
+            gl.compileShader(shader);
+            if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+                throw new Error(gl.getShaderInfoLog(shader));
+            }
+            return shader;
+        }
+
+        const program = gl.createProgram();
+
+        const vertexShader = createShader(gl, gl.VERTEX_SHADER, vertexSource);
+        const fragmentShader = createShader(gl, gl.FRAGMENT_SHADER, fragmentSource);
+
+        gl.attachShader(program, vertexShader);
+        gl.attachShader(program, fragmentShader);
+
+        gl.linkProgram(program);
+        if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+            throw new Error(gl.getProgramInfoLog(program));
+        }
+
+        const wrapper = {program};
+
+        const numAttributes = gl.getProgramParameter(program, gl.ACTIVE_ATTRIBUTES);
+        for (let i = 0; i < numAttributes; i++) {
+            const attribute = gl.getActiveAttrib(program, i);
+            wrapper[attribute.name] = gl.getAttribLocation(program, attribute.name);
+        }
+        const numUniforms = gl.getProgramParameter(program, gl.ACTIVE_UNIFORMS);
+        for (let i = 0; i < numUniforms; i++) {
+            const uniform = gl.getActiveUniform(program, i);
+            wrapper[uniform.name] = gl.getUniformLocation(program, uniform.name);
+        }
+
+        return wrapper;
+    }
+
+
+    shaders = {
+        geo:   createProgram(gl, vs_geo  , fs_geo  ),
+        grid:  createProgram(gl, vs_grid , fs_grid ),
+        gizmo: createProgram(gl, vs_gizmo, fs_gizmo),
+    }
+}
+
+const ALIGN_LEFT = 0;
+const ALIGN_CENTER = 1;
+
+/* higher number = prettier text using more VRAM */
+const SDF_FONT_SIZE = 48;
+
+/* one draw call's worth of font data (text geometry, scale, color) */
+class FontBuf {
+    /**
+     * @param {AtlasSDF} sdfs  font atlas data associated with this font's SDFs
+     */
+    constructor(sdfs, dynamic_scale, color) {
+        this.sdfs = sdfs;
+        this.dynamic_scale = dynamic_scale;
+        this.color = color;
+
+        this.z = -0.2;
+
+        this.text_vbuf_pos = [];
+        this.text_vbuf_uv  = [];
+    }
+
+    drawText(str, x, y, align) {
+        const { sdfs } = this;
+
+        const fontsize = SDF_FONT_SIZE;
+        const buf = fontsize / 8;
+        const width = fontsize + buf * 2; // glyph width
+        const height = fontsize + buf * 2; // glyph height
+        const bx = 0; // bearing x
+
+        const scale = this.dynamic_scale / fontsize;
+        const lineWidth = str.length * fontsize * scale;
+
+        const pen = { x, y };
+        if (align == ALIGN_CENTER) {
+            pen.x -= (str.split('').reduce((a, c) => a + sdfs[c].glyph.glyphAdvance, 0) / 2) * scale;
+        }
+        for (let i = 0; i < str.length; i++) {
+            const posX = sdfs[str[i]].x; // pos in sprite x
+            const posY = sdfs[str[i]].y; // pos in sprite y
+            const advance = sdfs[str[i]].glyph.glyphAdvance;
+            const by = sdfs[str[i]].glyph.glyphTop - (fontsize / 2 + buf); // bearing y
+
+            this.text_vbuf_pos.push(
+                pen.x + ((bx - buf) * scale)        , pen.y - by * scale           , this.z,
+                pen.x + ((bx - buf + width) * scale), pen.y - by * scale           , this.z,
+                pen.x + ((bx - buf) * scale)        , pen.y + (height - by) * scale, this.z,
+
+                pen.x + ((bx - buf + width) * scale), pen.y - by * scale           , this.z,
+                pen.x + ((bx - buf) * scale)        , pen.y + (height - by) * scale, this.z,
+                pen.x + ((bx - buf + width) * scale), pen.y + (height - by) * scale, this.z
+            );
+
+            this.text_vbuf_uv.push(
+                posX, posY,
+                posX + width, posY,
+                posX, posY + height,
+                posX + width, posY,
+                posX, posY + height,
+                posX + width, posY + height
+            );
+
+            pen.x = pen.x + advance * scale;
+        }
+
+    }
+
+    clear() {
+        this.text_vbuf_pos = [];
+        this.text_vbuf_uv  = [];
+    }
+
+}
+
+class TextRenderer {
+    constructor(gl) {
+        this.pMatrix = mat4_create();
+
+        /* maps character to location in spritesheet/font_atlas */
+        this.sdfs = {};
+        this.font_atlas = gl.createTexture();
+        this.font_bufs = [];
+
+        this.buf = {
+            text_vbuf_pos: gl.createBuffer(),
+            text_vbuf_uv:  gl.createBuffer()
+        };
+
+        /* compile shaders */
+        {
+            const vs_text = `
+                attribute vec3 a_pos;
+                attribute vec2 a_texcoord;
+
+                uniform mat4 u_matrix;
+                uniform vec2 u_texsize;
+
+                varying vec2 v_texcoord;
+
+                void main() {
+                    gl_Position = u_matrix * vec4(a_pos.xyz, 1);
+                    v_texcoord = a_texcoord / u_texsize;
+                }`;
+
+            const fs_text = `
+                precision mediump float;
+
+                uniform sampler2D u_texture;
+                uniform vec4 u_color;
+                uniform float u_buffer;
+                uniform float u_gamma;
+
+                varying vec2 v_texcoord;
+
+                void main() {
+                    float dist = texture2D(u_texture, v_texcoord).r;
+                    float alpha = smoothstep(u_buffer - u_gamma, u_buffer + u_gamma, dist);
+                    gl_FragColor = vec4(u_color.rgb, alpha * u_color.a);
+                }`;
+
+            function createProgram(gl, vertexSource, fragmentSource) {
+                function createShader(gl, type, source) {
+                    const shader = gl.createShader(type);
+                    gl.shaderSource(shader, source);
+                    gl.compileShader(shader);
+                    if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+                        throw new Error(gl.getShaderInfoLog(shader));
+                    }
+                    return shader;
+                }
+
+                const program = gl.createProgram();
+
+                const vertexShader = createShader(gl, gl.VERTEX_SHADER, vertexSource);
+                const fragmentShader = createShader(gl, gl.FRAGMENT_SHADER, fragmentSource);
+
+                gl.attachShader(program, vertexShader);
+                gl.attachShader(program, fragmentShader);
+
+                gl.linkProgram(program);
+                if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+                    throw new Error(gl.getProgramInfoLog(program));
+                }
+
+                const wrapper = {program};
+
+                const numAttributes = gl.getProgramParameter(program, gl.ACTIVE_ATTRIBUTES);
+                for (let i = 0; i < numAttributes; i++) {
+                    const attribute = gl.getActiveAttrib(program, i);
+                    wrapper[attribute.name] = gl.getAttribLocation(program, attribute.name);
+                }
+                const numUniforms = gl.getProgramParameter(program, gl.ACTIVE_UNIFORMS);
+                for (let i = 0; i < numUniforms; i++) {
+                    const uniform = gl.getActiveUniform(program, i);
+                    wrapper[uniform.name] = gl.getUniformLocation(program, uniform.name);
+                }
+
+                return wrapper;
+            }
+
+
+            this.shaders = {
+                text: createProgram(gl, vs_text, fs_text),
+            }
+        }
+
+
+        /* mapbox's TinySDF - https://github.com/mapbox/tiny-sdf */
+        let TinySDF;
+        {
+            const INF = 1e20;
+
+            class _TinySDF {
+                constructor({
+                    fontSize = 24,
+                    buffer = 3,
+                    radius = 8,
+                    cutoff = 0.25,
+                    fontFamily = 'sans-serif',
+                    fontWeight = 'normal',
+                    fontStyle = 'normal'
+                } = {}) {
+                    this.buffer = buffer;
+                    this.cutoff = cutoff;
+                    this.radius = radius;
+
+                    // make the canvas size big enough to both have the specified buffer around the glyph
+                    // for "halo", and account for some glyphs possibly being larger than their font size
+                    const size = this.size = fontSize + buffer * 4;
+
+                    const canvas = this._createCanvas(size);
+                    const ctx = this.ctx = canvas.getContext('2d', {willReadFrequently: true});
+                    ctx.font = `${fontStyle} ${fontWeight} ${fontSize}px ${fontFamily}`;
+
+                    ctx.textBaseline = 'alphabetic';
+                    ctx.textAlign = 'left'; // Necessary so that RTL text doesn't have different alignment
+                    ctx.fillStyle = 'black';
+
+                    // temporary arrays for the distance transform
+                    this.gridOuter = new Float64Array(size * size);
+                    this.gridInner = new Float64Array(size * size);
+                    this.f = new Float64Array(size);
+                    this.z = new Float64Array(size + 1);
+                    this.v = new Uint16Array(size);
+                }
+
+                _createCanvas(size) {
+                    const canvas = document.createElement('canvas');
+                    canvas.width = canvas.height = size;
+                    return canvas;
+                }
+
+                draw(char) {
+                    const {
+                        width: glyphAdvance,
+                        actualBoundingBoxAscent,
+                        actualBoundingBoxDescent,
+                        actualBoundingBoxLeft,
+                        actualBoundingBoxRight
+                    } = this.ctx.measureText(char);
+
+                    // The integer/pixel part of the top alignment is encoded in metrics.glyphTop
+                    // The remainder is implicitly encoded in the rasterization
+                    const glyphTop = Math.ceil(actualBoundingBoxAscent);
+                    const glyphLeft = 0;
+
+                    // If the glyph overflows the canvas size, it will be clipped at the bottom/right
+                    const glyphWidth = Math.max(0, Math.min(this.size - this.buffer, Math.ceil(actualBoundingBoxRight - actualBoundingBoxLeft)));
+                    const glyphHeight = Math.min(this.size - this.buffer, glyphTop + Math.ceil(actualBoundingBoxDescent));
+
+                    const width = glyphWidth + 2 * this.buffer;
+                    const height = glyphHeight + 2 * this.buffer;
+
+                    const len = Math.max(width * height, 0);
+                    const data = new Uint8ClampedArray(len);
+                    const glyph = {data, width, height, glyphWidth, glyphHeight, glyphTop, glyphLeft, glyphAdvance};
+                    if (glyphWidth === 0 || glyphHeight === 0) return glyph;
+
+                    const {ctx, buffer, gridInner, gridOuter} = this;
+                    ctx.clearRect(buffer, buffer, glyphWidth, glyphHeight);
+                    ctx.fillText(char, buffer, buffer + glyphTop);
+                    const imgData = ctx.getImageData(buffer, buffer, glyphWidth, glyphHeight);
+
+                    // Initialize grids outside the glyph range to alpha 0
+                    gridOuter.fill(INF, 0, len);
+                    gridInner.fill(0, 0, len);
+
+                    for (let y = 0; y < glyphHeight; y++) {
+                        for (let x = 0; x < glyphWidth; x++) {
+                            const a = imgData.data[4 * (y * glyphWidth + x) + 3] / 255; // alpha value
+                            if (a === 0) continue; // empty pixels
+
+                            const j = (y + buffer) * width + x + buffer;
+
+                            if (a === 1) { // fully drawn pixels
+                                gridOuter[j] = 0;
+                                gridInner[j] = INF;
+
+                            } else { // aliased pixels
+                                const d = 0.5 - a;
+                                gridOuter[j] = d > 0 ? d * d : 0;
+                                gridInner[j] = d < 0 ? d * d : 0;
+                            }
+                        }
+                    }
+
+                    edt(gridOuter, 0, 0, width, height, width, this.f, this.v, this.z);
+                    edt(gridInner, buffer, buffer, glyphWidth, glyphHeight, width, this.f, this.v, this.z);
+
+                    for (let i = 0; i < len; i++) {
+                        const d = Math.sqrt(gridOuter[i]) - Math.sqrt(gridInner[i]);
+                        data[i] = Math.round(255 - 255 * (d / this.radius + this.cutoff));
+                    }
+
+                    return glyph;
+                }
+            }
+
+            // 2D Euclidean squared distance transform by Felzenszwalb & Huttenlocher https://cs.brown.edu/~pff/papers/dt-final.pdf
+            function edt(data, x0, y0, width, height, gridSize, f, v, z) {
+                for (let x = x0; x < x0 + width; x++) edt1d(data, y0 * gridSize + x, gridSize, height, f, v, z);
+                for (let y = y0; y < y0 + height; y++) edt1d(data, y * gridSize + x0, 1, width, f, v, z);
+            }
+
+            // 1D squared distance transform
+            function edt1d(grid, offset, stride, length, f, v, z) {
+                v[0] = 0;
+                z[0] = -INF;
+                z[1] = INF;
+                f[0] = grid[offset];
+
+                for (let q = 1, k = 0, s = 0; q < length; q++) {
+                    f[q] = grid[offset + q * stride];
+                    const q2 = q * q;
+                    do {
+                        const r = v[k];
+                        s = (f[q] - f[r] + q2 - r * r) / (q - r) / 2;
+                    } while (s <= z[k] && --k > -1);
+
+                    k++;
+                    v[k] = q;
+                    z[k] = s;
+                    z[k + 1] = INF;
+                }
+
+                for (let q = 0, k = 0; q < length; q++) {
+                    while (z[k + 1] < q) k++;
+                    const r = v[k];
+                    const qr = q - r;
+                    grid[offset + q * stride] = f[r] + qr * qr;
+                }
+            }
+
+            TinySDF = _TinySDF;
+        }
+
+        const FONT_SIZE = 40;
+        const FONT_NAME = "GraphLabelFont";
+        const font = new FontFace(
+            FONT_NAME,
+            "url(AvenirNext_Variable.ttf)",
+            { weight: "bold" }
+        );
+
+        /* invoke now-established TinySDF in a for loop to make the font atlas */
+        return font.load().then(() => {
+            document.fonts.add(font);
+
+            /* use tiny sdf + a for loop to get a texture atlas canvas */
+            let sdfImage;
+            {
+                const chars = ' abcdefghijklmnopqrstuvwxyzZABCDEFGHIJKLMNOPQRSTUVWXYZ!@#$%^&*()1234567890<,>./?;:\'"\\|{}[]-';
+                const fontCanvas = document.createElement('canvas');
+                fontCanvas.width = fontCanvas.height = 1024
+                const ctx = fontCanvas.getContext('2d');
+
+                // Convert alpha-only to RGBA so we can use `putImageData` for building the composite bitmap
+                function makeRGBAImageData(alphaChannel, width, height) {
+                    const imageData = ctx.createImageData(width, height);
+                    for (let i = 0; i < alphaChannel.length; i++) {
+                        imageData.data[4 * i + 0] = alphaChannel[i];
+                        imageData.data[4 * i + 1] = alphaChannel[i];
+                        imageData.data[4 * i + 2] = alphaChannel[i];
+                        imageData.data[4 * i + 3] = 255;
+                    }
+                    return imageData;
+                }
+
+                const charWidths = Array.from({ length: chars.length }, _ => 0);
+
+                ctx.clearRect(0, 0, fontCanvas.width, fontCanvas.height);
+                const fontSize = +SDF_FONT_SIZE;
+                const buffer = Math.ceil(fontSize / 8);
+                const radius = Math.ceil(fontSize / 3);
+                const sdf = new TinySDF({fontSize, buffer, radius, fontFamily: FONT_NAME });
+                const size = fontSize + buffer * 2;
+
+                const now = performance.now();
+                let i = 0;
+                for (let y = 0; y + size <= fontCanvas.height && i < chars.length; y += size) {
+                    for (let x = 0; x + size <= fontCanvas.width && i < chars.length; x += size) {
+                        const glyph = sdf.draw(chars[i]);
+                        const {data, width, height} = glyph;
+                        delete glyph.data;
+                        this.sdfs[chars[i]] = { x, y, glyph };
+                        ctx.putImageData(makeRGBAImageData(data, width, height), x, y);
+                        i++;
+                    }
+                }
+                console.log(`${i} characters (${fontSize}px, with ${buffer}px buffer) rendered in ${Math.round(performance.now() - now)}ms.`)
+
+                sdfImage = ctx.getImageData(0, 0, fontCanvas.width, fontCanvas.height);
+            }
+
+            /* upload that canvas to a texture */
+            {
+                gl.useProgram(this.shaders.text.program);
+                gl.enableVertexAttribArray(this.shaders.text.a_pos);
+                gl.enableVertexAttribArray(this.shaders.text.a_texcoord);
+
+                const sdfBytes = new Uint8Array(sdfImage.data)
+
+                gl.bindTexture(gl.TEXTURE_2D, this.font_atlas);
+                gl.texImage2D(
+                    /* target         */ gl.TEXTURE_2D,
+                    /* level          */ 0,
+                    /* internalformat */ gl.RGBA,
+                    /* width          */ sdfImage.width,
+                    /* height         */ sdfImage.height,
+                    /* border,        */ 0,
+                    /* format,        */ gl.RGBA,
+                    /* type,          */ gl.UNSIGNED_BYTE,
+                    /* data           */ sdfBytes
+                );
+                gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+                gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+                gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+                gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+
+                gl.uniform2f(this.shaders.text.u_texsize, sdfImage.width, sdfImage.height);
+            }
+
+            return this;
+        })
+    }
+
+    /**
+     * @param scale {Number} size of text vertically in pixels
+     */
+    useFont(scale, color) {
+        const fb = new FontBuf(this.sdfs, scale, color);
+        this.font_bufs.push(fb);
+        return fb;
+    }
+
+    clear() {
+        for (const font_buf of this.font_bufs) {
+            font_buf.clear();
+        }
+    }
+
+    render(gl) {
+        const pMatrix = mat4_ortho(this.pMatrix, 0, gl.canvas.width, gl.canvas.height, 0, 1, -1);
+        gl.viewport(
+            0,
+            0,
+            gl.canvas.width,
+            gl.canvas.height
+        );
+
+        gl.useProgram(this.shaders.text.program);
+
+        /* set up premultiplied alpha */
+        gl.blendFuncSeparate(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA, gl.ONE, gl.ONE);
+        gl.enable(gl.BLEND);
+
+        for (const fb of this.font_bufs) {
+            const gamma = 2;
+            gl.uniformMatrix4fv(this.shaders.text.u_matrix, false, pMatrix);
+            gl.uniform4fv(this.shaders.text.u_color, fb.color);
+            gl.uniform1f(this.shaders.text.u_buffer, 0.75);
+            gl.uniform1f(this.shaders.text.u_gamma, gamma * 1.4142 / fb.dynamic_scale);
+
+            /* upload/bind geometry */
+            const vbuf_count = fb.text_vbuf_pos.length / 3;
+            {
+                gl.bindBuffer(gl.ARRAY_BUFFER, this.buf.text_vbuf_pos);
+                gl.vertexAttribPointer(this.shaders.text.a_pos, 3, gl.FLOAT, false, 0, 0);
+                gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(fb.text_vbuf_pos), gl.STATIC_DRAW);
+
+                gl.bindBuffer(gl.ARRAY_BUFFER, this.buf.text_vbuf_uv);
+                gl.vertexAttribPointer(this.shaders.text.a_texcoord, 2, gl.FLOAT, false, 0, 0);
+                gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(fb.text_vbuf_uv), gl.STATIC_DRAW);
+            }
+
+            /* bind texture */
+            {
+                gl.activeTexture(gl.TEXTURE0);
+                gl.bindTexture(gl.TEXTURE_2D, this.font_atlas);
+                gl.uniform1i(this.shaders.text.u_texture, 0);
+            }
+
+            gl.drawArrays(gl.TRIANGLES, 0, vbuf_count);
+        }
+    }
+}
+
+
+const buf = {
+    geo_v_pos:   gl.createBuffer(),
+    geo_v_color: gl.createBuffer(),
+    geo_i:       gl.createBuffer(),
+
+    gizmo_v_pos:   gl.createBuffer(),
+    gizmo_v_color: gl.createBuffer(),
+    gizmo_i:       gl.createBuffer(),
+
+    grid_v_pos:  gl.createBuffer(),
+    grid_v_uv:   gl.createBuffer(),
+    grid_i:      gl.createBuffer(),
+};
+
+const palette = [
+    /* lamp */
+    [
+        [0.148438, 0.273438, 0.324219, 1],
+        [0.164063, 0.613281, 0.558594, 1],
+        [0.910156, 0.765625, 0.414063, 1],
+        [0.953125, 0.632813, 0.378906, 1],
+        [0.902344, 0.433594, 0.316406, 1]
+    ],
+
+    /* forest */
+    [
+        [0.937500, 0.914063, 0.820313, 1],
+        [0.863281, 0.894531, 0.710938, 1],
+        [0.675781, 0.753906, 0.468750, 1],
+        [0.660156, 0.515625, 0.402344, 1],
+        [0.421875, 0.343750, 0.296875, 1]
+    ],
+
+    /* truck */
+    [
+        [0.468750, 0.000000, 0.000000, 1],
+        [0.753906, 0.070313, 0.121094, 1],
+        [0.988281, 0.937500, 0.832031, 1],
+        [0.000000, 0.187500, 0.285156, 1],
+        [0.398438, 0.605469, 0.734375, 1]
+    ]
+][0];
+
+const ACTION_TRANSFORM = 0;
+const ACTION_SPAWN     = 1;
+const ACTION_DELETE    = 2;
+const ACTION_COLOR     = 3;
+
+const ACT_DO          = 1 << 0;
+const ACT_UNDO        = 1 << 1;
+const ACT_KEEP_UNDONE = 1 << 2;
+
+/* TODO: look into refactoring ACTION_TRANSFORM (usage of, i.e. outside of this function)
+ * so that a save.entities[i].transform isn't modified until the action is complete,
+ * to prevent leaving the world in invalid states where actions are half-applied?
+ *
+ * maybe only do this if related bugs are found. */
+
+function action_apply(dir, action) {
+    if (dir & ACT_DO  ) save.actions.push(action);
+    if (dir & ACT_UNDO) save.actions_undone.push(action = save.actions.pop());
+
+    if ((dir & ACT_DO) && !(dir & ACT_KEEP_UNDONE)) save.actions_undone = [];
+
+    if (action.kind == ACTION_TRANSFORM) {
+        if (dir & ACT_DO  ) action.removed_transform = mat4_create(),
+                            action.removed_transform.set(save.entities[action.index].transform);
+
+        if (dir & ACT_DO  ) save.entities[action.index].transform.set(action.transform);
+        if (dir & ACT_UNDO) save.entities[action.index].transform.set(action.removed_transform);
+    }
+    if (action.kind == ACTION_COLOR) {
+        if (dir & ACT_DO  ) action.removed_color = save.entities[action.index].color;
+
+        if (dir & ACT_DO  ) save.entities[action.index].color = action.color;
+        if (dir & ACT_UNDO) save.entities[action.index].color = action.removed_color;
+    }
+    if (action.kind == ACTION_SPAWN) {
+        if (dir & ACT_DO  ) save.entities.push(action.ent);
+        if (dir & ACT_UNDO) save.entities.pop();
+    }
+    if (action.kind == ACTION_DELETE) {
+        if (dir & ACT_DO  ) action.removed_ent = save.entities.splice(action.index, 1)[0];
+        if (dir & ACT_UNDO) save.entities.push(action.removed_ent);
+    }
+}
+
+const save = {
+    actions: [],
+    actions_undone: [],
+    entities: [],
+};
+action_apply(ACT_DO, { kind: ACTION_SPAWN , ent: { color: palette[0], transform: mat4_from_translation(mat4_create(), 0, 0, 1) } });
+
+let input = {
+    /* camera/controls: */
+    /* { */
+        pitch:  Math.PI*0.25,
+        yaw:   -Math.PI*0.25,
+        eye: [0, 0, 0, 1],
+
+        cam_pivot_x: 0,
+        cam_pivot_y: 0,
+        cam_pivot_z: 0,
+
+        /* picking */
+        last_u_vp_inv: mat4_create(),
+        last_u_vp:     mat4_create(),
+    /* } */
+
+    /* globalized input */
+    /* { */
+        lmb_down: false,
+        lmb_released: false, /* true for a frame after up */
+        lmb_down_x: 0, /* for when we need to calculate our own "movementX" in the context of an action */
+        lmb_down_y: 0,
+
+        rmb_down: false,
+        mouse_x: 0,
+        mouse_y: 0,
+
+        damped_event: { button: 0, movementX: 0, movementY: 0 },
+
+        zoom:   10,
+        scroll:  0,
+    /* } */
+
+    /* global selection state */
+    /* { */
+        entity_hovered:  -1, /* this is an index into save.entities */
+        entity_selected: -1, /* this is an index into save.entities */
+    /* } */
+
+    /* gizmo */
+    /* { */
+        lmb_down_transform: mat4_create(),
+        captured_mouse: -1, /* this is a "gizmo ID" as defined in the context of "function gizmo" */
+    /* } */
+}
+window.onkeydown = e => {
+
+    if (e.code == "Delete") {
+        action_apply(ACT_DO, { kind: ACTION_DELETE, index: input.entity_selected });
+        input.entity_selected = -1;
+        input.entity_hovered = -1;
+        input.captured_mouse = -1;
+    }
+
+    if (e.ctrlKey && e.code == "KeyZ") {
+        if (!e.shiftKey) {
+            action_apply(ACT_UNDO);
+        } else {
+            /* TODO: message here explaining actions_undone stack is empty */
+            if (save.actions_undone.length > 0) {
+                action_apply(ACT_DO | ACT_KEEP_UNDONE, save.actions_undone.pop());
+
+                /* undo/redoing should probably clear your active hover-state */
+                input.captured_mouse = -1;
+            }
+        }
+
+        input.entity_hovered = -1;
+        input.entity_selected = -1;
+
+        /* undo/redoing should probably clear your active hover-state */
+        input.captured_mouse = -1;
+    }
+
+    if (e.ctrlKey && e.code == "KeyD") {
+        const selected = save.entities[input.entity_selected]
+        let ent = {
+            transform: new Float32Array(selected.transform),
+            color: selected.color
+        };
+        action_apply(ACT_DO, { kind: ACTION_SPAWN, ent });
+        e.preventDefault();
+    }
+}
+let wheelTimeout;
+window.addEventListener("wheel", e => {
+    e.preventDefault();
+
+    if (input.lmb_down) return;
+    input.scroll = Math.sign(e.deltaY);
+
+    clearTimeout(wheelTimeout);
+    wheelTimeout = setTimeout(() => input.scroll = 0, 100)
+}, { passive: false });
+window.ondblclick = () => {
+    input.entity_selected = input.entity_hovered;
+}
+window.onmousedown = ev => {
+    ev.preventDefault();
+
+    if (ev.button == 0 && ev.shiftKey) {
+        input.rmb_down = true;
+        return;
+    }
+
+    if (ev.button == 2 || (ev.button == 0 && ev.shiftKey))
+        input.rmb_down = true;
+
+    if (ev.button == 0) {
+        input.lmb_released = true;
+        input.lmb_down   = true;
+        input.lmb_down_x = ev.offsetX;
+        input.lmb_down_y = ev.offsetY;
+        if (input.entity_selected >= 0) {
+            input.lmb_down_transform.set(save.entities[input.entity_selected].transform);
+        }
+    }
+};
+window.onmousemove = ev => {
+    input.damped_event.button    = ev.button;
+    input.damped_event.movementX = ev.movementX;
+    input.damped_event.movementY = ev.movementY;
+
+    input.mouse_x = ev.offsetX;
+    input.mouse_y = ev.offsetY;
+};
+window.oncontextmenu = ev => ev.preventDefault();
+window.onmouseup = ev => {
+    ev.preventDefault();
+
+    if (ev.button == 0 && ev.shiftKey) {
+        input.rmb_down = false;
+        return;
+    }
+
+    if (ev.button == 2) input.rmb_down = false;
+    if (ev.button == 0) input.lmb_down = false;
+
+    /* record undo/redo for the action you just released */
+    if (ev.button == 0 && input.entity_selected >= 0) {
+        const tmp = mat4_create();
+        tmp.set(save.entities[input.entity_selected].transform);
+        save.entities[input.entity_selected].transform.set(input.lmb_down_transform);
+        action_apply(ACT_DO, {
+            kind: ACTION_TRANSFORM,
+            index: input.entity_selected,
+            transform: tmp
+        });
+    }
+};
+
+/* stupidly verbose way to do this but i do not care right now */
+let tr = { clear: () => {}, render: () => {} };
+let fonts = {
+    title: { drawText: () => {} },
+    done:  { drawText: () => {} },
+    todo:  { drawText: () => {} },
+    later: { drawText: () => {} }
+};
+new TextRenderer(gl).then(x => {
+    tr = x;
+    fonts = {
+        title: tr.useFont(40, [0.38, 0.70, 0.90, 0.95]),
+        done:  tr.useFont(25, [0.20, 0.90, 0.40, 0.95]),
+        todo:  tr.useFont(25, [0.01, 0.90, 0.90, 0.95]),
+        later: tr.useFont(25, [0.28, 0.40, 0.50, 0.95]),
+    };
+});
+
+requestAnimationFrame(function frame(timestamp) {
+    requestAnimationFrame(frame);
+
+    /* clear text buffers for reuse */
+    tr.clear();
+
+    /* we could apply these changes directly in the event handlers, but the result feels "low fps"
+     * because we don't get input events at 60fps. so instead, we apply the changes every frame
+     * and simply "damp them" so that they get weaker every frame.
+     *
+     * (this should probably use delta time rather than simply *= 0.8) */
+    {
+        const ev = input.damped_event;
+
+        if (input.captured_mouse == -1) {
+            /* based on the assumption that if you're zoomed in more,
+             * you're doing finer-detailed work and want more precise movements. */
+            const zoom_fudge = Math.sqrt(input.zoom/10.0)*2.0;
+
+            if (input.lmb_down) {
+                input.pitch -= ev.movementX * 0.0035 * zoom_fudge;
+                input.yaw   -= ev.movementY * 0.0035 * zoom_fudge;
+            }
+            if (input.rmb_down) {
+                const unit = [0, -ev.movementX*0.0125*zoom_fudge, ev.movementY*0.0125*zoom_fudge, 1];
+                {
+                    const view    = mat4_create();
+                    const scratch = mat4_create();
+
+                    mat4_from_z_rotation(scratch, input.pitch);
+                    mat4_mul(view, view, scratch);
+
+                    mat4_from_y_rotation(scratch, input.yaw);
+                    mat4_mul(view, view, scratch);
+
+                    mat4_transform_vec4(unit, unit, view);
+                }
+
+                input.cam_pivot_x += unit[0];
+                input.cam_pivot_y += unit[1];
+                input.cam_pivot_z += unit[2];
+            }
+
+            if (!(input.lmb_down || input.rmb_down)) do {
+                /* instead of ray vs. box intersection, for the last selected, since their gizmos
+                 * are being displayed/interacted with, we simply do a screenspace distance check
+                 * (since the gizmos have constant screenspace size)
+                 *
+                 * UPDATE: not sure if this is necessary anymore, disabled for now */
+                if (input.entity_selected > -1, 0) {
+                    const p = [0, 0, 0, 1];
+                    mat4_transform_vec4(p, p, save.entities[input.entity_selected].transform);
+                    mat4_transform_vec4(p, p, input.last_u_vp);
+                    p[0] /= p[3];
+                    p[1] /= p[3];
+
+                    const normalized_mouse_x = -1 + (input.mouse_x / window.innerWidth )*2;
+                    const normalized_mouse_y = +1 - (input.mouse_y / window.innerHeight)*2;
+
+                    const dx = normalized_mouse_x - p[0];
+                    const dy = normalized_mouse_y - p[1];
+                    const dist = Math.sqrt(dx*dx + dy*dy);
+
+                    /* unit here: fraction of the screen */
+                    if (dist < 0.075) {
+                        continue;
+                    }
+                }
+
+                /* select new entity */
+                {
+                    let ray_normal_x, ray_normal_y, ray_normal_z;
+                    let ray_origin_x, ray_origin_y, ray_origin_z;
+                    {
+                        const eye = input.eye;
+                        ray_origin_x = eye[0];
+                        ray_origin_y = eye[1];
+                        ray_origin_z = eye[2];
+
+                        /* screen to world projection */
+                        const vec = [input.mouse_x, input.mouse_y, 0, 1];
+                        {
+                            vec[0] = -1 + (vec[0] / window.innerWidth )*2;
+                            vec[1] = +1 - (vec[1] / window.innerHeight)*2;
+                            vec[2] = 1;
+                            vec[3] = 1;
+
+                            mat4_transform_vec4(vec, vec, input.last_u_vp_inv);
+                            vec[0] /= vec[3];
+                            vec[1] /= vec[3];
+                            vec[2] /= vec[3];
+                        }
+
+                        ray_normal_x = vec[0] - eye[0];
+                        ray_normal_y = vec[1] - eye[1];
+                        ray_normal_z = vec[2] - eye[2];
+
+                        /* normalize */
+                        const nlen = Math.sqrt(ray_normal_x*ray_normal_x +
+                                               ray_normal_y*ray_normal_y +
+                                               ray_normal_z*ray_normal_z);
+                        ray_normal_x /= nlen;
+                        ray_normal_y /= nlen;
+                        ray_normal_z /= nlen;
+                    }
+
+
+                    input.entity_hovered = -1;
+                    let selected_tmin = Infinity;
+                    for (let entity_i = 0; entity_i < save.entities.length; entity_i++) {
+                        const b = {
+                            min: [-1, -1, -1, 1],
+                            max: [ 1,  1,  1, 1],
+                        };
+                        mat4_transform_vec4(b.min, b.min, save.entities[entity_i].transform);
+                        mat4_transform_vec4(b.max, b.max, save.entities[entity_i].transform);
+
+                        /* ray vs. box intersection */
+
+                        let tmin = -Infinity, tmax = Infinity;
+
+                        if (ray_normal_x != 0.0) {
+                            const tx1 = (b.min[0] - ray_origin_x)/ray_normal_x;
+                            const tx2 = (b.max[0] - ray_origin_x)/ray_normal_x;
+
+                            tmin = Math.max(tmin, Math.min(tx1, tx2));
+                            tmax = Math.min(tmax, Math.max(tx1, tx2));
+                        }
+                        if (ray_normal_y != 0.0) {
+                            const tx1 = (b.min[1] - ray_origin_y)/ray_normal_y;
+                            const tx2 = (b.max[1] - ray_origin_y)/ray_normal_y;
+
+                            tmin = Math.max(tmin, Math.min(tx1, tx2));
+                            tmax = Math.min(tmax, Math.max(tx1, tx2));
+                        }
+                        if (ray_normal_z != 0.0) {
+                            const tx1 = (b.min[2] - ray_origin_z)/ray_normal_z;
+                            const tx2 = (b.max[2] - ray_origin_z)/ray_normal_z;
+
+                            tmin = Math.max(tmin, Math.min(tx1, tx2));
+                            tmax = Math.min(tmax, Math.max(tx1, tx2));
+                        }
+
+                        if (tmax >= tmin && tmin < selected_tmin) {
+                            selected_tmin = tmin;
+                            input.entity_hovered = entity_i;
+                        }
+                    }
+                }
+            } while (false);
+        }
+
+        ev.button    *= 0.8;
+        ev.movementX *= 0.8;
+        ev.movementY *= 0.8;
+    }
+
+    input.zoom += 0.025*input.scroll*input.zoom;
+
+    const ORTHO = false;
+    const u_vp     = input.last_u_vp;
+    const u_vp_inv = input.last_u_vp_inv;
+    const u_view   = mat4_create();
+    const scratch  = mat4_create();
+    {
+        const model = save.transform;
+
+        if (ORTHO) {
+            const ar = window.innerWidth / window.innerHeight;
+            const projection = mat4_ortho(mat4_create(), -ar, ar, -1, 1, -2, 2);
+
+            mat4_mul(u_vp, projection, model);
+        } else {
+            const FIELD_OF_VIEW = 70 / 180 * Math.PI;
+            const ar = window.innerWidth / window.innerHeight;
+            const projection = mat4_perspective(mat4_create(), FIELD_OF_VIEW, ar, 0.01, 100.0);
+
+            {
+                input.eye[0] = input.zoom;
+                input.eye[1] = 0;
+                input.eye[2] = 0;
+                input.eye[3] = 1;
+                {
+                    mat4_from_z_rotation(scratch, input.pitch);
+                    mat4_mul(u_view, u_view, scratch);
+
+                    mat4_from_y_rotation(scratch, input.yaw);
+                    mat4_mul(u_view, u_view, scratch);
+
+                    mat4_transform_vec4(input.eye, input.eye, u_view);
+                }
+
+                input.eye[0] += input.cam_pivot_x;
+                input.eye[1] += input.cam_pivot_y;
+                input.eye[2] += input.cam_pivot_z;
+                mat4_target_to(
+                    u_view,
+                    input.eye,
+                    [input.cam_pivot_x, input.cam_pivot_y, input.cam_pivot_z],
+                    [                0,                 0,                 1]
+                );
+                mat4_invert(u_view, u_view);
+            }
+
+            mat4_mul(u_vp, projection, u_view);
+
+            mat4_invert(u_vp_inv, u_vp);
+        }
+    }
+
+    const geo_idx   = [];
+    const geo_pos   = [];
+    const geo_color = [];
+    {
+        const corners = [
+            -1, -1,  1,   1, -1,  1,   1,  1,  1,  -1,  1,  1, /* Top face    */
+            -1, -1, -1,  -1,  1, -1,   1,  1, -1,   1, -1, -1, /* Bottom face */
+
+            -1,  1, -1,  -1,  1,  1,   1,  1,  1,   1,  1, -1, /* Front face  */
+            -1, -1, -1,   1, -1, -1,   1, -1,  1,  -1, -1,  1, /* Back face   */
+
+             1, -1, -1,   1,  1, -1,   1,  1,  1,   1, -1,  1, /* Right face  */
+            -1, -1, -1,  -1, -1,  1,  -1,  1,  1,  -1,  1, -1, /* Left face   */
+        ];
+
+        for (let corner_i = 0; corner_i < corners.length; corner_i += 12) {
+            geo_color.push(
+                255,   0,   0, 255,
+                  0, 255,   0, 255,
+                  0,   0, 255, 255,
+                255,   0, 255, 255
+            )
+
+            const vbuf_i = geo_pos.length / 3;
+            geo_pos.push(corners[corner_i +  0], corners[corner_i +  1], corners[corner_i +  2]);
+            geo_pos.push(corners[corner_i +  3], corners[corner_i +  4], corners[corner_i +  5]);
+            geo_pos.push(corners[corner_i +  6], corners[corner_i +  7], corners[corner_i +  8]);
+            geo_pos.push(corners[corner_i +  9], corners[corner_i + 10], corners[corner_i + 11]);
+
+            geo_idx.push(
+              vbuf_i + 0,
+              vbuf_i + 1,
+              vbuf_i + 2,
+              vbuf_i + 2,
+              vbuf_i + 3,
+              vbuf_i + 0
+            );
+        }
+    }
+
+    const grid_idx = [];
+    const grid_pos = [];
+    const grid_uv  = [];
+    {
+        const corners = [
+            -999, -999, -0,  -999,  999, -0,   999,  999, -0,   999, -999, -0, /* Bottom face */
+        ];
+
+        for (let corner_i = 0; corner_i < corners.length; corner_i += 3)
+            corners[corner_i+2] -= 0.015;
+
+        for (let corner_i = 0; corner_i < corners.length; corner_i += 12) {
+            grid_uv.push(
+                255,   0,
+                  0,   0,
+                  0, 255,
+                255, 255,
+            );
+
+            const vbuf_i = grid_pos.length / 3;
+            grid_pos.push(corners[corner_i +  0], corners[corner_i +  1], corners[corner_i +  2]);
+            grid_pos.push(corners[corner_i +  3], corners[corner_i +  4], corners[corner_i +  5]);
+            grid_pos.push(corners[corner_i +  6], corners[corner_i +  7], corners[corner_i +  8]);
+            grid_pos.push(corners[corner_i +  9], corners[corner_i + 10], corners[corner_i + 11]);
+
+            grid_idx.push(
+                vbuf_i + 0,
+                vbuf_i + 1,
+                vbuf_i + 2,
+                vbuf_i + 2,
+                vbuf_i + 3,
+                vbuf_i + 0
+            );
+        }
+    }
+
+    const gizmo_idx   = [];
+    const gizmo_pos   = [];
+    const gizmo_color = [];
+    {
+        const gizmo_mvp = mat4_create();
+        if (input.entity_selected > -1) {
+            gizmo_mvp[12] = save.entities[input.entity_selected].transform[12];
+            gizmo_mvp[13] = save.entities[input.entity_selected].transform[13];
+            gizmo_mvp[14] = save.entities[input.entity_selected].transform[14];
+        }
+
+        /* flip gizmo as appropriate so it's lookin at you
+         * (think mona lisa, but more discretized rather than continuous) */
+        {
+            const face_user = mat4_from_scaling(
+                scratch,
+                Math.sign(input.eye[0] - gizmo_mvp[12]),
+                Math.sign(input.eye[1] - gizmo_mvp[13]),
+                Math.sign(input.eye[2] - gizmo_mvp[14])
+            );
+            mat4_mul(gizmo_mvp, gizmo_mvp, face_user);
+        }
+
+        mat4_mul(gizmo_mvp, u_vp, gizmo_mvp);
+
+        function line(a, b, a_thick, b_thick, color, z_push=0) {
+            const aspect_ratio = window.innerWidth / window.innerHeight;
+
+            mat4_transform_vec4(a, a, gizmo_mvp);
+            mat4_transform_vec4(b, b, gizmo_mvp);
+
+            const dx = b[0] - a[0];
+            const dy = b[1] - a[1];
+            const nx = -dy; /* perp */
+            const ny = dx*aspect_ratio;
+            const tlen = Math.sqrt(nx*nx + ny*ny);
+            if (tlen <= 0) return;
+            let a_tx = nx/tlen * a_thick / aspect_ratio;
+            let a_ty = ny/tlen * a_thick;
+            let b_tx = nx/tlen * b_thick / aspect_ratio;
+            let b_ty = ny/tlen * b_thick;
+
+            const vbuf_i = gizmo_pos.length / 4;
+            gizmo_pos.push(
+                a[0] + a_tx, a[1] + a_ty, a[2] + z_push, a[3],
+                a[0] - a_tx, a[1] - a_ty, a[2] + z_push, a[3],
+                b[0] + b_tx, b[1] + b_ty, b[2] + z_push, b[3],
+                b[0] - b_tx, b[1] - b_ty, b[2] + z_push, b[3]
+            );
+
+            gizmo_color.push(
+                color[0], color[1], color[2], color[3],
+                color[0], color[1], color[2], color[3],
+                color[0], color[1], color[2], color[3],
+                color[0], color[1], color[2], color[3],
+            );
+
+            gizmo_idx.push(
+                vbuf_i + 0,
+                vbuf_i + 1,
+                vbuf_i + 2,
+                vbuf_i + 2,
+                vbuf_i + 1,
+                vbuf_i + 3
+            );
+        }
+
+        function dist_to_center(a, b) {
+            const center = [
+                (a[0] + b[0]) * 0.5,
+                (a[1] + b[1]) * 0.5,
+                (a[2] + b[2]) * 0.5,
+                1
+            ];
+            mat4_transform_vec4(center, center, gizmo_mvp);
+            const w = center[3];
+            center[0] = (0 + (center[0]/w*0.5 + 0.5))*window.innerWidth;
+            center[1] = (1 - (center[1]/w*0.5 + 0.5))*window.innerHeight;
+
+            const dist = Math.sqrt((center[0] - input.mouse_x)*(center[0] - input.mouse_x) +
+                                   (center[1] - input.mouse_y)*(center[1] - input.mouse_y) );
+
+            return dist;
+        }
+
+        {
+            function eye_to_mouse_world_dir(vec) {
+                vec[0] = -1 + (vec[0] / window.innerWidth )*2;
+                vec[1] = +1 - (vec[1] / window.innerHeight)*2;
+                vec[2] = 1;
+                vec[3] = 1;
+
+                mat4_transform_vec4(vec, vec, u_vp_inv);
+                vec[0] /= vec[3];
+                vec[1] /= vec[3];
+                vec[2] /= vec[3];
+
+                const eye = input.eye;
+
+                const x = vec[0] - eye[0];
+                const y = vec[1] - eye[1];
+                const z = vec[2] - eye[2];
+
+                /* normalize */
+                const nlen = Math.sqrt(vec[0]*vec[0] +
+                                       vec[1]*vec[1] +
+                                       vec[2]*vec[2]);
+                vec[0] /= nlen;
+                vec[1] /= nlen;
+                vec[2] /= nlen;
+
+                return vec;
+            }
+
+            function screen_to_plane(plane_vector_x, plane_vector_y, plane_vector_z, vec) {
+                vec[0] = -1 + (vec[0] / window.innerWidth )*2;
+                vec[1] = +1 - (vec[1] / window.innerHeight)*2;
+                vec[2] = 1;
+                vec[3] = 1;
+
+                mat4_transform_vec4(vec, vec, u_vp_inv);
+                vec[0] /= vec[3];
+                vec[1] /= vec[3];
+                vec[2] /= vec[3];
+
+                const eye = input.eye;
+
+                ray_hit_plane(
+                    vec,
+                             eye[0],          eye[1],          eye[2],
+                    vec[0] - eye[0], vec[1] - eye[1], vec[2] - eye[2],
+
+                    input.lmb_down_transform[12], input.lmb_down_transform[13], input.lmb_down_transform[14],
+                    plane_vector_x, plane_vector_y, plane_vector_z,
+                );
+
+                return vec;
+            }
+
+            function gizmo(line, doInput) {
+                doInput &&= input.lmb_down;
+                const ev = input.damped_event;
+
+                const LINE_BASE  = 1.75;
+                const ARROW_BASE = 2.2;
+                const ARROW_TIP  = 2.4;
+                const SCALE_P    = 1.99;
+
+                let gizmo_i = 1;
+
+                /* lines */
+                {
+                    line([LINE_BASE,         0,         0, 1], [ARROW_BASE,          0,          0, 1], 0.04, 0.04, RED,   null);
+                    line([        0, LINE_BASE,         0, 1], [         0, ARROW_BASE,          0, 1], 0.04, 0.04, GREEN, null);
+                    line([        0,         0, LINE_BASE, 1], [         0,          0, ARROW_BASE, 1], 0.04, 0.04, BLUE,  null);
+                }
+
+                const tip = [0, 0, 0, 1];
+                const base = [0, 0, 0, 1];
+                const colors = [RED, GREEN, BLUE];
+
+                /* translation arrows */
+                {
+                    for (let i = 0; i < colors.length; i++) {
+                        tip[0] = base[0] = 0;
+                        tip[1] = base[1] = 0;
+                        tip[2] = base[2] = 0;
+                        tip[3] = base[3] = 1;
+
+                        tip[i] = ARROW_TIP;
+                        base[i] = ARROW_BASE;
+
+                        line(tip, base, 0.00, 0.10, colors[i], gizmo_i);
+
+                        if (doInput && input.captured_mouse == gizmo_i) {
+                            let plane_x = +(i == 2);
+                            let plane_y = +(i == 2);
+                            let plane_z = +(i != 2);
+                            const current  = screen_to_plane(plane_x, plane_y, plane_z, [input.   mouse_x, input.   mouse_y, 1, 1]);
+                            const lmb_down = screen_to_plane(plane_x, plane_y, plane_z, [input.lmb_down_x, input.lmb_down_y, 1, 1]);
+
+                            const x = (i == 0) ? (current[0] - lmb_down[0]) : 0;
+                            const y = (i == 1) ? (current[1] - lmb_down[1]) : 0;
+                            const z = (i == 2) ? (current[2] - lmb_down[2]) : 0;
+                            mat4_from_translation(scratch, x, y, z);
+
+                            mat4_mul(
+                                save.entities[input.entity_selected].transform,
+                                scratch,
+                                input.lmb_down_transform
+                            );
+                        }
+                        gizmo_i++;
+                    }
+                }
+
+                /* scale boxes */
+                {
+                    const S = 0.075;
+
+                    for (let i = 0; i < colors.length; i++) {
+                        tip[0] = base[0] = 0;
+                        tip[1] = base[1] = 0;
+                        tip[2] = base[2] = 0;
+                        tip[3] = base[3] = 1;
+
+                        tip[i] = SCALE_P - S;
+                        base[i] = SCALE_P + S;
+
+                        line(tip, base, 0.10, 0.10, colors[i], gizmo_i);
+
+                        if (doInput && input.captured_mouse == gizmo_i) {
+                        }
+
+                        if (doInput && input.captured_mouse == gizmo_i) {
+
+                            /* there are three possible scale vectors; find the one visually closest
+                             * to the scale box they're pulling right now.
+                             *
+                             * this still works if you don't shadow and override `i`, but the user experience
+                             * is ever so slightly worse. the box you're pulling doesn't always visually
+                             * match up with the resulting scale.
+                             * */
+                            let diverted_axis_i;
+                            {
+                                let axis_best_dot = 0;
+
+                                const world_i = i;
+                                const grabby_vec = [
+                                    +(world_i == 0),
+                                    +(world_i == 1),
+                                    +(world_i == 2)
+                                ];
+                                for (let axis_i = 0; axis_i < 3; axis_i++) {
+                                    /* the last 0 is important here; you definitely don't want to apply translation. */
+                                    const a = [0, 0, 0, 0];
+                                    a[axis_i] = 1;
+                                    mat4_transform_vec4(a, a, input.lmb_down_transform);
+                                    const a_len = Math.sqrt(a[0]*a[0] + a[1]*a[1] + a[2]*a[2]);
+                                    a[0] /= a_len;
+                                    a[1] /= a_len;
+                                    a[2] /= a_len;
+
+                                    let dot = a[0]*grabby_vec[0] + a[1]*grabby_vec[1] + a[2]*grabby_vec[2];
+                                    if (Math.abs(axis_best_dot) < Math.abs(dot)) {
+                                        diverted_axis_i = axis_i;
+                                        axis_best_dot = dot;
+                                    }
+                                }
+                            }
+
+                            let u;
+                            {
+                                /* base is different now, so I reset both */
+                                {
+                                    tip[0] = base[0] = 0;
+                                    tip[1] = base[1] = 0;
+                                    tip[2] = base[2] = 0;
+                                    tip[3] = base[3] = 1;
+
+                                    tip[diverted_axis_i] = SCALE_P + S;
+                                    /* correct for perspective projection. */
+                                    mat4_transform_vec4(tip , tip , gizmo_mvp);
+                                    mat4_transform_vec4(base, base, gizmo_mvp);
+
+                                    tip[0] /= tip[3];
+                                    tip[1] /= tip[3];
+                                    tip[2] /= tip[3];
+
+                                    base[0] /= base[3];
+                                    base[1] /= base[3];
+                                    base[2] /= base[3];
+                                }
+
+                                /* gotta get mouse in the same space */
+                                const mouse_x = -1 + (input.mouse_x / window.innerWidth )*2;
+                                const mouse_y = +1 - (input.mouse_y / window.innerHeight)*2;
+
+                                const m2t_x = mouse_x - tip[0];
+                                const m2t_y = mouse_y - tip[1];
+
+                                const b2t_x = base[0] - tip[0];
+                                const b2t_y = base[1] - tip[1];
+
+                                const dot = m2t_x*b2t_x + m2t_y*b2t_y;
+
+                                /* squared length of vector from mouse to tip */
+                                u = dot / (b2t_x*b2t_x + b2t_y*b2t_y);
+                                u = -u;
+
+                                if (0) {
+                                    {
+                                        tip[0] = base[0] = 0;
+                                        tip[1] = base[1] = 0;
+                                        tip[2] = base[2] = 0;
+                                        tip[3] = base[3] = 1;
+
+                                        tip[diverted_axis_i] = SCALE_P + S;
+                                    }
+
+                                    line(
+                                        [
+                                            base[0],
+                                            base[1],
+                                            base[2],
+                                            1
+                                        ],
+                                        [
+                                            lerp(tip[0], base[0], -u),
+                                            lerp(tip[1], base[1], -u),
+                                            lerp(tip[2], base[2], -u),
+                                            1
+                                        ],
+                                        0.15,
+                                        0.15,
+                                        colors[i],
+                                        -1
+                                    );
+                                }
+                            }
+
+                            mat4_from_scaling(
+                                scratch,
+                                1 + (diverted_axis_i == 0) * u,
+                                1 + (diverted_axis_i == 1) * u,
+                                1 + (diverted_axis_i == 2) * u
+                            );
+
+                            /* cache and undo the translation */
+                            const x = input.lmb_down_transform[12];
+                            const y = input.lmb_down_transform[13];
+                            const z = input.lmb_down_transform[14];
+
+                            input.lmb_down_transform[12] = 0;
+                            input.lmb_down_transform[13] = 0;
+                            input.lmb_down_transform[14] = 0;
+
+                            mat4_mul(
+                                save.entities[input.entity_selected].transform,
+                                input.lmb_down_transform,
+                                scratch
+                            );
+
+                            /* reapply the translation */
+                            save.entities[input.entity_selected].transform[12] = input.lmb_down_transform[12] = x;
+                            save.entities[input.entity_selected].transform[13] = input.lmb_down_transform[13] = y;
+                            save.entities[input.entity_selected].transform[14] = input.lmb_down_transform[14] = z;
+                        }
+
+                        gizmo_i++;
+                    }
+                }
+
+                /* rotation arcs */
+                const RESOLUTION = 12;
+                for (let axis = 0; axis < 3; axis++) {
+                    for (let i = 0; i < RESOLUTION; i++) {
+                        const a_x = Math.cos((i - 0.01)/RESOLUTION * Math.PI*0.5)*LINE_BASE;
+                        const a_y = Math.sin((i - 0.01)/RESOLUTION * Math.PI*0.5)*LINE_BASE;
+                        const b_x = Math.cos((i + 1.01)/RESOLUTION * Math.PI*0.5)*LINE_BASE;
+                        const b_y = Math.sin((i + 1.01)/RESOLUTION * Math.PI*0.5)*LINE_BASE;
+
+                        if (axis == 0)
+                            line([0, a_x, a_y, 1],
+                                 [0, b_x, b_y, 1], 0.04, 0.04, RED,   gizmo_i + 0);
+
+                        if (axis == 1)
+                            line([a_x, 0, a_y, 1],
+                                 [b_x, 0, b_y, 1], 0.04, 0.04, GREEN,  gizmo_i + 1);
+
+                        if (axis == 2)
+                            line([a_x, a_y, 0, 1],
+                                 [b_x, b_y, 0, 1], 0.04, 0.04, BLUE, gizmo_i + 2);
+                    }
+
+                    if (doInput && input.captured_mouse == (gizmo_i + axis)) {
+                        const eye_to_mouse = eye_to_mouse_world_dir([0, 0, 0, 1]);
+
+                        let plane_x = +(axis == 0);
+                        let plane_y = +(axis == 1);
+                        let plane_z = +(axis == 2);
+
+                        const ldot = eye_to_mouse[0]*plane_x +
+                                     eye_to_mouse[1]*plane_y +
+                                     eye_to_mouse[2]*plane_z ;
+
+                        /* if you're looking at the plane you're trying to rotate on,
+                         * simply translate your mouse movement in screenspace directly
+                         * into rotation; no need to do plane intersection */
+                        if (Math.abs(Math.abs(ldot) - 0.5) < 0.35) {
+                            const flip = -Math.sign(ldot);
+                            const delta = -0.01 * (input.lmb_down_y-input.mouse_y +
+                                                   input.lmb_down_x-input.mouse_x);
+                            if (axis == 0) mat4_from_x_rotation(scratch, delta*flip);
+                            if (axis == 1) mat4_from_y_rotation(scratch, delta*flip);
+                            if (axis == 2) mat4_from_z_rotation(scratch, delta);
+                        } else {
+                            const current  = screen_to_plane(plane_x, plane_y, plane_z, [input.   mouse_x, input.   mouse_y, 1, 1]);
+                            const lmb_down = screen_to_plane(plane_x, plane_y, plane_z, [input.lmb_down_x, input.lmb_down_y, 1, 1]);
+
+                            const dx = current[0] - input.lmb_down_transform[12];
+                            const dy = current[1] - input.lmb_down_transform[13];
+                            const dz = current[2] - input.lmb_down_transform[14];
+
+                            const px = lmb_down[0] - input.lmb_down_transform[12];
+                            const py = lmb_down[1] - input.lmb_down_transform[13];
+                            const pz = lmb_down[2] - input.lmb_down_transform[14];
+
+                            if (axis == 0) mat4_from_x_rotation(scratch, Math.atan2(dz, dy) - Math.atan2(pz, py));
+                            if (axis == 1) mat4_from_y_rotation(scratch, Math.atan2(dx, dz) - Math.atan2(px, pz));
+                            if (axis == 2) mat4_from_z_rotation(scratch, Math.atan2(dy, dx) - Math.atan2(py, px));
+                        }
+
+                        {
+                            const x = input.lmb_down_transform[12];
+                            const y = input.lmb_down_transform[13];
+                            const z = input.lmb_down_transform[14];
+
+                            input.lmb_down_transform[12] = 0;
+                            input.lmb_down_transform[13] = 0;
+                            input.lmb_down_transform[14] = 0;
+
+                            mat4_mul(save.entities[input.entity_selected].transform, scratch, input.lmb_down_transform);
+
+                            save.entities[input.entity_selected].transform[12] = input.lmb_down_transform[12] = x;
+                            save.entities[input.entity_selected].transform[13] = input.lmb_down_transform[13] = y;
+                            save.entities[input.entity_selected].transform[14] = input.lmb_down_transform[14] = z;
+                        }
+                    }
+                }
+            }
+
+            const RED   = [[204.0,  25.5,  25.5, 255.0], [255.0, 102.0, 102.0, 255.0]];
+            const GREEN = [[ 25.5, 204.0,  25.5, 255.0], [102.0, 255.0, 102.0, 255.0]];
+            const BLUE  = [[ 25.5,  25.5, 204.0, 255.0], [102.0, 102.0, 255.0, 255.0]];
+
+            /* first pass - find closest */
+            if (input.entity_selected > -1) {
+                let selected_i = input.captured_mouse;
+
+                if (!input.lmb_down) {
+                    selected_i = -1;
+                    let selected_dist = Infinity;
+                    gizmo(
+                        (a, b, a_thick, b_thick, color, i) => {
+                          const dist = dist_to_center(a, b);
+
+                          if (i && dist < selected_dist && dist < 30) {
+                              selected_dist = dist;
+                              selected_i = i;
+                          }
+                        },
+                        false
+                    );
+                }
+
+                /* second pass - draw */
+                gizmo(
+                    (a, b, a_thick, b_thick, color, i) => {
+                        const selected = +(selected_i == i);
+                        const push = -0.001*selected;
+                        line(a, b, a_thick, b_thick, color[selected], push);
+                    },
+                    true
+                );
+
+                input.captured_mouse = selected_i;
+            }
+        }
+    }
+
+    /* tutorial UI */
+    const ghosts = [];
+    {
+        let objective_idx_todo = 0;
+        let objective_idx = 0;
+
+        /* basic UI layout { */
+        const x_pad = 5;
+        const y_pad = 5;
+
+        let x = x_pad;
+        let y = y_pad*2;
+        fonts.title.drawText(
+            'level 1',
+            x,
+            y,
+            ALIGN_LEFT
+        );
+        y += fonts.title.dynamic_scale;
+        y += y_pad*2;
+
+        x += x_pad*2;
+        function objective(done, text) {
+            let font = fonts.later;
+            if (objective_idx_todo == objective_idx) font = fonts.todo;
+            if (done) font = fonts.done;
+
+            text = (done ? '[x] ' : '[ ] ') + text;
+
+            font.drawText(
+                text,
+                x,
+                y,
+                ALIGN_LEFT
+            );
+            y += font.dynamic_scale;
+            y += y_pad;
+
+            if (done) objective_idx_todo++;
+            objective_idx++;
+
+            return done;
+        }
+        /* } end basic UI layout */
+
+        {
+            save.tut ??= {
+                selected_cube: false,
+            };
+
+            save.tut.selected_cube = input.entity_selected > -1;
+            objective(save.tut.selected_cube, 'double-click cube');
+
+            {
+                const ghost_mat = mat4_from_translation(mat4_create(), -5, -2, 1);
+                mat4_mul(ghost_mat, ghost_mat, mat4_from_scaling(scratch, 0.9, 0.9, 0.9));
+                ghosts.push({ transform: ghost_mat });
+
+                const t = save.tut.selected_cube && save.entities[input.entity_selected].transform;
+                objective(save.tut.selected_cube && fuzzy_eq_mat(t, ghost_mat), 'drag to ghost');
+            }
+        }
+
+        {
+            /* duplicate */
+        }
+
+        {
+            /* delete */
+        }
+
+        {
+            /* make stonehenge */
+        }
+    }
+
+    {
+        /* set up premultiplied alpha */
+        gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
+        gl.enable(gl.BLEND);
+
+        gl.enable(gl.DEPTH_TEST);
+        gl.depthFunc(gl.LEQUAL);
+
+        /* clear all */
+        gl.clearColor(0, 0, 0, 1);
+        gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+
+        {
+            gl.useProgram(shaders.geo.program);
+            gl.enableVertexAttribArray(shaders.geo.a_pos);
+            gl.enableVertexAttribArray(shaders.geo.a_color);
+
+            /* geo pass */
+            function draw_cube(transform, color) {
+                gl.uniformMatrix4fv(shaders.geo.u_matrix, false, transform);
+                gl.uniform4fv(shaders.geo.u_color, color);
+
+                /* upload/bind geometry */
+                {
+                    gl.bindBuffer(gl.ARRAY_BUFFER, buf.geo_v_pos);
+                    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(geo_pos), gl.STATIC_DRAW);
+                    gl.vertexAttribPointer(shaders.geo.a_pos, 3, gl.FLOAT, false, 0, 0);
+
+                    gl.bindBuffer(gl.ARRAY_BUFFER, buf.geo_v_color);
+                    gl.bufferData(gl.ARRAY_BUFFER, new Uint8Array(geo_color), gl.STATIC_DRAW);
+                    gl.vertexAttribPointer(shaders.geo.a_color, 4, gl.UNSIGNED_BYTE, true, 0, 0);
+
+                    gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, buf.geo_i);
+                    gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, new Uint16Array(geo_idx), gl.STATIC_DRAW);
+                }
+
+                gl.drawElements(gl.TRIANGLES, geo_idx.length, gl.UNSIGNED_SHORT, 0);
+            }
+
+            const u_cube_mvp = mat4_create();
+            for (let i = 0; i < save.entities.length; i++) {
+                const ent = save.entities[i];
+                mat4_mul(u_cube_mvp, u_vp, ent.transform);
+
+                draw_cube(u_cube_mvp, ent.color);
+
+                /* do outline */
+                if (i == input.entity_hovered) {
+                    const m = mat4_from_scaling(mat4_create(), -1.05, -1.05, -1.05);
+                    mat4_mul(m, ent.transform, m);
+                    mat4_mul(m, u_vp, m);
+                    mat4_mul(m, mat4_from_translation(scratch, 0, 0, 0.0003), m);
+
+                    const c = 0.1 + 0.1 * Math.abs(Math.sin(Date.now() / 500));
+                    draw_cube(m, [ent.color[0]+c, ent.color[1]+c, ent.color[2]+c, 1.0]);
+                    // draw_cube(m, [0.7, 0.5, 0.4, 1.0]);
+                }
+            }
+
+            for (const ghost of ghosts) {
+                mat4_mul(u_cube_mvp, u_vp, ghost.transform);
+                draw_cube(u_cube_mvp, ghost.color ?? [0.4, 0.4, 0.9, 0.2]);
+            }
+
+            if (input.entity_selected > -1) {
+                const start_x = -0.95;
+                const start_y = -0.95;
+                for (let i = 0; i < palette.length; i++) {
+                    const color = palette[i];
+
+                    const size = 0.10;
+                    let m, cube_x, cube_y;
+                    {
+                        m = mat4_from_scaling(mat4_create(), size*0.5, size*0.5, 1)
+
+                        const pad = size*0.1;
+                        cube_x = start_x + pad + (size + pad)*i;
+                        cube_y = start_y + pad;
+                        mat4_mul(m, mat4_from_translation(scratch, cube_x, cube_y, 0.0), m);
+                    }
+
+
+                    /* check if this palette color is hovered, and apply it if clicked */
+                    {
+                        let hovered;
+                        {
+                            const normalized_mouse_x = -1 + (input.mouse_x / window.innerWidth )*2;
+                            const normalized_mouse_y = +1 - (input.mouse_y / window.innerHeight)*2;
+
+                            hovered = (Math.abs(normalized_mouse_x - cube_x) < (size*0.5)) && 
+                                      (Math.abs(normalized_mouse_y - cube_y) < (size*0.5)) ;
+                        }
+
+                        if (hovered) {
+                            const c = 0.1 * Math.sin(Date.now() / 500);
+                            draw_cube(
+                                mat4_mul(mat4_create(), m, mat4_from_scaling(scratch, 1.12, 1.12, 0.0)),
+                                [color[0]+c, color[1]+c, color[2]+c, 1]
+                            );
+                        }
+
+                        if (hovered && input.lmb_released) {
+                            action_apply(ACT_DO, {
+                                kind: ACTION_COLOR,
+                                index: input.entity_selected,
+                                color
+                            });
+                        }
+                    }
+
+                    draw_cube(m, color);
+                }
+            }
+        }
+
+        /* grid pass */
+        {
+            gl.useProgram(shaders.grid.program);
+            gl.enableVertexAttribArray(shaders.grid.a_pos);
+            gl.enableVertexAttribArray(shaders.grid.a_color);
+
+            gl.uniformMatrix4fv(shaders.grid.u_matrix, false, u_vp);
+
+            /* upload/bind geometry */
+            {
+                gl.bindBuffer(gl.ARRAY_BUFFER, buf.grid_v_pos);
+                gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(grid_pos), gl.STATIC_DRAW);
+                gl.vertexAttribPointer(shaders.grid.a_pos, 3, gl.FLOAT, false, 0, 0);
+
+                gl.bindBuffer(gl.ARRAY_BUFFER, buf.grid_v_uv);
+                gl.bufferData(gl.ARRAY_BUFFER, new Uint8Array(grid_uv), gl.STATIC_DRAW);
+                gl.vertexAttribPointer(shaders.grid.a_uv, 2, gl.UNSIGNED_BYTE, true, 0, 0);
+
+                gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, buf.grid_i);
+                gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, new Uint16Array(grid_idx), gl.STATIC_DRAW);
+            }
+
+            gl.drawElements(gl.TRIANGLES, grid_idx.length, gl.UNSIGNED_SHORT, 0);
+        }
+
+        /* gizmo pass */
+        {
+            gl.disable(gl.DEPTH_TEST);
+
+            gl.useProgram(shaders.gizmo.program);
+            gl.enableVertexAttribArray(shaders.gizmo.a_pos);
+            gl.enableVertexAttribArray(shaders.gizmo.a_color);
+
+            /* upload/bind geometry */
+            {
+                gl.bindBuffer(gl.ARRAY_BUFFER, buf.gizmo_v_pos);
+                gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(gizmo_pos), gl.STATIC_DRAW);
+                gl.vertexAttribPointer(shaders.gizmo.a_pos, 4, gl.FLOAT, false, 0, 0);
+
+                gl.bindBuffer(gl.ARRAY_BUFFER, buf.gizmo_v_color);
+                gl.bufferData(gl.ARRAY_BUFFER, new Uint8Array(gizmo_color), gl.STATIC_DRAW);
+                gl.vertexAttribPointer(shaders.gizmo.a_color, 4, gl.UNSIGNED_BYTE, true, 0, 0);
+
+                gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, buf.gizmo_i);
+                gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, new Uint16Array(gizmo_idx), gl.STATIC_DRAW);
+            }
+
+            gl.drawElements(gl.TRIANGLES, gizmo_idx.length, gl.UNSIGNED_SHORT, 0);
+        }
+    }
+
+    tr.render(gl, canvas);
+
+    /* end this frame of input */
+    input.lmb_released = false;
+})
+
+function mat4_create() {
+    let out = new Float32Array(16);
+    out[0] = 1;
+    out[5] = 1;
+    out[10] = 1;
+    out[15] = 1;
+    return out;
+}
+
+function mat4_ortho(out, left, right, bottom, top, near, far) {
+    let lr = 1 / (left - right);
+    let bt = 1 / (bottom - top);
+    let nf = 1 / (near - far);
+    out[0] = -2 * lr;
+    out[1] = 0;
+    out[2] = 0;
+    out[3] = 0;
+    out[4] = 0;
+    out[5] = -2 * bt;
+    out[6] = 0;
+    out[7] = 0;
+    out[8] = 0;
+    out[9] = 0;
+    out[10] = 2 * nf;
+    out[11] = 0;
+    out[12] = (left + right) * lr;
+    out[13] = (top + bottom) * bt;
+    out[14] = (far + near) * nf;
+    out[15] = 1;
+    return out;
+}
+
+function mat4_invert(out, a) {
+    let a00 = a[0], a01 = a[1], a02 = a[2], a03 = a[3];
+    let a10 = a[4], a11 = a[5], a12 = a[6], a13 = a[7];
+    let a20 = a[8], a21 = a[9], a22 = a[10], a23 = a[11];
+    let a30 = a[12], a31 = a[13], a32 = a[14], a33 = a[15];
+    let b00 = a00 * a11 - a01 * a10;
+    let b01 = a00 * a12 - a02 * a10;
+    let b02 = a00 * a13 - a03 * a10;
+    let b03 = a01 * a12 - a02 * a11;
+    let b04 = a01 * a13 - a03 * a11;
+    let b05 = a02 * a13 - a03 * a12;
+    let b06 = a20 * a31 - a21 * a30;
+    let b07 = a20 * a32 - a22 * a30;
+    let b08 = a20 * a33 - a23 * a30;
+    let b09 = a21 * a32 - a22 * a31;
+    let b10 = a21 * a33 - a23 * a31;
+    let b11 = a22 * a33 - a23 * a32;
+    /* Calculate the determinant */
+    let det = b00 * b11 - b01 * b10 + b02 * b09 + b03 * b08 - b04 * b07 + b05 * b06;
+    if (!det) {
+        return null;
+    }
+    det = 1.0 / det;
+    out[0] = (a11 * b11 - a12 * b10 + a13 * b09) * det;
+    out[1] = (a02 * b10 - a01 * b11 - a03 * b09) * det;
+    out[2] = (a31 * b05 - a32 * b04 + a33 * b03) * det;
+    out[3] = (a22 * b04 - a21 * b05 - a23 * b03) * det;
+    out[4] = (a12 * b08 - a10 * b11 - a13 * b07) * det;
+    out[5] = (a00 * b11 - a02 * b08 + a03 * b07) * det;
+    out[6] = (a32 * b02 - a30 * b05 - a33 * b01) * det;
+    out[7] = (a20 * b05 - a22 * b02 + a23 * b01) * det;
+    out[8] = (a10 * b10 - a11 * b08 + a13 * b06) * det;
+    out[9] = (a01 * b08 - a00 * b10 - a03 * b06) * det;
+    out[10] = (a30 * b04 - a31 * b02 + a33 * b00) * det;
+    out[11] = (a21 * b02 - a20 * b04 - a23 * b00) * det;
+    out[12] = (a11 * b07 - a10 * b09 - a12 * b06) * det;
+    out[13] = (a00 * b09 - a01 * b07 + a02 * b06) * det;
+    out[14] = (a31 * b01 - a30 * b03 - a32 * b00) * det;
+    out[15] = (a20 * b03 - a21 * b01 + a22 * b00) * det;
+    return out;
+}
+
+function mat4_perspective(out, fovy, aspect, near, far) {
+    let f = 1.0 / Math.tan(fovy / 2),
+        nf;
+    out[0] = f / aspect;
+    out[1] = 0;
+    out[2] = 0;
+    out[3] = 0;
+    out[4] = 0;
+    out[5] = f;
+    out[6] = 0;
+    out[7] = 0;
+    out[8] = 0;
+    out[9] = 0;
+    out[11] = -1;
+    out[12] = 0;
+    out[13] = 0;
+    out[15] = 0;
+    if (far != null && far !== Infinity) {
+        nf = 1 / (near - far);
+        out[10] = (far + near) * nf;
+        out[14] = 2 * far * near * nf;
+    } else {
+        out[10] = -1;
+        out[14] = -2 * near;
+    }
+    return out;
+}
+
+function mat4_from_x_rotation(out, rad) {
+    let s = Math.sin(rad);
+    let c = Math.cos(rad);
+    /* Perform axis-specific matrix multiplication */
+    out[0] = 1;
+    out[1] = 0;
+    out[2] = 0;
+    out[3] = 0;
+    out[4] = 0;
+    out[5] = c;
+    out[6] = s;
+    out[7] = 0;
+    out[8] = 0;
+    out[9] = -s;
+    out[10] = c;
+    out[11] = 0;
+    out[12] = 0;
+    out[13] = 0;
+    out[14] = 0;
+    out[15] = 1;
+    return out;
+}
+
+function mat4_from_y_rotation(out, rad) {
+    let s = Math.sin(rad);
+    let c = Math.cos(rad);
+    /* Perform axis-specific matrix multiplication */
+    out[0] = c;
+    out[1] = 0;
+    out[2] = -s;
+    out[3] = 0;
+    out[4] = 0;
+    out[5] = 1;
+    out[6] = 0;
+    out[7] = 0;
+    out[8] = s;
+    out[9] = 0;
+    out[10] = c;
+    out[11] = 0;
+    out[12] = 0;
+    out[13] = 0;
+    out[14] = 0;
+    out[15] = 1;
+    return out;
+}
+
+function mat4_from_z_rotation(out, rad) {
+    let s = Math.sin(rad);
+    let c = Math.cos(rad);
+    /* Perform axis-specific matrix multiplication */
+    out[0] = c;
+    out[1] = s;
+    out[2] = 0;
+    out[3] = 0;
+    out[4] = -s;
+    out[5] = c;
+    out[6] = 0;
+    out[7] = 0;
+    out[8] = 0;
+    out[9] = 0;
+    out[10] = 1;
+    out[11] = 0;
+    out[12] = 0;
+    out[13] = 0;
+    out[14] = 0;
+    out[15] = 1;
+    return out;
+}
+
+function mat4_from_scaling(out, x, y, z) {
+    out[0] = x;
+    out[1] = 0;
+    out[2] = 0;
+    out[3] = 0;
+    out[4] = 0;
+    out[5] = y;
+    out[6] = 0;
+    out[7] = 0;
+    out[8] = 0;
+    out[9] = 0;
+    out[10] = z;
+    out[11] = 0;
+    out[12] = 0;
+    out[13] = 0;
+    out[14] = 0;
+    out[15] = 1;
+    return out;
+}
+
+function mat4_from_translation(out, x, y, z) {
+    out[0] = 1;
+    out[1] = 0;
+    out[2] = 0;
+    out[3] = 0;
+    out[4] = 0;
+    out[5] = 1;
+    out[6] = 0;
+    out[7] = 0;
+    out[8] = 0;
+    out[9] = 0;
+    out[10] = 1;
+    out[11] = 0;
+    out[12] = x;
+    out[13] = y;
+    out[14] = z;
+    out[15] = 1;
+    return out;
+}
+
+function mat4_transform_vec4(out, a, m) {
+    let x = a[0], y = a[1], z = a[2], w = a[3];
+    out[0] = m[0] * x + m[4] * y + m[8] * z + m[12] * w;
+    out[1] = m[1] * x + m[5] * y + m[9] * z + m[13] * w;
+    out[2] = m[2] * x + m[6] * y + m[10] * z + m[14] * w;
+    out[3] = m[3] * x + m[7] * y + m[11] * z + m[15] * w;
+    return out;
+}
+
+function mat4_mul(out, a, b) {
+    let a00 = a[0], a01 = a[1], a02 = a[2], a03 = a[3];
+    let a10 = a[4], a11 = a[5], a12 = a[6], a13 = a[7];
+    let a20 = a[8], a21 = a[9], a22 = a[10], a23 = a[11];
+    let a30 = a[12], a31 = a[13], a32 = a[14], a33 = a[15];
+    /* Cache only the current line of the second matrix */
+    let b0 = b[0], b1 = b[1], b2 = b[2], b3 = b[3];
+    out[0] = b0 * a00 + b1 * a10 + b2 * a20 + b3 * a30;
+    out[1] = b0 * a01 + b1 * a11 + b2 * a21 + b3 * a31;
+    out[2] = b0 * a02 + b1 * a12 + b2 * a22 + b3 * a32;
+    out[3] = b0 * a03 + b1 * a13 + b2 * a23 + b3 * a33;
+    b0 = b[4];
+    b1 = b[5];
+    b2 = b[6];
+    b3 = b[7];
+    out[4] = b0 * a00 + b1 * a10 + b2 * a20 + b3 * a30;
+    out[5] = b0 * a01 + b1 * a11 + b2 * a21 + b3 * a31;
+    out[6] = b0 * a02 + b1 * a12 + b2 * a22 + b3 * a32;
+    out[7] = b0 * a03 + b1 * a13 + b2 * a23 + b3 * a33;
+    b0 = b[8];
+    b1 = b[9];
+    b2 = b[10];
+    b3 = b[11];
+    out[8] = b0 * a00 + b1 * a10 + b2 * a20 + b3 * a30;
+    out[9] = b0 * a01 + b1 * a11 + b2 * a21 + b3 * a31;
+    out[10] = b0 * a02 + b1 * a12 + b2 * a22 + b3 * a32;
+    out[11] = b0 * a03 + b1 * a13 + b2 * a23 + b3 * a33;
+    b0 = b[12];
+    b1 = b[13];
+    b2 = b[14];
+    b3 = b[15];
+    out[12] = b0 * a00 + b1 * a10 + b2 * a20 + b3 * a30;
+    out[13] = b0 * a01 + b1 * a11 + b2 * a21 + b3 * a31;
+    out[14] = b0 * a02 + b1 * a12 + b2 * a22 + b3 * a32;
+    out[15] = b0 * a03 + b1 * a13 + b2 * a23 + b3 * a33;
+    return out;
+}
+
+function mat4_target_to(out, eye, target, up=VEC3_UP) {
+    let eyex = eye[0], eyey = eye[1], eyez = eye[2],
+         upx =  up[0],  upy =  up[1],  upz =  up[2];
+    let z0 = eyex - target[0],
+        z1 = eyey - target[1],
+        z2 = eyez - target[2];
+    let len = z0 * z0 + z1 * z1 + z2 * z2;
+    if (len > 0) {
+        len = 1 / Math.sqrt(len);
+        z0 *= len;
+        z1 *= len;
+        z2 *= len;
+    }
+    let x0 = upy * z2 - upz * z1,
+        x1 = upz * z0 - upx * z2,
+        x2 = upx * z1 - upy * z0;
+    len = x0 * x0 + x1 * x1 + x2 * x2;
+    if (len > 0) {
+        len = 1 / Math.sqrt(len);
+        x0 *= len;
+        x1 *= len;
+        x2 *= len;
+    }
+    out[0] = x0;
+    out[1] = x1;
+    out[2] = x2;
+    out[3] = 0;
+    out[4] = z1 * x2 - z2 * x1;
+    out[5] = z2 * x0 - z0 * x2;
+    out[6] = z0 * x1 - z1 * x0;
+    out[7] = 0;
+    out[8] = z0;
+    out[9] = z1;
+    out[10] = z2;
+    out[11] = 0;
+    out[12] = eyex;
+    out[13] = eyey;
+    out[14] = eyez;
+    out[15] = 1;
+    return out;
+}
+
+function ray_hit_plane(
+    out,
+
+    ray_origin_x, ray_origin_y, ray_origin_z,
+    ray_vector_x, ray_vector_y, ray_vector_z,
+
+    plane_origin_x, plane_origin_y, plane_origin_z,
+    plane_vector_x, plane_vector_y, plane_vector_z
+) {
+    const delta_x = plane_origin_x - ray_origin_x;
+    const delta_y = plane_origin_y - ray_origin_y;
+    const delta_z = plane_origin_z - ray_origin_z;
+
+    const ldot = delta_x*plane_vector_x +
+                 delta_y*plane_vector_y +
+                 delta_z*plane_vector_z ;
+
+    const rdot = ray_vector_x*plane_vector_x +
+                 ray_vector_y*plane_vector_y +
+                 ray_vector_z*plane_vector_z ;
+
+    const d = ldot / rdot;
+    out[0] = ray_origin_x + ray_vector_x * d;
+    out[1] = ray_origin_y + ray_vector_y * d;
+    out[2] = ray_origin_z + ray_vector_z * d;
+
+    return out;
+}
+
+function lerp(v0, v1, t) { return (1 - t) * v0 + t * v1; }
+
+function fuzzy_eq(a, b, fuzz=0.05) {
+    return Math.abs(a - b) < fuzz;
+}
+
+function fuzzy_eq3(ax, ay, az, bx, by, bz, fuzz=0.05) {
+    const dx = ax - bx;
+    const dy = ay - by;
+    const dz = az - bz;
+    return Math.sqrt(dx*dx + dy*dy + dz*dz) < fuzz;
+}
+
+function fuzzy_eq_mat(a, b, fuzz=0.05) {
+    return fuzzy_eq3(
+        a[12], a[13], a[14],
+        b[12], b[13], b[14],
+        fuzz
+    );
+}
+
+    </script>
+  </body>
+</html>
