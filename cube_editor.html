@@ -888,8 +888,11 @@ requestAnimationFrame(function frame(timestamp) {
                         line(tip, base, 0.00, 0.10, colors[i], gizmo_i);
 
                         if (doInput && input.captured_mouse == gizmo_i) {
-                            const current  = screen_to_plane(+(i != 0), +(i != 1), +(i != 2), [input.   mouse_x, input.   mouse_y, 1, 1]);
-                            const lmb_down = screen_to_plane(+(i != 0), +(i != 1), +(i != 2), [input.lmb_down_x, input.lmb_down_y, 1, 1]);
+                            let plane_x = +(i == 2);
+                            let plane_y = +(i == 2);
+                            let plane_z = +(i != 2);
+                            const current  = screen_to_plane(plane_x, plane_y, plane_z, [input.   mouse_x, input.   mouse_y, 1, 1]);
+                            const lmb_down = screen_to_plane(plane_x, plane_y, plane_z, [input.lmb_down_x, input.lmb_down_y, 1, 1]);
 
                             const x = (i == 0) ? (current[0] - lmb_down[0]) : 0;
                             const y = (i == 1) ? (current[1] - lmb_down[1]) : 0;
@@ -1099,7 +1102,7 @@ requestAnimationFrame(function frame(timestamp) {
                         /* if you're looking at the plane you're trying to rotate on,
                          * simply translate your mouse movement in screenspace directly
                          * into rotation; no need to do plane intersection */
-                        if (Math.abs(Math.abs(ldot) - 0.5) < 0.25) {
+                        if (Math.abs(Math.abs(ldot) - 0.5) < 0.35) {
                             const flip = -Math.sign(ldot);
                             const delta = -0.01 * (input.lmb_down_y-input.mouse_y +
                                                    input.lmb_down_x-input.mouse_x);
