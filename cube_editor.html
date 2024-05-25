@@ -327,7 +327,8 @@ let input = {
 window.onkeydown = e => {
 
     if (e.code == "Delete") {
-        action_apply(ACT_DO, { kind: ACTION_DELETE, index: input.entity_hovered });
+        action_apply(ACT_DO, { kind: ACTION_DELETE, index: input.entity_selected });
+        input.entity_selected = -1;
         input.entity_hovered = -1;
         input.captured_mouse = -1;
     }
@@ -346,13 +347,14 @@ window.onkeydown = e => {
         }
 
         input.entity_hovered = -1;
+        input.entity_selected = -1;
 
         /* undo/redoing should probably clear your active hover-state */
         input.captured_mouse = -1;
     }
 
     if (e.ctrlKey && e.code == "KeyD") {
-        const selected = save.entities[input.entity_hovered]
+        const selected = save.entities[input.entity_selected]
         let ent = {
             transform: new Float32Array(selected.transform),
             color: selected.color
@@ -371,6 +373,9 @@ window.addEventListener("wheel", e => {
     clearTimeout(wheelTimeout);
     wheelTimeout = setTimeout(() => input.scroll = 0, 100)
 }, { passive: false });
+window.ondblclick = () => {
+    input.entity_selected = input.entity_hovered;
+}
 window.onmousedown = ev => {
     ev.preventDefault();
 
@@ -387,8 +392,8 @@ window.onmousedown = ev => {
         input.lmb_down   = true;
         input.lmb_down_x = ev.offsetX;
         input.lmb_down_y = ev.offsetY;
-        if (input.entity_hovered >= 0) {
-            input.lmb_down_transform.set(save.entities[input.entity_hovered].transform);
+        if (input.entity_selected >= 0) {
+            input.lmb_down_transform.set(save.entities[input.entity_selected].transform);
         }
     }
 };
@@ -413,13 +418,13 @@ window.onmouseup = ev => {
     if (ev.button == 0) input.lmb_down = false;
 
     /* record undo/redo for the action you just released */
-    if (ev.button == 0 && input.entity_hovered >= 0) {
+    if (ev.button == 0 && input.entity_selected >= 0) {
         const tmp = mat4_create();
-        tmp.set(save.entities[input.entity_hovered].transform);
-        save.entities[input.entity_hovered].transform.set(input.lmb_down_transform);
+        tmp.set(save.entities[input.entity_selected].transform);
+        save.entities[input.entity_selected].transform.set(input.lmb_down_transform);
         action_apply(ACT_DO, {
             kind: ACTION_TRANSFORM,
-            index: input.entity_hovered,
+            index: input.entity_selected,
             transform: tmp
         });
     }
@@ -468,10 +473,12 @@ requestAnimationFrame(function frame(timestamp) {
             if (!(input.lmb_down || input.rmb_down)) do {
                 /* instead of ray vs. box intersection, for the last selected, since their gizmos
                  * are being displayed/interacted with, we simply do a screenspace distance check
-                 * (since the gizmos have constant screenspace size) */
-                if (input.entity_hovered > -1) {
+                 * (since the gizmos have constant screenspace size)
+                 *
+                 * UPDATE: not sure if this is necessary anymore, disabled for now */
+                if (input.entity_selected > -1, 0) {
                     const p = [0, 0, 0, 1];
-                    mat4_transform_vec4(p, p, save.entities[input.entity_hovered].transform);
+                    mat4_transform_vec4(p, p, save.entities[input.entity_selected].transform);
                     mat4_transform_vec4(p, p, input.last_u_vp);
                     p[0] /= p[3];
                     p[1] /= p[3];
@@ -484,7 +491,7 @@ requestAnimationFrame(function frame(timestamp) {
                     const dist = Math.sqrt(dx*dx + dy*dy);
 
                     /* unit here: fraction of the screen */
-                    if (dist < 0.275) {
+                    if (dist < 0.075) {
                         continue;
                     }
                 }
@@ -565,7 +572,7 @@ requestAnimationFrame(function frame(timestamp) {
 
                         if (tmax >= tmin && tmin < selected_tmin) {
                             selected_tmin = tmin;
-                            input.entity_selected = input.entity_hovered = entity_i;
+                            input.entity_hovered = entity_i;
                         }
                     }
                 }
@@ -711,10 +718,10 @@ requestAnimationFrame(function frame(timestamp) {
     const gizmo_color = [];
     {
         const gizmo_mvp = mat4_create();
-        if (input.entity_hovered > -1) {
-            gizmo_mvp[12] = save.entities[input.entity_hovered].transform[12];
-            gizmo_mvp[13] = save.entities[input.entity_hovered].transform[13];
-            gizmo_mvp[14] = save.entities[input.entity_hovered].transform[14];
+        if (input.entity_selected > -1) {
+            gizmo_mvp[12] = save.entities[input.entity_selected].transform[12];
+            gizmo_mvp[13] = save.entities[input.entity_selected].transform[13];
+            gizmo_mvp[14] = save.entities[input.entity_selected].transform[14];
         }
 
         /* flip gizmo as appropriate so it's lookin at you
@@ -890,7 +897,7 @@ requestAnimationFrame(function frame(timestamp) {
                             mat4_from_translation(scratch, x, y, z);
 
                             mat4_mul(
-                                save.entities[input.entity_hovered].transform,
+                                save.entities[input.entity_selected].transform,
                                 scratch,
                                 input.lmb_down_transform
                             );
@@ -1041,15 +1048,15 @@ requestAnimationFrame(function frame(timestamp) {
                             input.lmb_down_transform[14] = 0;
 
                             mat4_mul(
-                                save.entities[input.entity_hovered].transform,
+                                save.entities[input.entity_selected].transform,
                                 input.lmb_down_transform,
                                 scratch
                             );
 
                             /* reapply the translation */
-                            save.entities[input.entity_hovered].transform[12] = input.lmb_down_transform[12] = x;
-                            save.entities[input.entity_hovered].transform[13] = input.lmb_down_transform[13] = y;
-                            save.entities[input.entity_hovered].transform[14] = input.lmb_down_transform[14] = z;
+                            save.entities[input.entity_selected].transform[12] = input.lmb_down_transform[12] = x;
+                            save.entities[input.entity_selected].transform[13] = input.lmb_down_transform[13] = y;
+                            save.entities[input.entity_selected].transform[14] = input.lmb_down_transform[14] = z;
                         }
 
                         gizmo_i++;
@@ -1125,11 +1132,11 @@ requestAnimationFrame(function frame(timestamp) {
                             input.lmb_down_transform[13] = 0;
                             input.lmb_down_transform[14] = 0;
 
-                            mat4_mul(save.entities[input.entity_hovered].transform, scratch, input.lmb_down_transform);
+                            mat4_mul(save.entities[input.entity_selected].transform, scratch, input.lmb_down_transform);
 
-                            save.entities[input.entity_hovered].transform[12] = input.lmb_down_transform[12] = x;
-                            save.entities[input.entity_hovered].transform[13] = input.lmb_down_transform[13] = y;
-                            save.entities[input.entity_hovered].transform[14] = input.lmb_down_transform[14] = z;
+                            save.entities[input.entity_selected].transform[12] = input.lmb_down_transform[12] = x;
+                            save.entities[input.entity_selected].transform[13] = input.lmb_down_transform[13] = y;
+                            save.entities[input.entity_selected].transform[14] = input.lmb_down_transform[14] = z;
                         }
                     }
                 }
@@ -1140,7 +1147,7 @@ requestAnimationFrame(function frame(timestamp) {
             const BLUE  = [[ 25.5,  25.5, 204.0, 255.0], [102.0, 102.0, 255.0, 255.0]];
 
             /* first pass - find closest */
-            if (input.entity_hovered > -1) {
+            if (input.entity_selected > -1) {
                 let selected_i = input.captured_mouse;
 
                 if (!input.lmb_down) {
@@ -1219,7 +1226,9 @@ requestAnimationFrame(function frame(timestamp) {
                 mat4_mul(u_cube_mvp, u_vp, ent.transform);
 
                 draw_cube(u_cube_mvp, ent.color);
-                if (i == input.entity_selected) {
+
+                /* do outline */
+                if (i == input.entity_hovered) {
                     const m = mat4_from_scaling(mat4_create(), -1.05, -1.05, -1.05);
                     mat4_mul(m, ent.transform, m);
                     mat4_mul(m, u_vp, m);
@@ -1249,6 +1258,7 @@ requestAnimationFrame(function frame(timestamp) {
                     }
 
 
+                    /* check if this palette color is hovered, and apply it if clicked */
                     {
                         let hovered;
                         {
