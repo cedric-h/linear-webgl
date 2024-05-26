@@ -248,6 +248,7 @@ class FontBuf {
             pen.x = pen.x + advance * scale;
         }
 
+        return pen.x;
     }
 
     clear() {
@@ -514,7 +515,7 @@ class TextRenderer {
             /* use tiny sdf + a for loop to get a texture atlas canvas */
             let sdfImage;
             {
-                const chars = ' abcdefghijklmnopqrstuvwxyzZABCDEFGHIJKLMNOPQRSTUVWXYZ!@#$%^&*()1234567890<,>./?;:\'"\\|{}[]-';
+                const chars = ' abcdefghijklmnopqrstuvwxyzZABCDEFGHIJKLMNOPQRSTUVWXYZ!@#$%^&*()1234567890<,>./?;:\'"\\|{}[]-+';
                 const fontCanvas = document.createElement('canvas');
                 fontCanvas.width = fontCanvas.height = 1024
                 const ctx = fontCanvas.getContext('2d');
@@ -738,57 +739,70 @@ function action_apply(dir, action) {
     }
 }
 
-const save = {
-    actions: [],
-    actions_undone: [],
-    entities: [],
+const save_tut = {
+    level: -1
 };
-action_apply(ACT_DO, { kind: ACTION_SPAWN , ent: { color: palette[0], transform: mat4_from_translation(mat4_create(), 0, 0, 1) } });
+const save = save_init({});
+function save_init(save) {
+    save.actions = [];
+    save.actions_undone = [];
+    save.entities = [];
 
-let input = {
-    /* camera/controls: */
+    return save;
+}
+
+let input = input_init({});
+function input_init(input) {
+    /* camera/controls = */
     /* { */
-        pitch:  Math.PI*0.25,
-        yaw:   -Math.PI*0.25,
-        eye: [0, 0, 0, 1],
+        input.pitch =  Math.PI*0.25;
+        input.yaw   = -Math.PI*0.25;
+        input.eye   = [0, 0, 0, 1];
 
-        cam_pivot_x: 0,
-        cam_pivot_y: 0,
-        cam_pivot_z: 0,
+        input.cam_pivot_x = 0;
+        input.cam_pivot_y = 0;
+        input.cam_pivot_z = 0;
 
         /* picking */
-        last_u_vp_inv: mat4_create(),
-        last_u_vp:     mat4_create(),
+        input.last_u_vp_inv = mat4_create();
+        input.last_u_vp     = mat4_create();
     /* } */
 
     /* globalized input */
     /* { */
-        lmb_down: false,
-        lmb_released: false, /* true for a frame after up */
-        lmb_down_x: 0, /* for when we need to calculate our own "movementX" in the context of an action */
-        lmb_down_y: 0,
+        input.lmb_down     = false;
+        input.lmb_released = false; /* true for a frame after up */
+        input.lmb_down_x   = 0;     /* for when we need to calculate our own "movementX" in the context of an action */
+        input.lmb_down_y   = 0;
 
-        rmb_down: false,
-        mouse_x: 0,
-        mouse_y: 0,
+        input.rmb_down = false;
+        input.mouse_x  = 0;
+        input.mouse_y  = 0;
 
-        damped_event: { button: 0, movementX: 0, movementY: 0 },
+        input.damped_event ??= {};
+        input.damped_event.button = 0;
+        input.damped_event.movementX = 0;
+        input.damped_event.movementY = 0;
 
-        zoom:   10,
-        scroll:  0,
+        input.zoom   = 10;
+        input.scroll =  0;
+
+        input.keysdown = new Map();
     /* } */
 
     /* global selection state */
     /* { */
-        entity_hovered:  -1, /* this is an index into save.entities */
-        entity_selected: -1, /* this is an index into save.entities */
+        input.entity_hovered  = -1; /* this is an index into save.entities */
+        input.entity_selected = -1; /* this is an index into save.entities */
     /* } */
 
     /* gizmo */
     /* { */
-        lmb_down_transform: mat4_create(),
-        captured_mouse: -1, /* this is a "gizmo ID" as defined in the context of "function gizmo" */
+        input.lmb_down_transform = mat4_create();
+        input.captured_mouse = -1; /* this is a "gizmo ID" as defined in the context of "function gizmo" */
     /* } */
+
+    return input;
 }
 window.onkeydown = e => {
 
@@ -828,6 +842,11 @@ window.onkeydown = e => {
         action_apply(ACT_DO, { kind: ACTION_SPAWN, ent });
         e.preventDefault();
     }
+
+    input.keysdown.set(e.code, 1);
+}
+window.onkeyup = e => {
+    input.keysdown.set(e.code, 0);
 }
 let wheelTimeout;
 window.addEventListener("wheel", e => {
@@ -904,10 +923,12 @@ let fonts = {
     todo:  { drawText: () => {} },
     later: { drawText: () => {} }
 };
+const TITLE_COLOR_YAY    = [0.70, 0.38, 0.90, 0.95];
+const TITLE_COLOR_NORMAL = [0.38, 0.70, 0.90, 0.95];
 new TextRenderer(gl).then(x => {
     tr = x;
     fonts = {
-        title: tr.useFont(40, [0.38, 0.70, 0.90, 0.95]),
+        title: tr.useFont(40, [0.70, 0.38, 0.90, 0.95]),
         done:  tr.useFont(25, [0.20, 0.90, 0.40, 0.95]),
         todo:  tr.useFont(25, [0.01, 0.90, 0.90, 0.95]),
         later: tr.useFont(25, [0.28, 0.40, 0.50, 0.95]),
@@ -919,6 +940,8 @@ requestAnimationFrame(function frame(timestamp) {
 
     /* clear text buffers for reuse */
     tr.clear();
+    /* this will be overridden before rendering if the level is complete */
+    fonts.title.color = TITLE_COLOR_NORMAL;
 
     /* we could apply these changes directly in the event handlers, but the result feels "low fps"
      * because we don't get input events at 60fps. so instead, we apply the changes every frame
@@ -1672,40 +1695,54 @@ requestAnimationFrame(function frame(timestamp) {
     }
 
     /* tutorial UI */
-    const ghosts = [];
+    let ghosts = [];
     {
-        let objective_idx_todo = 0;
-        let objective_idx = 0;
+        let objective_idx, objective_idx_todo;
+        let x, y;
 
         /* basic UI layout { */
         const x_pad = 5;
         const y_pad = 5;
 
-        let x = x_pad;
-        let y = y_pad*2;
-        fonts.title.drawText(
-            'level 1',
-            x,
-            y,
-            ALIGN_LEFT
-        );
-        y += fonts.title.dynamic_scale;
-        y += y_pad*2;
+        function ui_title(text) {
+            objective_idx_todo = 0;
+            objective_idx = 0;
 
-        x += x_pad*2;
-        function objective(done, text) {
-            let font = fonts.later;
-            if (objective_idx_todo == objective_idx) font = fonts.todo;
-            if (done) font = fonts.done;
-
-            text = (done ? '[x] ' : '[ ] ') + text;
-
-            font.drawText(
+            x = x_pad;
+            y = y_pad*2;
+            fonts.title.drawText(
                 text,
                 x,
                 y,
                 ALIGN_LEFT
             );
+            y += fonts.title.dynamic_scale;
+            y += y_pad*2;
+            x += x_pad*2;
+        }
+
+        function ui_objective(done, text, prog) {
+            let font = fonts.later;
+            if (objective_idx_todo == objective_idx) font = fonts.todo;
+            if (prog > 0.0) font = fonts.todo;
+            if (done) font = fonts.done;
+
+            const checkbox = (done ? '[x] ' : '[ ] ');
+
+            if (prog == undefined || prog >= 1.0) {
+                font.drawText(
+                    checkbox + text,
+                    x,
+                    y,
+                    ALIGN_LEFT
+                );
+            } else {
+                let pen_x = font.drawText(checkbox, x, y);
+                const chop = Math.floor(text.length * prog);
+
+                pen_x = fonts.done.drawText(text.slice(0, chop), pen_x, y);
+                pen_x = font      .drawText(text.slice(chop)   , pen_x, y);
+            }
             y += font.dynamic_scale;
             y += y_pad;
 
@@ -1714,36 +1751,137 @@ requestAnimationFrame(function frame(timestamp) {
 
             return done;
         }
-        /* } end basic UI layout */
 
-        {
-            save.tut ??= {
-                selected_cube: false,
-            };
+        function ui_continue() {
+            if (~~(Date.now() / 500) % 2)
+                fonts.title.drawText(
+                    "PRESS SPACE TO CONTINUE",
+                    window.innerWidth * 0.5,
+                    window.innerHeight - fonts.title.dynamic_scale*3,
+                    ALIGN_CENTER
+                );
 
-            save.tut.selected_cube = input.entity_selected > -1;
-            objective(save.tut.selected_cube, 'double-click cube');
+            fonts.title.color = TITLE_COLOR_YAY;
 
-            {
-                const ghost_mat = mat4_from_translation(mat4_create(), -5, -2, 1);
-                mat4_mul(ghost_mat, ghost_mat, mat4_from_scaling(scratch, 0.9, 0.9, 0.9));
-                ghosts.push({ transform: ghost_mat });
+            return input.keysdown.get("Space");
+        }
 
-                const t = save.tut.selected_cube && save.entities[input.entity_selected].transform;
-                objective(save.tut.selected_cube && fuzzy_eq_mat(t, ghost_mat), 'drag to ghost');
+        /* cover the ghosts */
+        function ui_ghosts(_ghosts) {
+            ghosts = _ghosts;
+            for (const g of ghosts) {
+
+                let prog, closest_ent;
+                {
+                    let closest_dist = Infinity;
+                    for (const e of save.entities) {
+                        const dist = mat_pos_dist(e.transform, g.transform);
+
+                        if (dist < closest_dist) {
+                            closest_dist = dist;
+                            closest_ent  = e;
+                        }
+                    }
+
+                    prog = inv_lerp(g.progress_starts_at ?? 5.0, 0.15, closest_dist);
+                    prog = Math.max(0, Math.min(1, prog));
+                }
+
+                /* complete when they drag to ghost */
+                ui_objective(prog >= 1, 'drag to ghost', prog);
+
+                /* snap to ghosts transform if close */
+                if (prog >= 1 && closest_ent) {
+                    closest_ent.transform[12] = g.transform[12];
+                    closest_ent.transform[13] = g.transform[13];
+                    closest_ent.transform[14] = g.transform[14];
+                }
             }
         }
+        /* } end basic UI layout */
 
-        {
-            /* duplicate */
-        }
+        switch (save_tut.level) {
+            case -1: {
+                action_apply(ACT_DO, {
+                    kind: ACTION_SPAWN,
+                    ent: { color: palette[0], transform: mat4_from_translation(mat4_create(), 0, 0, 1) }
+                });
 
-        {
-            /* delete */
-        }
+                save_tut.level = 0;
+            }; /* fallthrough */
 
-        {
-            /* make stonehenge */
+            case 0: {
+                ui_title("level 1");
+
+                /* make sure they have the cube selected */
+                const selected_cube = input.entity_selected > -1;
+                ui_objective(selected_cube, 'double-click cube');
+
+                /* put the ghost where it goes */
+                ui_ghosts([
+                    {
+                        transform: mat4_mul(
+                            mat4_create(),
+                            mat4_from_translation(mat4_create(), -5, -2, 1),
+                            mat4_from_scaling(mat4_create(), 0.9, 0.9, 0.9)
+                        )
+                    }
+                ]);
+
+                if (objective_idx_todo == objective_idx && ui_continue()) {
+                    /* advance to next level */
+                    save_tut.level++;
+
+                    /* reset input and save, spawn cube */
+                    input_init(input);
+                    save_init(save);
+                    action_apply(ACT_DO, {
+                        kind: ACTION_SPAWN,
+                        ent: { color: palette[0], transform: mat4_from_translation(mat4_create(), 0, 0, 1) }
+                    });
+                }
+            } break;
+
+            case 1: {
+                ui_title("duplicate");
+
+                /* make sure they have the cube selected */
+                const selected_cube = input.entity_selected > -1;
+                ui_objective(selected_cube, 'double-click cube');
+
+                /* make sure more than one cube exists */
+                const many_things = save.entities.length >= 2;
+                ui_objective(many_things, 'ctrl + D to duplicate');
+
+                /* put the ghosts where they go; display none if they haven't duplicated yet */
+                ui_ghosts(
+                    (!many_things) ? [] : [
+                        {
+                            transform: mat4_mul(
+                                mat4_create(),
+                                mat4_from_translation(mat4_create(), -5, -2, 1),
+                                mat4_from_scaling(scratch, 0.9, 0.9, 0.9)
+                            )
+                        },
+                        {
+                            transform: mat4_mul(
+                                mat4_create(),
+                                mat4_from_translation(mat4_create(), -1, -2, 1),
+                                mat4_from_scaling(scratch, 0.9, 0.9, 0.9)
+                            )
+                        }
+                    ]
+                );
+
+            } break;
+
+            case 2: {
+                ui_title("delete");
+            } break;
+
+            case 3: {
+                ui_title("make stonehenge");
+            } break;
         }
     }
 
@@ -2249,6 +2387,7 @@ function ray_hit_plane(
 }
 
 function lerp(v0, v1, t) { return (1 - t) * v0 + t * v1; }
+function inv_lerp(min, max, p) { return (p - min) / (max - min); }
 
 function fuzzy_eq(a, b, fuzz=0.05) {
     return Math.abs(a - b) < fuzz;
@@ -2267,6 +2406,13 @@ function fuzzy_eq_mat(a, b, fuzz=0.05) {
         b[12], b[13], b[14],
         fuzz
     );
+}
+
+function mat_pos_dist(a, b) {
+    const dx = a[12] - b[12];
+    const dy = a[13] - b[13];
+    const dz = a[14] - b[14];
+    return Math.sqrt(dx*dx + dy*dy + dz*dz);
 }
 
     </script>
