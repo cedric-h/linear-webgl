@@ -112,3 +112,9 @@ also: example of how to clip text without scissor rects, useful for doing a lot 
 
 <img width="400"  alt="Screenshot 2024-05-06 at 12 49 59 PM" src="https://github.com/cedric-h/linear-webgl/assets/25539554/f8bcb3ee-8e0c-4da9-bc79-739b839778aa">
 
+## 🚀 instancing 🚀
+
+| **link**                                                                        | **desc**                                                                                                                       |
+|---------------------------------------------------------------------------------|--------------------------------------------------------------------------------------------------------------------------------|
+| [pulling_texture](https://cedric-h.github.io/linear-webgl/pulling_texture.html) | useful when your instances need random access to a buffer of data (e.g. compute-type things)
+| [pulling_buffer ](https://cedric-h.github.io/linear-webgl/pulling_buffer.html)  | useful when your instances can use sequential data from a buffer; looks just like pulling_texture
