@@ -66,6 +66,18 @@ const graphs = [
     }
 ];
 
+for (const g of graphs) {
+    g.bounds = {
+        data_range_min: 0,
+        data_range_max: 0
+    };
+}
+
+const graphCanvas = document.getElementById('inspectorGraphCanvas');
+const gl = graphCanvas.getContext('webgl2', {antialias: true});
+gl.getExtension("OES_element_index_uint");
+if (!gl) { alert('Failed to initialize WebGL'); }
+
 /* [temp, rad temp, humidity, pressure, light] */
 {
     const GOLDEN_RATIO = 1.618033988749894;
@@ -80,24 +92,58 @@ const graphs = [
             if (!lines.has(id))
                 lines.set(id, {
                     data: [],
-                    color: hsl_to_rgb([(GOLDEN_RATIO * lines.size)%1.0, 0.6, 0.75, 255])
+                    color: hsl_to_rgb([(GOLDEN_RATIO * lines.size)%1.0, 0.6, 0.75, 255]),
+                    bounds: {
+                        interval: 0,
+                        x_min : 0,
+                        x_max : 0,
+                        ts_min: 0,
+                        ts_max: 0,
+                        y_min : 0,
+                        y_max : 0,
+                    }
                 });
 
             lines.get(id).data.push(data[i]);
         }
     }
 
-    for (const { lines } of graphs) {
-        for (const { data } of lines.values()) {
-            console.log(data.length);
+    for (const graph of graphs) {
+
+        /* find min/max */
+        let data_range_min = Infinity, data_range_max = -Infinity;
+        {
+            for (const { data, color } of graph.lines.values()) {
+                data_range_min = Math.min(data_range_min, Math.min(...data));
+                data_range_max = Math.max(data_range_max, Math.max(...data));
+            }
+        }
+        graph.bounds.data_range_min = data_range_min;
+        graph.bounds.data_range_max = data_range_max;
+
+        /* upload data to GPU */
+        for (const line of graph.lines.values()) {
+            if (1) {
+                const instance_count = line.data_count = 1 << 10;
+                const instance_data = new Float32Array(instance_count + 1);
+                for (let i = 0; i < instance_count; i++) {
+                    instance_data[i] = 0.1*Math.sin((i/instance_count) * Math.PI*2 * 2);
+                }
+
+                const buf = gl.createBuffer();
+                gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+                gl.bufferData(gl.ARRAY_BUFFER, instance_data, gl.STATIC_DRAW);
+                line.data = buf;
+            } else {
+                const buf = gl.createBuffer();
+                gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+                gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(line.data), gl.STATIC_DRAW);
+                line.data_count = line.data.length;
+                line.data = buf;
+            }
         }
     }
 }
-
-const graphCanvas = document.getElementById('inspectorGraphCanvas');
-const gl = graphCanvas.getContext('webgl', {antialias: true});
-gl.getExtension("OES_element_index_uint");
-if (!gl) { alert('Failed to initialize WebGL'); }
 
 let pMatrix = mat4_create();
 let viewMatrix = mat4_create();
@@ -168,8 +214,12 @@ const buf = {
     geo_v_pos: gl.createBuffer(),
     geo_v_color: gl.createBuffer(),
     geo_idx: gl.createBuffer(),
+
+    graph_idx: gl.createBuffer(),
 }
 
+gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, buf.graph_idx);
+gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, new Uint16Array([0, 1, 2, 2, 1, 3]), gl.STATIC_DRAW);
 
 
 let shaders;
@@ -229,6 +279,119 @@ let shaders;
         }`;
 
 
+    const graph_vs = `#version 300 es
+
+        in vec2 a_instance_y;
+
+        /* book keeping */
+        uniform mat4  u_matrix;
+        uniform float u_point_count;
+        uniform float u_interval; /* in ms */
+
+        /* input/output domains */
+        uniform float u_x_min;
+        uniform float u_x_max;
+        uniform float u_ts_min;
+        uniform float u_ts_max;
+        uniform float u_y_min;
+        uniform float u_y_max;
+        uniform float u_data_range_min;
+        uniform float u_data_range_max;
+
+        /* aesthetics */
+        uniform float u_aspect_ratio;
+        uniform float u_thickness;
+
+        float remap(
+            float to_min,
+            float to_max,
+            float val,
+            float from_min,
+            float from_max
+        ) {
+            return to_min + (val - from_min) * (to_max - to_min) / (from_max - from_min);
+        }
+
+        float x_from_index(int index) {
+            return float(index) / u_point_count * 2.0 - 1.0;
+        }
+
+        void main() {
+            float inv_points = 1.0 / u_point_count;
+
+            vec2 a = vec2(
+                x_from_index(gl_InstanceID  ),
+                a_instance_y[0]
+            );
+            {
+                float idx = float(gl_InstanceID);
+                float data = a_instance_y[0];
+                float ts = u_ts_min + idx * u_interval;
+                // a.x = remap(u_x_min, u_x_max,   ts, u_ts_min,         u_ts_max);
+                // a.y = remap(u_y_min, u_y_max, data, u_data_range_max, u_data_range_min);
+            }
+
+            vec2 b = vec2(
+                x_from_index(gl_InstanceID+1),
+                a_instance_y[1]
+            );
+            {
+                float idx = float(gl_InstanceID + 1);
+                float data = a_instance_y[1];
+                float ts = u_ts_min + idx * u_interval;
+                // a.x = remap(u_x_min, u_x_max,   ts, u_ts_min,         u_ts_max);
+                // a.y = remap(u_y_min, u_y_max, data, u_data_range_max, u_data_range_min);
+            }
+
+            vec2 delta  = b - a;
+            vec2 normal = vec2(-delta.y, delta.x);
+            normal.y *= u_aspect_ratio;
+            normal = normalize(normal) * u_thickness * 0.5;
+            normal.x /= u_aspect_ratio;
+            if ((gl_VertexID % 2) == 1) normal *= -1.0;
+
+            gl_Position = vec4(0.0, 0.0, 0.0, 1.0);
+            gl_Position.xy = ((gl_VertexID < 2) ? a : b) + normal;
+            // gl_Position = u_matrix * gl_Position;
+        }`;
+
+    const graph_fs = `#version 300 es
+        precision mediump float;
+
+        uniform vec4 u_color;
+
+        out vec4 color;
+
+        void main() {
+            color = u_color;
+        }`;
+
+
+// for (let datapoint_i = 0; datapoint_i < (data.length - 1); datapoint_i++) {
+//     let a_x, a_y;
+//     {
+//         const idx = datapoint_i;
+//         const ts = ts_min + idx * INTERVAL;
+//         a_x = remap(x_min, x_max, ts, ts_min, ts_max, ts);
+//         a_y = remap(y_min, y_max, data[idx], data_range_max, data_range_min);
+//     }
+
+//     let b_x, b_y;
+//     {
+//         const idx = datapoint_i + 1;
+//         const ts = ts_min + idx * INTERVAL;
+//         b_x = remap(x_min, x_max, ts, ts_min, ts_max, ts);
+//         b_y = remap(y_min, y_max, data[idx], data_range_max, data_range_min);
+//     }
+
+//     drawLine(
+//         a_x, a_y,
+//         b_x, b_y,
+//         5,
+//         color
+//     );
+// }
+
     function createProgram(gl, vertexSource, fragmentSource) {
         function createShader(gl, type, source) {
             const shader = gl.createShader(type);
@@ -271,8 +434,9 @@ let shaders;
 
 
     shaders = {
-        text: createProgram(gl, text_vs, text_fs),
-        geo : createProgram(gl,  geo_vs,  geo_fs),
+        text  : createProgram(gl,  text_vs,  text_fs),
+        geo   : createProgram(gl,   geo_vs,   geo_fs),
+        graph : createProgram(gl, graph_vs, graph_fs)
     }
 }
 
@@ -521,7 +685,7 @@ requestAnimationFrame(function frame(timestamp) {
         const ts_max = ts_data_max;
 
         for (let graph_idx = 0; graph_idx < graphs.length; graph_idx++) {
-            const { unit_suffix, units_per_stripe, lines } = graphs[graph_idx];
+            const { unit_suffix, bounds, units_per_stripe, lines } = graphs[graph_idx];
 
             const full_width  = window.innerWidth  * window.devicePixelRatio;
             const full_height = window.innerHeight * window.devicePixelRatio;
@@ -540,13 +704,7 @@ requestAnimationFrame(function frame(timestamp) {
             drawBox(x_min, y_min-TOP_PAD, x_max, y_max+BOTTOM_PAD, [255, 255, 255, 255]);
 
             /* data */
-            let data_range_min = Infinity, data_range_max = -Infinity;
-            {
-                for (const { data, color } of lines.values()) {
-                    data_range_min = Math.min(data_range_min, Math.min(...data));
-                    data_range_max = Math.max(data_range_max, Math.max(...data));
-                }
-            }
+            const { data_range_min, data_range_max } = bounds;
 
             /* vertical detail */
             {
@@ -634,12 +792,12 @@ requestAnimationFrame(function frame(timestamp) {
 
             /* data lines */
             {
-                for (const { data, color } of lines.values()) {
-                    const INTERVAL = MINUTE*5;
+                const INTERVAL = MINUTE*5;
 
-                    /* this is an example of how to do this in a way that automatically culls unnecessary data;
-                     * doing this with a GPU-driven approach ... doesn't. but gpu fast. */
-                    if (0) {
+                /* this is an example of how to do this in a way that automatically culls unnecessary data;
+                 * doing this with a GPU-driven approach ... doesn't. but gpu fast. */
+                if (0) {
+                    for (const { data, color } of lines.values()) {
                         const y_map = datapoint => lerp(
                             y_min,
                             y_max,
@@ -671,31 +829,16 @@ requestAnimationFrame(function frame(timestamp) {
                             last_y = y;
                             last_x = x;
                         }
-                    } else {
-                        for (let datapoint_i = 0; datapoint_i < (data.length - 1); datapoint_i++) {
-                            let a_x, a_y;
-                            {
-                                const idx = datapoint_i;
-                                const ts = ts_min + idx * INTERVAL;
-                                a_x = remap(x_min, x_max, ts, ts_min, ts_max, ts);
-                                a_y = remap(y_min, y_max, data[idx], data_range_max, data_range_min);
-                            }
-
-                            let b_x, b_y;
-                            {
-                                const idx = datapoint_i + 1;
-                                const ts = ts_min + idx * INTERVAL;
-                                b_x = remap(x_min, x_max, ts, ts_min, ts_max, ts);
-                                b_y = remap(y_min, y_max, data[idx], data_range_max, data_range_min);
-                            }
-
-                            drawLine(
-                                a_x, a_y,
-                                b_x, b_y,
-                                5,
-                                color
-                            );
                         }
+                } else {
+                    for (const line of lines.values()) {
+                        line.bounds.interval = INTERVAL;
+                        line.bounds.x_min    = x_min;
+                        line.bounds.x_max    = x_max;
+                        line.bounds.ts_min   = ts_min;
+                        line.bounds.ts_max   = ts_max;
+                        line.bounds.y_min    = y_min;
+                        line.bounds.y_max    = y_max;
                     }
                 }
             }
@@ -745,6 +888,67 @@ requestAnimationFrame(function frame(timestamp) {
         }
 
         gl.drawElements(gl.TRIANGLES, geo_idx.length, gl.UNSIGNED_INT, 0);
+    }
+
+    /* lines pass */
+    {
+        // for (const graph of graphs) {
+        { const graph = graphs.values().next().value;
+
+            gl.useProgram(shaders.graph.program);
+            gl.enableVertexAttribArray(shaders.geo.a_instance_y);
+
+            /* find min/max */
+            const { data_range_min, data_range_max } = graph.bounds;
+            gl.uniform1f(shaders.graph.u_data_range_min, data_range_min);
+            gl.uniform1f(shaders.graph.u_data_range_max, data_range_max);
+            gl.uniformMatrix4fv(shaders.graph.u_matrix, false, pMatrix);
+
+            /* bind ibuf */
+            {
+                gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, buf.graph_idx);
+            }
+
+            /* upload data to GPU */
+            //for (const line of graph.lines.values()) {
+            { const line = graph.lines.values().next().value;
+
+                gl.bindBuffer(gl.ARRAY_BUFFER, line.data);
+                /* note that stride is half of size */
+                gl.vertexAttribPointer(
+                    /* loc           */ shaders.graph.a_instance_y,
+                    /* size          */ 2,
+                    /* datatype      */ gl.FLOAT,
+                    /* normalize     */ false,
+                    /* size in bytes */ 4,
+                    /* offset        */ 0
+                );
+                gl.vertexAttribDivisor(shaders.graph.a_instance_y, 1);
+
+                const instance_count = line.data_count;
+                const sg = shaders.graph;
+                const aspect_ratio = gl.canvas.clientWidth / gl.canvas.clientHeight;
+                gl. uniform1f(sg.u_interval,     line.bounds.interval);
+                gl. uniform1f(sg.u_x_min,        line.bounds.x_min   );
+                gl. uniform1f(sg.u_x_max,        line.bounds.x_max   );
+                gl. uniform1f(sg.u_ts_min,       line.bounds.ts_min  );
+                gl. uniform1f(sg.u_ts_max,       line.bounds.ts_max  );
+                gl. uniform1f(sg.u_y_min,        line.bounds.y_min   );
+                gl. uniform1f(sg.u_y_max,        line.bounds.y_max   );
+                gl. uniform1f(sg.u_point_count,  instance_count      );
+                gl. uniform1f(sg.u_aspect_ratio, aspect_ratio        );
+                gl. uniform1f(sg.u_thickness,    0.005               );
+                gl.uniform4fv(sg.u_color,        [0.3, 0.1, 0.9, 1.0]);
+
+                gl.drawElementsInstanced(
+                    gl.TRIANGLES,
+                    6,
+                    gl.UNSIGNED_SHORT,
+                    0,
+                    instance_count
+                );
+            }
+        }
     }
 
     /* text pass */

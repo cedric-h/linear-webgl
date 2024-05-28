@@ -137,7 +137,6 @@ const geo_ibuf            = gl.createBuffer();
 let idx_count, instance_count;
 {
     const geo_idx   = [];
-    const geo_pos   = [];
 
     instance_count = 1 << 10;
     const instance_data = new Float32Array(instance_count + 1);
@@ -146,14 +145,7 @@ let idx_count, instance_count;
     }
 
     /* generate geometry */
-    {
-        geo_pos.push(-1, +1,
-                     -1, -1,
-                      1, +1,
-                      1, -1);
-
-        geo_idx.push(0, 1, 2, 2, 1, 3);
-    }
+    geo_idx.push(0, 1, 2, 2, 1, 3);
     idx_count = geo_idx.length;
 
     /* upload geometry */
@@ -162,10 +154,6 @@ let idx_count, instance_count;
         gl.enableVertexAttribArray(shaders.geo.a_instance_y);
         gl.bindBuffer(gl.ARRAY_BUFFER, geo_vbuf_instance_y);
         gl.bufferData(gl.ARRAY_BUFFER, instance_data, gl.STATIC_DRAW);
-
-        gl.enableVertexAttribArray(shaders.geo.a_pos);
-        gl.bindBuffer(gl.ARRAY_BUFFER, geo_vbuf_pos);
-        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(geo_pos), gl.STATIC_DRAW);
 
         gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, geo_ibuf);
         gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, new Uint16Array(geo_idx), gl.STATIC_DRAW);
