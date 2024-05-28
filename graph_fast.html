@@ -92,7 +92,7 @@ if (!gl) { alert('Failed to initialize WebGL'); }
             if (!lines.has(id))
                 lines.set(id, {
                     data: [],
-                    color: hsl_to_rgb([(GOLDEN_RATIO * lines.size)%1.0, 0.6, 0.75, 255]),
+                    color: hsl_to_rgb([(GOLDEN_RATIO * lines.size)%1.0, 0.6, 0.75, 1.0]),
                     bounds: {
                         interval: 0,
                         x_min : 0,
@@ -123,7 +123,7 @@ if (!gl) { alert('Failed to initialize WebGL'); }
 
         /* upload data to GPU */
         for (const line of graph.lines.values()) {
-            if (1) {
+            if (0) {
                 const instance_count = line.data_count = 1 << 10;
                 const instance_data = new Float32Array(instance_count + 1);
                 for (let i = 0; i < instance_count; i++) {
@@ -135,18 +135,19 @@ if (!gl) { alert('Failed to initialize WebGL'); }
                 gl.bufferData(gl.ARRAY_BUFFER, instance_data, gl.STATIC_DRAW);
                 line.data = buf;
             } else {
+                line.data_count = line.data.length - 1;
+
                 const buf = gl.createBuffer();
                 gl.bindBuffer(gl.ARRAY_BUFFER, buf);
                 gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(line.data), gl.STATIC_DRAW);
-                line.data_count = line.data.length;
                 line.data = buf;
             }
         }
+
     }
 }
 
 let pMatrix = mat4_create();
-let viewMatrix = mat4_create();
 (window.onresize = () => {
     graphCanvas.width = window.innerWidth;
     graphCanvas.height = window.innerHeight;
@@ -166,13 +167,6 @@ let viewMatrix = mat4_create();
         graphCanvas.height
     );
 })();
-{
-    /* scale viewMatrix to fit 600 logical pixels */
-    const aspect_ratio = window.innerHeight/window.innerWidth;
-    const width = 350;
-    mat4_ortho(viewMatrix, -width, width, width*aspect_ratio, -width*aspect_ratio, 1, -1)
-    mat4_mul(viewMatrix, mat4_invert(mat4_create(), pMatrix), viewMatrix);
-}
 
 const input = {
     scroll:  0, /* one frame of "zoom" */
@@ -235,7 +229,7 @@ let shaders;
         varying vec2 v_texcoord;
 
         void main() {
-            gl_Position = u_matrix * vec4(a_pos.xy, 0, 1);
+            gl_Position = u_matrix * vec4(a_pos.xy, -0.2, 1);
             v_texcoord = a_texcoord / u_texsize;
         }`;
 
@@ -257,7 +251,7 @@ let shaders;
 
 
     const geo_vs = `
-        attribute vec2 a_pos;
+        attribute vec3 a_pos;
         attribute vec4 a_color;
 
         uniform mat4 u_matrix;
@@ -265,7 +259,7 @@ let shaders;
         varying vec4 v_color;
 
         void main() {
-            gl_Position = u_matrix * vec4(a_pos.xy, 0, 1);
+            gl_Position = u_matrix * vec4(a_pos.xyz, 1);
             v_color = a_color;
         }`;
 
@@ -289,12 +283,13 @@ let shaders;
         uniform float u_interval; /* in ms */
 
         /* input/output domains */
+        uniform vec2 u_canvas_size;
         uniform float u_x_min;
         uniform float u_x_max;
-        uniform float u_ts_min;
-        uniform float u_ts_max;
         uniform float u_y_min;
         uniform float u_y_max;
+        uniform float u_ts_min;
+        uniform float u_ts_max;
         uniform float u_data_range_min;
         uniform float u_data_range_max;
 
@@ -312,36 +307,26 @@ let shaders;
             return to_min + (val - from_min) * (to_max - to_min) / (from_max - from_min);
         }
 
-        float x_from_index(int index) {
-            return float(index) / u_point_count * 2.0 - 1.0;
-        }
-
         void main() {
-            float inv_points = 1.0 / u_point_count;
 
-            vec2 a = vec2(
-                x_from_index(gl_InstanceID  ),
-                a_instance_y[0]
-            );
+            vec2 a, b;
             {
                 float idx = float(gl_InstanceID);
                 float data = a_instance_y[0];
                 float ts = u_ts_min + idx * u_interval;
-                // a.x = remap(u_x_min, u_x_max,   ts, u_ts_min,         u_ts_max);
-                // a.y = remap(u_y_min, u_y_max, data, u_data_range_max, u_data_range_min);
+                a.x = remap(u_x_min, u_x_max,   ts, u_ts_min,         u_ts_max        );
+                a.y = remap(u_y_min, u_y_max, data, u_data_range_max, u_data_range_min);
             }
-
-            vec2 b = vec2(
-                x_from_index(gl_InstanceID+1),
-                a_instance_y[1]
-            );
             {
                 float idx = float(gl_InstanceID + 1);
                 float data = a_instance_y[1];
                 float ts = u_ts_min + idx * u_interval;
-                // a.x = remap(u_x_min, u_x_max,   ts, u_ts_min,         u_ts_max);
-                // a.y = remap(u_y_min, u_y_max, data, u_data_range_max, u_data_range_min);
+                b.x = remap(u_x_min, u_x_max,   ts, u_ts_min,         u_ts_max        );
+                b.y = remap(u_y_min, u_y_max, data, u_data_range_max, u_data_range_min);
             }
+
+            a = (u_matrix * vec4(a, 0, 1)).xy;
+            b = (u_matrix * vec4(b, 0, 1)).xy;
 
             vec2 delta  = b - a;
             vec2 normal = vec2(-delta.y, delta.x);
@@ -352,7 +337,6 @@ let shaders;
 
             gl_Position = vec4(0.0, 0.0, 0.0, 1.0);
             gl_Position.xy = ((gl_VertexID < 2) ? a : b) + normal;
-            // gl_Position = u_matrix * gl_Position;
         }`;
 
     const graph_fs = `#version 300 es
@@ -586,7 +570,7 @@ requestAnimationFrame(function frame(timestamp) {
         drawTextWithView(view, str, worldX, worldY, align = ALIGN_LEFT);
     }
 
-    function drawBoxWithView(view,  min_x, min_y,   max_x, max_y,   color ) {
+    function drawBoxWithView(view,  min_x, min_y,   max_x, max_y,   color, z = 0.0 ) {
         geo_color.push(
             color[0], color[1], color[2], color[3],
             color[0], color[1], color[2], color[3],
@@ -594,46 +578,19 @@ requestAnimationFrame(function frame(timestamp) {
             color[0], color[1], color[2], color[3]
         );
 
-        const vbuf_i = geo_pos.length / 2;
+        const vbuf_i = geo_pos.length / 3;
 
         const pos = [0, 0, 0, 1]
-        pos[0] = max_x, pos[1] = min_y, mat4_transform_vec4(pos, pos, view), geo_pos.push(pos[0], pos[1])
-        pos[0] = min_x, pos[1] = min_y, mat4_transform_vec4(pos, pos, view), geo_pos.push(pos[0], pos[1])
-        pos[0] = min_x, pos[1] = max_y, mat4_transform_vec4(pos, pos, view), geo_pos.push(pos[0], pos[1])
-        pos[0] = max_x, pos[1] = max_y, mat4_transform_vec4(pos, pos, view), geo_pos.push(pos[0], pos[1])
+        pos[0] = max_x, pos[1] = min_y, mat4_transform_vec4(pos, pos, view), geo_pos.push(pos[0], pos[1], z)
+        pos[0] = min_x, pos[1] = min_y, mat4_transform_vec4(pos, pos, view), geo_pos.push(pos[0], pos[1], z)
+        pos[0] = min_x, pos[1] = max_y, mat4_transform_vec4(pos, pos, view), geo_pos.push(pos[0], pos[1], z)
+        pos[0] = max_x, pos[1] = max_y, mat4_transform_vec4(pos, pos, view), geo_pos.push(pos[0], pos[1], z)
 
         geo_idx.push(vbuf_i + 0, vbuf_i + 1, vbuf_i + 2, vbuf_i + 2, vbuf_i + 3, vbuf_i + 0);
     }
 
-    function drawBox( min_x, min_y,   max_x, max_y,   color ) {
+    function drawBox( min_x, min_y,   max_x, max_y,   color, z = 0.0 ) {
         drawBoxWithView(view,  min_x, min_y,   max_x, max_y,   color);
-    }
-
-    function drawLine( a_x, a_y,   b_x, b_y,  thickness,  color ) {
-        const dx = b_x - a_x;
-        const dy = b_y - a_y;
-        const nx = -dy; /* perp */
-        const ny =  dx / input.zoom;
-        const tlen = Math.sqrt(nx*nx + ny*ny) / (thickness * 0.5);
-        if (tlen <= 0) return;
-        const tx = nx/tlen * input.zoom;
-        const ty = ny/tlen;
-
-        geo_color.push(
-            color[0], color[1], color[2], color[3],
-            color[0], color[1], color[2], color[3],
-            color[0], color[1], color[2], color[3],
-            color[0], color[1], color[2], color[3]
-        );
-
-        const vbuf_i = geo_pos.length / 2;
-        const p = [0, 0, 0, 1]
-        p[0] = a_x + tx, p[1] = a_y + ty, mat4_transform_vec4(p, p, view), geo_pos.push(p[0], p[1]);
-        p[0] = a_x - tx, p[1] = a_y - ty, mat4_transform_vec4(p, p, view), geo_pos.push(p[0], p[1]);
-        p[0] = b_x + tx, p[1] = b_y + ty, mat4_transform_vec4(p, p, view), geo_pos.push(p[0], p[1]);
-        p[0] = b_x - tx, p[1] = b_y - ty, mat4_transform_vec4(p, p, view), geo_pos.push(p[0], p[1]);
-
-        geo_idx.push(vbuf_i + 0, vbuf_i + 1, vbuf_i + 2, vbuf_i + 2, vbuf_i + 1, vbuf_i + 3);
     }
 
     /* use "draw*" to fill buffers with interesting data */
@@ -785,7 +742,6 @@ requestAnimationFrame(function frame(timestamp) {
                         x - input.zoom, y_min,
                         x + input.zoom, y_max,
                         [0, 0, 0, 20]
-
                     );
                 }
             }
@@ -847,7 +803,8 @@ requestAnimationFrame(function frame(timestamp) {
                 units_view,
                 x_max +         0, y_min - 40,
                 x_max + RIGHT_PAD, y_max + 15,
-                [255, 255, 255, 255]
+                [255, 255, 255, 255],
+                -0.1
             );
 
             /* ending line */
@@ -864,6 +821,10 @@ requestAnimationFrame(function frame(timestamp) {
     gl.clearColor(0.95, 0.95, 1.00, 1);
     gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
 
+    /* enable depth */
+    gl.enable(gl.DEPTH_TEST);
+    gl.depthFunc(gl.LEQUAL);
+
     /* geo pass */
     {
         gl.useProgram(shaders.geo.program);
@@ -877,7 +838,7 @@ requestAnimationFrame(function frame(timestamp) {
         {
             gl.bindBuffer(gl.ARRAY_BUFFER, buf.geo_v_pos);
             gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(geo_pos), gl.STATIC_DRAW);
-            gl.vertexAttribPointer(shaders.geo.a_pos, 2, gl.FLOAT, false, 0, 0);
+            gl.vertexAttribPointer(shaders.geo.a_pos, 3, gl.FLOAT, false, 0, 0);
 
             gl.bindBuffer(gl.ARRAY_BUFFER, buf.geo_v_color);
             gl.bufferData(gl.ARRAY_BUFFER, new Uint8Array(geo_color), gl.STATIC_DRAW);
@@ -892,8 +853,7 @@ requestAnimationFrame(function frame(timestamp) {
 
     /* lines pass */
     {
-        // for (const graph of graphs) {
-        { const graph = graphs.values().next().value;
+        for (const graph of graphs) {
 
             gl.useProgram(shaders.graph.program);
             gl.enableVertexAttribArray(shaders.geo.a_instance_y);
@@ -902,16 +862,17 @@ requestAnimationFrame(function frame(timestamp) {
             const { data_range_min, data_range_max } = graph.bounds;
             gl.uniform1f(shaders.graph.u_data_range_min, data_range_min);
             gl.uniform1f(shaders.graph.u_data_range_max, data_range_max);
-            gl.uniformMatrix4fv(shaders.graph.u_matrix, false, pMatrix);
+            gl.uniformMatrix4fv(
+                shaders.graph.u_matrix,
+                false,
+                mat4_mul(mat4_create(), pMatrix, view)
+            );
 
             /* bind ibuf */
-            {
-                gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, buf.graph_idx);
-            }
+            gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, buf.graph_idx);
 
             /* upload data to GPU */
-            //for (const line of graph.lines.values()) {
-            { const line = graph.lines.values().next().value;
+            for (const line of graph.lines.values()) {
 
                 gl.bindBuffer(gl.ARRAY_BUFFER, line.data);
                 /* note that stride is half of size */
@@ -928,17 +889,18 @@ requestAnimationFrame(function frame(timestamp) {
                 const instance_count = line.data_count;
                 const sg = shaders.graph;
                 const aspect_ratio = gl.canvas.clientWidth / gl.canvas.clientHeight;
+                gl. uniform2f(sg.u_canvas_size,  gl.canvas.clientWidth, gl.canvas.clientHeight);
                 gl. uniform1f(sg.u_interval,     line.bounds.interval);
                 gl. uniform1f(sg.u_x_min,        line.bounds.x_min   );
                 gl. uniform1f(sg.u_x_max,        line.bounds.x_max   );
-                gl. uniform1f(sg.u_ts_min,       line.bounds.ts_min  );
-                gl. uniform1f(sg.u_ts_max,       line.bounds.ts_max  );
                 gl. uniform1f(sg.u_y_min,        line.bounds.y_min   );
                 gl. uniform1f(sg.u_y_max,        line.bounds.y_max   );
+                gl. uniform1f(sg.u_ts_min,       line.bounds.ts_min  );
+                gl. uniform1f(sg.u_ts_max,       line.bounds.ts_max  );
                 gl. uniform1f(sg.u_point_count,  instance_count      );
                 gl. uniform1f(sg.u_aspect_ratio, aspect_ratio        );
                 gl. uniform1f(sg.u_thickness,    0.005               );
-                gl.uniform4fv(sg.u_color,        [0.3, 0.1, 0.9, 1.0]);
+                gl.uniform4fv(sg.u_color,        line.color          );
 
                 gl.drawElementsInstanced(
                     gl.TRIANGLES,
@@ -950,6 +912,8 @@ requestAnimationFrame(function frame(timestamp) {
             }
         }
     }
+    /* kind of scary and weird that this is necessary */
+    gl.vertexAttribDivisor(shaders.graph.a_instance_y, 0);
 
     /* text pass */
     {
@@ -1366,9 +1330,9 @@ function hsl_to_rgb(arr) {
         b = hue_to_rgb(p, q, h - 1/3);
     }
 
-    arr[0] = r*256;
-    arr[1] = g*256;
-    arr[2] = b*256;
+    arr[0] = r;
+    arr[1] = g;
+    arr[2] = b;
     return arr;
 }
 
