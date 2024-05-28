@@ -41,27 +41,46 @@ let shaders;
     const vs_geo = `#version 300 es
 
         in vec2 a_instance_y;
-        in vec2 a_pos;
-        in vec4 a_color;
 
         uniform float u_point_count;
-        uniform float u_thick;
+        uniform float u_thickness;
+        uniform float u_aspect_ratio;
+
+        float x_from_index(int index) {
+            return float(index) / u_point_count * 2.0 - 1.0;
+        }
 
         void main() {
             float inv_points = 1.0 / u_point_count;
 
-            gl_Position = vec4(vec2(inv_points, u_thick)*a_pos, 0.0, 1.0);
-            gl_Position.x += ((0.5 + float(gl_InstanceID)) - u_point_count*0.5) * (inv_points * 2.0);
-            gl_Position.y += (gl_VertexID < 2) ? a_instance_y.x : a_instance_y.y;
+            vec2 a = vec2(
+                x_from_index(gl_InstanceID  ),
+                a_instance_y[0]
+            );
+            vec2 b = vec2(
+                x_from_index(gl_InstanceID+1),
+                a_instance_y[1]
+            );
+            vec2 delta  = b - a;
+            vec2 normal = vec2(-delta.y, delta.x);
+            normal.y *= u_aspect_ratio;
+            normal = normalize(normal) * u_thickness * 0.5;
+            normal.x /= u_aspect_ratio;
+            if ((gl_VertexID % 2) == 1) normal *= -1.0;
+
+            gl_Position = vec4(0.0, 0.0, 0.0, 1.0);
+            gl_Position.xy = ((gl_VertexID < 2) ? a : b) + normal;
         }`;
 
     const fs_geo = `#version 300 es
         precision mediump float;
 
+        uniform vec4 u_color;
+
         out vec4 color;
 
         void main() {
-            color = vec4(0.3, 0.1, 0.9, 1.0);
+            color = u_color;
         }`;
 
     function createProgram(gl, vertexSource, fragmentSource) {
@@ -120,8 +139,8 @@ let idx_count, instance_count;
     const geo_idx   = [];
     const geo_pos   = [];
 
-    instance_count = 128;
-    const instance_data = new Float32Array(instance_count);
+    instance_count = 1 << 10;
+    const instance_data = new Float32Array(instance_count + 1);
     for (let i = 0; i < instance_count; i++) {
         instance_data[i] = 0.1*Math.sin((i/instance_count) * Math.PI*2 * 2);
     }
@@ -142,14 +161,7 @@ let idx_count, instance_count;
         const BYTES_PER_FLOAT = 4;
         gl.enableVertexAttribArray(shaders.geo.a_instance_y);
         gl.bindBuffer(gl.ARRAY_BUFFER, geo_vbuf_instance_y);
-        if (1) {
-            /* have to double to avoid warning */
-            gl.bufferData(gl.ARRAY_BUFFER, BYTES_PER_FLOAT*instance_count*2, gl.STATIC_DRAW);
-            gl.bufferSubData(gl.ARRAY_BUFFER, 0, instance_data);
-        } else {
-            /* what i wish I could do */
-            gl.bufferData(gl.ARRAY_BUFFER, instance_data, gl.STATIC_DRAW);
-        }
+        gl.bufferData(gl.ARRAY_BUFFER, instance_data, gl.STATIC_DRAW);
 
         gl.enableVertexAttribArray(shaders.geo.a_pos);
         gl.bindBuffer(gl.ARRAY_BUFFER, geo_vbuf_pos);
@@ -185,14 +197,13 @@ requestAnimationFrame(function frame(timestamp) {
                 gl.vertexAttribPointer(shaders.geo.a_instance_y, 2, gl.FLOAT, false, 4, 0);
                 gl.vertexAttribDivisor(shaders.geo.a_instance_y, 1);
 
-                gl.bindBuffer(gl.ARRAY_BUFFER, geo_vbuf_pos);
-                gl.vertexAttribPointer(shaders.geo.a_pos, 2, gl.FLOAT, false, 0, 0);
-
                 gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, geo_ibuf);
             }
 
-            gl.uniform1f(shaders.geo.u_point_count, instance_count);
-            gl.uniform1f(shaders.geo.u_thick      , 0.015 + 0.005*Math.sin(Date.now()/500));
+            gl. uniform1f(shaders.geo.u_point_count , instance_count);
+            gl. uniform1f(shaders.geo.u_aspect_ratio, gl.canvas.clientWidth / gl.canvas.clientHeight);
+            gl. uniform1f(shaders.geo.u_thickness   , 0.005);//  + 0.005*Math.sin(Date.now()/500));
+            gl.uniform4fv(shaders.geo.u_color       , [0.3, 0.1, 0.9, 1.0]);
 
             gl.drawElementsInstanced(gl.TRIANGLES, idx_count, gl.UNSIGNED_SHORT, 0, instance_count);
         }
