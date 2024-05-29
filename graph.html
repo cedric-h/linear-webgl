@@ -212,8 +212,11 @@ let touch_zooming    = false;
         let center_x = 0;
         const touch_count = ev.touches.length;
         {
-            for (let i = 0; i < touch_count; i++)
-                center_x += last_touch_positions[i].x = ev.touches[i].clientX;
+            for (let i = 0; i < touch_count; i++) {
+                const x = ev.touches[i].clientX*window.devicePixelRatio;
+                last_touch_positions[i].x = x;
+                center_x += x;
+            }
             center_x /= touch_count;
         }
 
@@ -226,7 +229,7 @@ let touch_zooming    = false;
         /* zoom */
         if (ZOOM && ev.touches.length > 1) {
             touch_zooming = true;
-            touch_start_gap = Math.abs(ev.touches[0].clientX - ev.touches[1].clientX);
+            touch_start_gap = Math.abs(ev.touches[0].clientX - ev.touches[1].clientX)*window.devicePixelRatio;
             touch_start_zoom = input.zoom;
         }
     }, opts);
@@ -238,8 +241,9 @@ let touch_zooming    = false;
         let center_x = 0;
         {
             for (let i = 0; i < touch_count; i++) {
-                last_touch_positions[i].x = ev.touches[i].clientX;
-                center_x += ev.touches[i].clientX;
+                const x = ev.touches[i].clientX*window.devicePixelRatio;
+                last_touch_positions[i].x = x;
+                center_x += x;
             }
             center_x /= touch_count;
         }
@@ -547,7 +551,7 @@ requestAnimationFrame(function frame(elapsed) {
         let cx = input.camera_x;
 
         /* offset the camera to keep us centered on what we're scrolling toward */
-        if (input.scroll || input.touching) {
+        if (Math.abs(zoom_delta) > 0) {
             let bias = (0.5 - input.mouse_x / (full_width - RIGHT_PAD));
             bias = Math.max(-0.5, bias);
             const delta = full_width * zoom_delta*bias;
