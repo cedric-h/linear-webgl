@@ -572,7 +572,7 @@ requestAnimationFrame(function frame(elapsed) {
 
         /* this just makes it so w/o bias you don't zoom back in and out to the same place,
          * may not be necessary. try deleting it!  */
-        if (Math.abs(input.scroll) == 1) input.camera_x = cx;
+        if (Math.abs(zoom_delta) > 0) input.camera_x = cx;
 
         mat4_ortho(
             view,
