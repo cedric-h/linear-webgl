@@ -156,8 +156,6 @@ let pMatrix = mat4_create();
 })();
 
 const input = {
-    zoom_delta: 0, /* only used if touching */
-
     scroll:  0, /* one frame of "zoom" */
     zoom:    0.5,
     camera_x: 1, /* offset from left * zoom */
@@ -226,7 +224,7 @@ let touch_zooming    = false;
         }
 
         /* zoom */
-        if (ZOOM) {
+        if (ZOOM && ev.touches.length > 1) {
             touch_zooming = true;
             touch_start_gap = Math.abs(ev.touches[0].clientX - ev.touches[1].clientX);
             touch_start_zoom = input.zoom;
