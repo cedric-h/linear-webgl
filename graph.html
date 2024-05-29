@@ -156,7 +156,6 @@ let pMatrix = mat4_create();
 })();
 
 const input = {
-    touching: false,
     zoom_delta: 0, /* only used if touching */
 
     scroll:  0, /* one frame of "zoom" */
@@ -197,11 +196,16 @@ const input = {
 }
 
 /* touch controls */
+const last_touch_positions = [{ x: 0, y: 0 },
+                              { x: 0, y: 0 },
+                              { x: 0, y: 0 }]; /* do we care about more than 3 touches? seems excessive */
+
+let touch_start_gap  = 0;  /* used for pinch */
+let touch_start_zoom = 1.0;
+let touch_zooming    = false;
 {
     const opts = { passive: false };
 
-    let start_avg_dist_from_center = 0;  /* used for pinch */
-    let start_zoom = 1.0;
     const ZOOM = 1;
 
     window.addEventListener("touchstart", ev => {
@@ -211,7 +215,7 @@ const input = {
         const touch_count = ev.touches.length;
         {
             for (let i = 0; i < touch_count; i++)
-                center_x += ev.touches[i].clientX;
+                center_x += last_touch_positions[i].x = ev.touches[i].clientX;
             center_x /= touch_count;
         }
 
@@ -223,15 +227,9 @@ const input = {
 
         /* zoom */
         if (ZOOM) {
-            {
-                let avg_dist_from_center = 0;
-                for (let i = 0; i < touch_count; i++)
-                    avg_dist_from_center += Math.abs(ev.touches[i].clientX - center_x);
-                start_avg_dist_from_center = avg_dist_from_center / touch_count;
-                start_zoom = input.zoom;
-            }
-
-            input.touching = true;
+            touch_zooming = true;
+            touch_start_gap = Math.abs(ev.touches[0].clientX - ev.touches[1].clientX);
+            touch_start_zoom = input.zoom;
         }
     }, opts);
 
@@ -241,48 +239,22 @@ const input = {
         const touch_count = ev.touches.length;
         let center_x = 0;
         {
-            for (let i = 0; i < touch_count; i++)
+            for (let i = 0; i < touch_count; i++) {
+                last_touch_positions[i].x = ev.touches[i].clientX;
                 center_x += ev.touches[i].clientX;
+            }
             center_x /= touch_count;
         }
 
-        /* drag */
-        {
-            input.mouse_goal_x = center_x;
-        }
-
-        /* zoom */
-        if (ZOOM) {
-            if (touch_count > 1) {
-                let new_dist_from_center = 0;
-                {
-                    for (let i = 0; i < touch_count; i++)
-                        new_dist_from_center += Math.abs(ev.touches[i].clientX - center_x);
-                    new_dist_from_center /= touch_count;
-                }
-
-                let ratio = start_avg_dist_from_center / new_dist_from_center;
-                const zoom_b4 = input.zoom;
-                input.zoom = start_zoom * ratio;
-                input.zoom = Math.min(input.zoom, 1.0);
-                input.zoom = Math.max(input.zoom, 0.0001); /* hack; look at interval to determine proper value */
-                input.zoom_delta = input.zoom - zoom_b4;
-            }
-        }
+        input.mouse_goal_x = center_x;
     }, opts);
 
     window.addEventListener("touchend", ev => {
         ev.preventDefault();
 
-        /* drag */
-        {
-            input.mouse_released = true;
-        }
+        touch_zooming = false;
 
-        /* zoom */
-        if (ZOOM) {
-            input.touching = false;
-        }
+        input.mouse_released = true;
     }, opts);
 }
 
@@ -554,12 +526,25 @@ requestAnimationFrame(function frame(elapsed) {
         input.mouse_x = lerp(input.mouse_x, input.mouse_goal_x, t);
         input.mouse_y = lerp(input.mouse_y, input.mouse_goal_y, t);
 
-        const zoom_b4 = input.zoom;
-        input.zoom *= 1.0 - input.scroll*dt*2.5;
-        input.zoom = Math.min(input.zoom, 1.0);
-        input.zoom = Math.max(input.zoom, 0.0001); /* hack; look at interval to determine proper value */
-        const zoom_delta = (input.touching ? input.zoom_delta : (input.zoom - zoom_b4));
-        input.zoom_delta = 0;
+        let zoom_delta;
+        {
+            const zoom_b4 = input.zoom;
+            input.zoom *= 1.0 - input.scroll*dt*2.5;
+            input.zoom = Math.min(input.zoom, 1.0);
+            input.zoom = Math.max(input.zoom, 0.0001); /* hack; look at interval to determine proper value */
+            zoom_delta = input.zoom - zoom_b4;
+        }
+        if (touch_zooming) {
+            const gap = Math.abs(last_touch_positions[0].x - last_touch_positions[1].x);
+            const ratio = touch_start_gap / gap;
+
+            const zoom_b4 = input.zoom;
+            input.zoom = touch_start_zoom * ratio;
+            input.zoom = Math.min(input.zoom, 1.0);
+            input.zoom = Math.max(input.zoom, 0.0001); /* hack; look at interval to determine proper value */
+            zoom_delta = input.zoom - zoom_b4;
+        }
+
 
         let cx = input.camera_x;
 
@@ -15289,4 +15274,3 @@ function csv() {
     </script>
   </body>
 </html>
-
