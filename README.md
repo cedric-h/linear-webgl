@@ -118,3 +118,7 @@ also: example of how to clip text without scissor rects, useful for doing a lot 
 |---------------------------------------------------------------------------------|--------------------------------------------------------------------------------------------------------------------------------|
 | [pulling_texture](https://cedric-h.github.io/linear-webgl/pulling_texture.html) | useful when your instances need random access to a buffer of data (e.g. compute-type things)
 | [pulling_buffer ](https://cedric-h.github.io/linear-webgl/pulling_buffer.html)  | useful when your instances can use sequential data from a buffer; output looks just like pulling_texture
+| [graph_slow     ](https://cedric-h.github.io/linear-webgl/graph_slow.html)      | just calls drawLine; naive, slow, CPU-bound graph
+| [graph_fast     ](https://cedric-h.github.io/linear-webgl/graph_fast.html)      | exactly the same as graph_slow, but it does the slow part on the GPU.
+| [graph_100k     ](https://cedric-h.github.io/linear-webgl/graph_100k.html)      | stress test; graphing 100k datapoints in red, and 2 million in blue. works well on M2 Max
+| [graph          ](https://cedric-h.github.io/linear-webgl/graph.html)           | where I keep the actual good up-to-date graph code.
