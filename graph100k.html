@@ -386,8 +386,9 @@ let shaders;
             normal = normalize(normal) * u_thickness * 0.5;
             normal.x /= u_aspect_ratio;
             if ((gl_VertexID % 2) == 1) normal *= -1.0;
-
-            gl_Position = vec4(0.0, 0.0, 0.0, 1.0);
+            
+            float line_z = float(gl_InstanceID) / u_point_count - 1.0;
+            gl_Position = vec4(0.0, 0.0, line_z, 1.0);            
             gl_Position.xy = ((gl_VertexID < 2) ? a : b) + normal;
         }`;
 
@@ -854,6 +855,7 @@ requestAnimationFrame(function frame(elapsed) {
 
     /* clear all */
     gl.clearColor(0.95, 0.95, 1.00, 1);
+    gl.clearDepth(1.0);
     gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
 
     /* enable depth */
