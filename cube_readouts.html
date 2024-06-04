@@ -170,6 +170,7 @@ const buf = {
 let input = {
     pitch:  Math.PI*0.25,
     yaw:   -Math.PI*0.25,
+    eye: [0, 0, 0, 1],
 
     dampedEvent: { button: 0, movementX: 0, movementY: 0 },
 
@@ -709,13 +710,19 @@ class SensorRenderer {
         this.text_ibuf     = [];
     }
 
-    frame(gl, mvp) {
+    frame(gl, eye, mvp) {
 
         /* bubble width, height */
         const size_y = ATLAS_SCREEN_SIZE_Y;
         const size_x = size_y * ATLAS_ASPECT_RATIO;
 
         const p = [0, 0, 0, 1];
+        sensor_positions.sort((a, b) => {
+            const dist = p => Math.sqrt((p[0] - eye[0])*(p[0] - eye[0]) +
+                                        (p[1] - eye[1])*(p[1] - eye[1]) +
+                                        (p[2] - eye[2])*(p[2] - eye[2]));
+            return dist(b) - dist(a);
+        });
         for (const sensor_pos of sensor_positions) {
             /* position on screen */
             mat4_transform_vec4(p, sensor_pos, mvp);
@@ -923,7 +930,7 @@ requestAnimationFrame(function frame(timestamp) {
 
             const view = mat4_create();
             {
-                const eye = [input.zoom, 0, 0, 1];
+                const eye = input.eye = [input.zoom, 0, 0, 1];
                 {
                     mat4_from_z_rotation(scratch, input.pitch);
                     mat4_mul(view, view, scratch);
@@ -1072,7 +1079,7 @@ requestAnimationFrame(function frame(timestamp) {
             gl.drawElements(gl.TRIANGLES, geo_idx.length, gl.UNSIGNED_SHORT, 0);
         }
 
-        sensor_renderer.frame(gl, mvp);
+        sensor_renderer.frame(gl, input.eye, mvp);
 
         /* geo pass */
         {

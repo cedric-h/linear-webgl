@@ -103,12 +103,13 @@ also: example of how to clip text without scissor rects, useful for doing a lot 
 
 ## ✨ texture time ✨
 
-| **link**                                                                        | **desc**                                                                                                                       |
-|---------------------------------------------------------------------------------|--------------------------------------------------------------------------------------------------------------------------------|
-| [image       ](https://cedric-h.github.io/linear-webgl/image.html)              | emoji -> canvas -> texture -> quad -> screen                                                                                   |
-| [image_atlas ](https://cedric-h.github.io/linear-webgl/image_atlas.html)        | like "image," but demonstrates how to use several images on a single atlas.                                                    |
-| [galaxy      ](https://cedric-h.github.io/linear-webgl/image_atlas_prebake.html)| see above + fun with gaussian blur                                                                                             |
-| [skybox      ](https://cedric-h.github.io/linear-webgl/skybox.html)             | all that, inside a spinning cube!                                                                                              |
+| **link**                                                                          | **desc**                                                                                                                       |
+|-----------------------------------------------------------------------------------|---------------------------------------------------------------------------------------------------------------------------|
+| [image       ](https://cedric-h.github.io/linear-webgl/image.html)                | emoji -> canvas -> texture -> quad -> screen                                                                              |
+| [image_atlas ](https://cedric-h.github.io/linear-webgl/image_atlas.html)          | like "image," but demonstrates how to use several images on a single atlas.                                               |
+| [galaxy      ](https://cedric-h.github.io/linear-webgl/image_atlas_prebake.html)  | see above + fun with gaussian blur                                                                                        |
+| [skybox      ](https://cedric-h.github.io/linear-webgl/skybox.html)               | all that, inside a spinning cube!                                                                                         |
+| [shadow      ](https://cedric-h.github.io/linear-webgl/image_generate_shadow.html)| has a one-shot function which adds a (customizable) shadow to a texture. pretty handy!                                    |
 
 <img width="400"  alt="Screenshot 2024-05-06 at 12 49 59 PM" src="https://github.com/cedric-h/linear-webgl/assets/25539554/f8bcb3ee-8e0c-4da9-bc79-739b839778aa">
 
