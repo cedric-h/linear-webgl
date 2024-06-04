@@ -73,12 +73,12 @@ requestAnimationFrame(function render(now) {
       if (y < window_min_y) color = "purple";
       if (y > window_max_y) {
         color = "blue";
-        x = last_x + Math.cos(last_angle) * inc * i;
-        y = last_y + Math.sin(last_angle) * inc * i;
+        x = last_x + Math.cos(last_angle) * inc;
+        y = last_y + Math.sin(last_angle) * inc;
         last_angle += inc_angle*10;
       }
 
-      line([last_x, last_y], [last_x, y], 20, color);
+      line([last_x, last_y], [x, y], 20, color);
       last_y = y;
       last_x = x;
     }
