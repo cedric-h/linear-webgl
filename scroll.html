@@ -1,0 +1,127 @@
+<!-- vim: sw=2 ts=2 expandtab smartindent ft=javascript
+-->
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>WebGL Demo</title>
+    <style> document, body { margin: 0px; padding: 0px; overflow: hidden; } </style>
+  </head>
+
+  <body>
+    <canvas id="glcanvas"></canvas>
+    <script>"use strict";
+
+const canvas = document.getElementById("glcanvas");
+const ctx = canvas.getContext('2d');
+(window.onresize = () => {
+   canvas.width = window.innerWidth*window.devicePixelRatio,
+   canvas.height = window.innerHeight*window.devicePixelRatio
+   canvas.style.width = window.innerWidth + 'px';
+   canvas.style.height = window.innerHeight + 'px';
+ })();
+
+function line(a, b, thick, color) {
+  ctx.lineWidth = thick;
+  ctx.strokeStyle = color;
+  ctx.beginPath();
+  ctx.moveTo(200 + a[0], 100 + a[1]);
+  ctx.lineTo(200 + b[0], 100 + b[1]);
+  ctx.stroke();
+}
+
+let input_scroll = 0;
+let scroll = 0;
+window.onwheel = e => {
+  input_scroll += e.deltaY;
+}
+
+let then = 0;
+let deltaTime = 0;
+requestAnimationFrame(function render(now) {
+  requestAnimationFrame(render);
+
+  now *= 0.001;
+  deltaTime = now - then;
+  then = now;
+
+  ctx.fillStyle = "white";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  const full_height   = 800;
+  const window_height = 100;
+  {
+    scroll       += input_scroll * 0.7 * deltaTime;
+    input_scroll *= Math.pow(1 - 0.15, 60*deltaTime);
+    scroll        = Math.max(scroll, 0);
+    scroll        = Math.min(scroll + window_height, full_height) - window_height;
+  }
+  ctx.fillStyle = "red";
+  const window_min_y = scroll;
+  const window_max_y = scroll + window_height;
+  line([50, window_min_y], [50, window_max_y], 20, "red");
+
+  {
+    let last_angle = Math.PI*0.5, last_x = 0, last_y = 0;
+    for (let i = 0; i < 100; i++) {
+      const inc_angle = 1/100 * Math.PI*2;
+      const inc = 1/100 * full_height;
+      let y = last_y + inc;
+      let x = last_x;
+
+      let color = "green";
+      if (y < window_min_y) color = "purple";
+      if (y > window_max_y) {
+        color = "blue";
+        x = last_x + Math.cos(last_angle) * inc * i;
+        y = last_y + Math.sin(last_angle) * inc * i;
+        last_angle += inc_angle*10;
+      }
+
+      line([last_x, last_y], [last_x, y], 20, color);
+      last_y = y;
+      last_x = x;
+    }
+  }
+
+  /* draw */
+  if (0) {
+    const t = 0.5;
+    const y = lerp(1, -1, scroll);
+    const height = 0.15;
+    let scroll_min_y = y;
+    let scroll_max_y = y+height*0.5;
+
+    {
+      let last_x = 0, last_y = -0.5;
+      for (let i = 0; i <= 100; i++) {
+        const inc = 1/200;
+        const y = last_y + inc;
+
+        let color = "blue";
+        if (y < scroll_min_y) color = "green";
+
+        line(
+          [last_x, last_y    , 0, 1],
+          [last_x, last_y + y, 0, 1],
+          0.1,
+          color
+        );
+
+        last_y = y;
+      }
+    }
+
+    line(
+      [0.1, y,        0, 1],
+      [0.1, y+height, 0, 1],
+      0.1,
+      "red"
+    );
+  }
+})
+
+function lerp(v0, v1, t) { return (1 - t) * v0 + t * v1; }
+    </script>
+  </body>
+</html>
