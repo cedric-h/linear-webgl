@@ -122,3 +122,7 @@ also: example of how to clip text without scissor rects, useful for doing a lot 
 | [graph_fast     ](https://cedric-h.github.io/linear-webgl/graph_fast.html)      | exactly the same as graph_slow, but it does the slow part on the GPU.
 | [graph_100k     ](https://cedric-h.github.io/linear-webgl/graph_100k.html)      | stress test; graphing 100k datapoints in red, and 2 million in blue. works well on M2 Max
 | [graph          ](https://cedric-h.github.io/linear-webgl/graph.html)           | where I keep the actual good up-to-date graph code.
+
+super performant graph, outperforms chart.js, echarts, amcharts by about x100
+<img width="400" alt="Screenshot 2024-06-01 at 9 38 09 PM" src="https://github.com/cedric-h/linear-webgl/assets/25539554/5b609b5f-f56e-4e10-8467-c6ca43dced0c">
+
