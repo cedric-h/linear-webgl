@@ -35,6 +35,10 @@ let scroll = 0;
 window.onwheel = e => {
   input_scroll += e.deltaY;
 }
+window.onpointermove = e => {
+  if (e.buttons)
+    input_scroll += e.movementY*1.5;
+}
 
 let then = 0;
 let deltaTime = 0;
@@ -60,15 +64,17 @@ requestAnimationFrame(function render(now) {
   const window_min_y = scroll;
   const window_max_y = scroll + window_height;
 
+  const bottom_scroll_x = 100;
+  const scroll_height = 600;
+  const scroll_radius = 100;
   function draw_scroll(start_x, start_y, scroll_prog, rotation) {
-    const radius = 200;
     const coils = 4;
     const theta_max = coils * Math.PI * 2;
-    const away_step = radius / theta_max;
-    const chord = 10;
-    const start = 40 / away_step;
+    const away_step = scroll_radius / theta_max;
+    const chord = (scroll_radius / 25);
+    const start = (scroll_radius / 7 ) / away_step;
 
-    for (let theta = theta_max; theta > lerp(start, theta_max, scroll_prog);) {
+    for (let theta = theta_max; theta > lerp(start, theta_max-start*2, scroll_prog);) {
       const x0 = Math.cos(theta + rotation) * (away_step * theta);
       const y0 = Math.sin(theta + rotation) * (away_step * theta);
 
@@ -89,14 +95,44 @@ requestAnimationFrame(function render(now) {
   {
     const scroll_prog = scroll / (full_height - window_height);
 
-    draw_scroll( 200,  400, 1 - scroll_prog, Math.PI);
-    draw_scroll(-200, -400,     scroll_prog, 0);
-    line(
-      [0,  400],
-      [0, -400],
-      5,
-      "purple"
-    );
+    draw_scroll(bottom_scroll_x,  scroll_height*0.5, 1 - scroll_prog, Math.PI);//      );
+    draw_scroll(              0, -scroll_height*0.5,     scroll_prog,       0);// - 0.1);
+
+    {
+      function bezier4_sample(out, p0, p1, p2, p3, t) {
+          out[0] = Math.pow(1 - t, 3) * p0[0] +
+                     Math.pow(1 - t, 2) * 3 * t * p1[0] +
+                     (1 - t) * 3 * t * t * p2[0] +
+                     t * t * t * p3[0];
+          out[1] = Math.pow(1 - t, 3) * p0[1] +
+                     Math.pow(1 - t, 2) * 3 * t * p1[1] +
+                     (1 - t) * 3 * t * t * p2[1] +
+                     t * t * t * p3[1];
+      }
+      const bezier_i = 30;
+
+      const e = scroll_radius * 0.45;
+      const a        = [bottom_scroll_x + -scroll_radius,  scroll_height*0.5];
+      const b        = [              0 +  scroll_radius, -scroll_height*0.5];
+      const control0 = [bottom_scroll_x + -scroll_radius,  scroll_height*0.3];
+      const control1 = [              e +  scroll_radius,  scroll_height*0.3];
+      const out_from = [0, 0]
+      const out_to   = [0, 0]
+      for (let i = 1; i <= bezier_i; i++) {
+        const t0 = (i - 1)/bezier_i;
+        bezier4_sample(out_from, a, control0, control1, b, t0);
+
+        const t1 = (i + 0)/bezier_i;
+        bezier4_sample(out_to  , a, control0, control1, b, t1);
+
+        line(
+          out_from,
+          out_to,
+          5,
+          "purple"
+        );
+      }
+    }
   }
 })
 
