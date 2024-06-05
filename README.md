@@ -128,3 +128,22 @@ also: example of how to clip text without scissor rects, useful for doing a lot 
 super performant graph, outperforms chart.js, echarts, amcharts by about x100
 <img width="400" alt="Screenshot 2024-06-01 at 9 38 09 PM" src="https://github.com/cedric-h/linear-webgl/assets/25539554/5b609b5f-f56e-4e10-8467-c6ca43dced0c">
 
+# errata
+
+I'll fix these eventually, but
+
+I say "high-retina" in almost every demo, where I should say "high-resolution retina" (one brain skip, copy/pasted a million times)
+
+paint.html is the only demo which has a touchscreen rotatable camera, and almost the only demo where the camera doesn't skip if you rotate up too far. (That is just a one-line fix after `yaw =`.) More work is necessary for many demos to make sure they work on mobile.
+
+I say "set up premultiplied alpha," then do `gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_DST_ALPHA)` but the way premultiplied alpha works, the color should be multiplied by ... nothing. `gl.ONE`. It's premultiplied. So I need to audit transparency in a lot of places. Alternatively, I could keep that "premultiplied alpha" blend func, and simply divide `rgb` by `a` in the shader, which may be preferable since premultiplication is lossy. Should note if so though because it's not obvious.
+
+There are some places where things aren't especially "linear" or flat. I do have indirection/object orientation/etc. in some instances. I ought to audit myself to see if I'm doing so tastefully. Or perhaps it simply doesn't matter.
+
+
+# errata - optimization
+Plenty of matrices are allocated that don't need to be.
+
+Plenty of buffers are recreated every frame when they could be created once at init, and almost everywhere buffers are created dynamically, the TypedArray is created on the fly every frame, and I would prefer to avoid the allocation if possible.
+
+There are examples which do not perform well on my iPhone 8 (2017). Warrants investigation. I suspect the `dampedEvent *= 0.8` could be exacerbating things, should probably use a framerate independent approach there.
