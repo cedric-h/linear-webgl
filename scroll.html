@@ -25,8 +25,8 @@ function line(a, b, thick, color) {
   ctx.lineWidth = thick;
   ctx.strokeStyle = color;
   ctx.beginPath();
-  ctx.moveTo(200 + a[0], 100 + a[1]);
-  ctx.lineTo(200 + b[0], 100 + b[1]);
+  ctx.moveTo(window.innerWidth*window.devicePixelRatio*0.5 + a[0], window.innerHeight*window.devicePixelRatio*0.5 + a[1]);
+  ctx.lineTo(window.innerWidth*window.devicePixelRatio*0.5 + b[0], window.innerHeight*window.devicePixelRatio*0.5 + b[1]);
   ctx.stroke();
 }
 
@@ -59,69 +59,49 @@ requestAnimationFrame(function render(now) {
   ctx.fillStyle = "red";
   const window_min_y = scroll;
   const window_max_y = scroll + window_height;
-  line([50, window_min_y], [50, window_max_y], 20, "red");
 
-  {
-    let last_angle = Math.PI*0.5, last_x = 0, last_y = 0;
-    for (let i = 0; i < 100; i++) {
-      const inc_angle = 1/100 * Math.PI*2;
-      const inc = 1/100 * full_height;
-      let y = last_y + inc;
-      let x = last_x;
+  function draw_scroll(start_x, start_y, scroll_prog, rotation) {
+    const radius = 200;
+    const coils = 4;
+    const theta_max = coils * Math.PI * 2;
+    const away_step = radius / theta_max;
+    const chord = 10;
+    const start = 40 / away_step;
 
-      let color = "green";
-      if (y < window_min_y) color = "purple";
-      if (y > window_max_y) {
-        color = "blue";
-        x = last_x + Math.cos(last_angle) * inc;
-        y = last_y + Math.sin(last_angle) * inc;
-        last_angle += inc_angle*10;
-      }
+    for (let theta = theta_max; theta > lerp(start, theta_max, scroll_prog);) {
+      const x0 = Math.cos(theta + rotation) * (away_step * theta);
+      const y0 = Math.sin(theta + rotation) * (away_step * theta);
 
-      line([last_x, last_y], [x, y], 20, color);
-      last_y = y;
-      last_x = x;
+      theta -= chord / (away_step * theta);
+
+      const r1 = theta;
+      const x1 = Math.cos(theta + rotation) * (away_step * theta);
+      const y1 = Math.sin(theta + rotation) * (away_step * theta);
+
+      line(
+        [start_x + x0, start_y + y0],
+        [start_x + x1, start_y + y1],
+        5,
+        "purple"
+      );
     }
   }
+  {
+    const scroll_prog = scroll / (full_height - window_height);
 
-  /* draw */
-  if (0) {
-    const t = 0.5;
-    const y = lerp(1, -1, scroll);
-    const height = 0.15;
-    let scroll_min_y = y;
-    let scroll_max_y = y+height*0.5;
-
-    {
-      let last_x = 0, last_y = -0.5;
-      for (let i = 0; i <= 100; i++) {
-        const inc = 1/200;
-        const y = last_y + inc;
-
-        let color = "blue";
-        if (y < scroll_min_y) color = "green";
-
-        line(
-          [last_x, last_y    , 0, 1],
-          [last_x, last_y + y, 0, 1],
-          0.1,
-          color
-        );
-
-        last_y = y;
-      }
-    }
-
+    draw_scroll( 200,  400, 1 - scroll_prog, Math.PI);
+    draw_scroll(-200, -400,     scroll_prog, 0);
     line(
-      [0.1, y,        0, 1],
-      [0.1, y+height, 0, 1],
-      0.1,
-      "red"
+      [0,  400],
+      [0, -400],
+      5,
+      "purple"
     );
   }
 })
 
 function lerp(v0, v1, t) { return (1 - t) * v0 + t * v1; }
+function inv_lerp(min, max, p) { return (p - min) / (max - min); }
     </script>
   </body>
 </html>
