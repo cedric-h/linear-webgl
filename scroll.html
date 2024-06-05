@@ -38,6 +38,7 @@ window.onwheel = e => {
 window.onpointermove = e => {
   if (e.buttons)
     input_scroll += e.movementY*1.5;
+  e.preventDefault();
 }
 
 let then = 0;
