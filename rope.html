@@ -43,7 +43,7 @@ window.onpointermove = e => {
   input_mouse[1] = (e.clientY - window.innerHeight*0.5)*window.devicePixelRatio;
   e.preventDefault();
 }
-window.onmousedown = e => {
+window.onpointerdown = e => {
   input_mouse[0] = (e.clientX - window.innerWidth *0.5)*window.devicePixelRatio;
   input_mouse[1] = (e.clientY - window.innerHeight*0.5)*window.devicePixelRatio;
 
@@ -70,7 +70,7 @@ window.onkeydown = e => {
     }
   }
 }
-window.onmouseup = e => {
+window.onpointerup = e => {
   input_held_particle_index = -1;
 }
 
