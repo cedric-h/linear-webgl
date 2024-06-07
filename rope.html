@@ -1,0 +1,208 @@
+<!-- vim: sw=2 ts=2 expandtab smartindent ft=javascript
+-->
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>WebGL Demo</title>
+    <style> document, body { margin: 0px; padding: 0px; overflow: hidden; } </style>
+  </head>
+
+  <body>
+    <canvas id="glcanvas"></canvas>
+    <script>"use strict";
+
+const canvas = document.getElementById("glcanvas");
+const ctx = canvas.getContext('2d');
+(window.onresize = () => {
+   canvas.width = window.innerWidth*window.devicePixelRatio,
+   canvas.height = window.innerHeight*window.devicePixelRatio
+   canvas.style.width = window.innerWidth + 'px';
+   canvas.style.height = window.innerHeight + 'px';
+ })();
+
+
+const r = () => (Math.random() - 0.5) * 2;
+const PARTICLE_COUNT = 100;
+const ROPE_LEN = Math.sqrt(400*400 + 400*400);
+const LINK_LEN = ROPE_LEN / PARTICLE_COUNT;
+const particles = Array.from(
+  { length: 100 }, (_i, i) => [lerp(-200, 200, i / PARTICLE_COUNT) + r()*20, 
+                               lerp(-200, 200, i / PARTICLE_COUNT) + r()*20],
+);
+const particle_scratch = Array.from({ length: PARTICLE_COUNT }, () => [0, 0]);
+const pinned_particles = Array.from({ length: PARTICLE_COUNT }, () => 0)
+
+const obstacles = [];// Array.from({ length: 10 }, () => [r()*700, r()*700]);
+
+
+let input_mouse = [0, 0];
+let input_held_particle_index = -1;
+window.onpointermove = e => {
+  input_mouse[0] = (e.clientX - window.innerWidth *0.5)*window.devicePixelRatio;
+  input_mouse[1] = (e.clientY - window.innerHeight*0.5)*window.devicePixelRatio;
+  e.preventDefault();
+}
+window.onmousedown = e => {
+  input_mouse[0] = (e.clientX - window.innerWidth *0.5)*window.devicePixelRatio;
+  input_mouse[1] = (e.clientY - window.innerHeight*0.5)*window.devicePixelRatio;
+
+  for (let i = 0; i < particles.length; i++) {
+    if (dot_hover(particles[i], 15)) {
+      input_held_particle_index = i;
+      break;
+    }
+  }
+}
+window.ondblclick = e => {
+  for (let i = 0; i < particles.length; i++) {
+    if (dot_hover(particles[i], 15)) {
+      pinned_particles[i] ^= 1;
+      break;
+    }
+  }
+}
+window.onkeydown = e => {
+  for (let i = 0; i < particles.length; i++) {
+    if (dot_hover(particles[i], 15)) {
+      if (e.key == 'w') pinned_particles[i] = 1;
+      if (e.key == ' ') pinned_particles[i] = 0;
+    }
+  }
+}
+window.onmouseup = e => {
+  input_held_particle_index = -1;
+}
+
+function line(a, b, thick, color) {
+  ctx.lineWidth = thick;
+  ctx.strokeStyle = color;
+  ctx.beginPath();
+  ctx.moveTo(window.innerWidth*window.devicePixelRatio*0.5 + a[0], window.innerHeight*window.devicePixelRatio*0.5 + a[1]);
+  ctx.lineTo(window.innerWidth*window.devicePixelRatio*0.5 + b[0], window.innerHeight*window.devicePixelRatio*0.5 + b[1]);
+  ctx.stroke();
+}
+
+function dot(p, radius, color) {
+  ctx.beginPath();
+  ctx.arc(
+    window.innerWidth*window.devicePixelRatio*0.5 + p[0],
+    window.innerHeight*window.devicePixelRatio*0.5 + p[1],
+    radius,
+    0,
+    Math.PI*2
+  );
+  ctx.fillStyle = color;
+  ctx.fill();
+}
+
+function dot_hover(p, radius) {
+  const dx = p[0] - input_mouse[0];
+  const dy = p[1] - input_mouse[1];
+
+  return (Math.sqrt(dx*dx + dy*dy) < radius);
+}
+
+let then = 0;
+let deltaTime = 0;
+requestAnimationFrame(function render(now) {
+  requestAnimationFrame(render);
+
+  now *= 0.001;
+  deltaTime = now - then;
+  then = now;
+
+  ctx.fillStyle = "white";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  ctx.font = "50px sans-serif";
+  ctx.fillStyle = "black";
+  ctx.fillText('click and drag the worm', 10, 50 );
+  ctx.fillText('press W to freeze',       10, 130);
+  ctx.fillText('press space to release',  10, 210);
+  ctx.fillText('double click to toggle',  10, 290);
+
+  for (let i = 0; i < 100; i++) {
+    /* copy from particles to particle_scratch */
+    for (let i = 0; i < particles.length; i++) {
+      particle_scratch[i][0] = particles[i][0];
+      particle_scratch[i][1] = particles[i][1];
+    }
+
+    const out = [0, 0]
+    for (let i = 0; i < particles.length; i++) {
+      if (pinned_particles[i]) continue;
+
+      const pos = particles[i];
+      const next_pos = particle_scratch[i];
+
+      /* distance constraint */
+      function distance_constraint(out, link, link_len, stiffness) {
+        if (!link) return;
+
+        const dx = link[0] - pos[0];
+        const dy = link[1] - pos[1];
+        const dlen = Math.sqrt(dx*dx + dy*dy);
+        const diff = (dlen - link_len) / dlen;
+        out[0] += dx*stiffness*diff;
+        out[1] += dy*stiffness*diff;
+      }
+
+      for (const o of obstacles) {
+        const dx = o[0] - pos[0];
+        const dy = o[1] - pos[1];
+        const dlen = Math.sqrt(dx*dx + dy*dy);
+        if (dlen < 50) {
+          pos[0] = o[0] + dx*(50 / dlen);
+          pos[1] = o[1] + dy*(50 / dlen);
+        }
+      }
+
+      out[0] = 0;
+      out[1] = 0;
+      distance_constraint(out, particles[i - 1], LINK_LEN, 0.4);
+      distance_constraint(out, particles[i + 1], LINK_LEN, 0.4);
+      if (input_held_particle_index == i)
+        distance_constraint(out, input_mouse, 0, 0.9);
+      next_pos[0] += out[0];
+      next_pos[1] += out[1];
+    }
+
+    for (let i = 0; i < particles.length; i++) {
+      const next_pos = particle_scratch[i];
+
+      /* floor constraint */
+      next_pos[1] = Math.min(next_pos[1], window.innerHeight*0.8);
+    }
+
+    /* integrate particles towards particle_scratch */
+    for (let i = 0; i < particles.length; i++) {
+      const pos   = particles[i];
+      const start = particle_scratch[i];
+
+      /* damp from start to pos */
+      const damping   = 1.0;
+      const gravity_y = pinned_particles[i] ? 0 : 200;
+      pos[0] = pos[0] + damping*(start[0] - pos[0]);
+      pos[1] = pos[1] + damping*(start[1] - pos[1]) + deltaTime*deltaTime*gravity_y;
+    }
+  }
+
+  for (const p of obstacles) {
+    dot(p, 40, "gray");
+  }
+
+  for (const p of particles) {
+    const color = dot_hover(p, 15) ? "pink" : "rgb(80%, 20%, 80%)";
+    dot(p, 10, color);
+  }
+  for (let i = 1; i < particles.length; i++) {
+    line(particles[i - 1], particles[i], 5, "purple");
+  }
+})
+
+function lerp(v0, v1, t) { return (1 - t) * v0 + t * v1; }
+function inv_lerp(min, max, p) { return (p - min) / (max - min); }
+    </script>
+  </body>
+</html>
