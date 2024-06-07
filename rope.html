@@ -181,7 +181,7 @@ requestAnimationFrame(function render(now) {
       const start = particle_scratch[i];
 
       /* damp from start to pos */
-      const damping   = 1.0;
+      const damping   = 0.9;
       const gravity_y = pinned_particles[i] ? 0 : 200;
       pos[0] = pos[0] + damping*(start[0] - pos[0]);
       pos[1] = pos[1] + damping*(start[1] - pos[1]) + deltaTime*deltaTime*gravity_y;
