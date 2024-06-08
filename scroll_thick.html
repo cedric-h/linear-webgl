@@ -4,7 +4,8 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <title>WebGL Demo</title>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>📜</text></svg>">
+    <title>Scroll WebGL Demo 0.1</title>
     <style> document, body { margin: 0px; padding: 0px; overflow: hidden; } </style>
   </head>
 
@@ -261,11 +262,11 @@ window.onmouseup = ev => {
 
 let then = 0;
 let deltaTime = 0;
-requestAnimationFrame(function frame(timestamp) {
+requestAnimationFrame(function frame(now) {
     requestAnimationFrame(frame);
 
-    const now = timestamp*0.001;
-    deltaTime = timestamp - now;
+    now *= 0.001;
+    deltaTime = now - then;
     then = now;
 
     /* we could apply these changes directly in the event handlers, but the result feels "low fps"
@@ -395,14 +396,17 @@ requestAnimationFrame(function frame(timestamp) {
         /* if hovering parchment, scroll, otherwise zoom camera (and decay scroll input) */
         if (e) {
             const t = Math.sqrt(Math.abs(input.scroll)) * Math.sign(input.scroll);
-            input.scroll_prog += t * 0.0000002 * deltaTime;
+
+            input.scroll_prog += t * 0.05 * deltaTime;
             input.scroll *= Math.pow(1 - 0.20, 60*deltaTime);
 
             /* clamp */
             input.scroll_prog = Math.min(1.0, Math.max(0.0, input.scroll_prog))
         } else {
-            input.zoom += 0.005*Math.sign(input.scroll)*input.zoom;
-            input.scroll *= Math.pow(1 - 0.8, 60*deltaTime);
+            const t = Math.cbrt(Math.abs(input.scroll)) * Math.sign(input.scroll);
+
+            input.zoom += 0.005*t*input.zoom;
+            input.scroll *= Math.pow(1 - 0.95, 60*deltaTime);
         }
     }
 
