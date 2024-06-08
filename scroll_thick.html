@@ -40,15 +40,15 @@ let shaders;
 {
     const vs_geo = `
         attribute vec3 a_pos;
-        attribute vec4 a_color;
+        attribute vec2 a_uv;
 
         uniform mat4 u_matrix;
 
         varying vec4 v_color;
 
         void main() {
-            gl_Position = u_matrix * vec4(a_pos.xyz, 1);
-            v_color = a_color;
+            gl_Position = u_matrix * vec4(a_pos.xyz, 1.0);
+            v_color = vec4(a_uv.x, 0.0, a_uv.y, 1.0);
         }`;
 
     const fs_geo = `
@@ -367,112 +367,47 @@ requestAnimationFrame(function frame(timestamp) {
         }
     }
 
-    const geo_idx   = [];
-    const geo_pos   = [];
-    const geo_color = [];
-    if (0) {
-        const vec = [0, 0, 0, 1];
-        {
-            vec[0] = -1 + (input.mouse_x / window.innerWidth )*2;
-            vec[1] = +1 - (input.mouse_y / window.innerHeight)*2;
-            vec[2] = 1;
-            vec[3] = 1;
-
-            mat4_transform_vec4(vec, vec, u_vp_inv);
-            vec[0] /= vec[3];
-            vec[1] /= vec[3];
-            vec[2] /= vec[3];
-
-            let x =  0.00;
-            let y =  1.00;
-            let z =  0.40;
-            x /= Math.sqrt(x*x + y*y + z*z);
-            y /= Math.sqrt(x*x + y*y + z*z);
-            z /= Math.sqrt(x*x + y*y + z*z);
-
-            ray_hit_plane(
-                vec,
-                         eye[0],          eye[1],          eye[2], /* ray origin */
-                vec[0] - eye[0], vec[1] - eye[1], vec[2] - eye[2], /* ray vector */
-
-                0, 0.5, -1.5, /* plane origin */
-                x,   y,    z, /* plane vector */
-            );
-        }
-
-        const e = ((Math.abs(-0.15 - vec[1]) < 0.5) &&
-                   (Math.abs(        vec[0]) < 1.1)
-                  )? 0.2 : 0.1;
-        const corners = [
-            -e, -e,  e,   e, -e,  e,   e,  e,  e,  -e,  e,  e, /* Top face    */
-            -e, -e, -e,  -e,  e, -e,   e,  e, -e,   e, -e, -e, /* Bottom face */
-
-            -e,  e, -e,  -e,  e,  e,   e,  e,  e,   e,  e, -e, /* Front face  */
-            -e, -e, -e,   e, -e, -e,   e, -e,  e,  -e, -e,  e, /* Back face   */
-
-             e, -e, -e,   e,  e, -e,   e,  e,  e,   e, -e,  e, /* Right face  */
-            -e, -e, -e,  -e, -e,  e,  -e,  e,  e,  -e,  e, -e, /* Left face   */
-        ];
-
-        for (let corner_i = 0; corner_i < corners.length; corner_i += 3)
-            corners[corner_i+0] += vec[0],
-            corners[corner_i+1] += vec[1],
-            corners[corner_i+2] += vec[2];
-
-        for (let corner_i = 0; corner_i < corners.length; corner_i += 12) {
-            geo_color.push(
-                255,   0,   0, 255,
-                  0, 255,   0, 255,
-                  0,   0, 255, 255,
-                255,   0, 255, 255
-            )
-
-            const vbuf_i = geo_pos.length / 3;
-            geo_pos.push(corners[corner_i +  0], corners[corner_i +  1], corners[corner_i +  2]);
-            geo_pos.push(corners[corner_i +  3], corners[corner_i +  4], corners[corner_i +  5]);
-            geo_pos.push(corners[corner_i +  6], corners[corner_i +  7], corners[corner_i +  8]);
-            geo_pos.push(corners[corner_i +  9], corners[corner_i + 10], corners[corner_i + 11]);
-
-            geo_idx.push(
-              vbuf_i + 0,
-              vbuf_i + 1,
-              vbuf_i + 2,
-              vbuf_i + 2,
-              vbuf_i + 3,
-              vbuf_i + 0
-            );
-        }
-    }
-    function line(x0, z0, x1, z1) {
-        const corners = [
-            -1, x0,  z0,   1, x0,  z0,   1, x1,  z1,  -1, x1,  z1, /* Top face    */
-        ];
-
-        for (let corner_i = 0; corner_i < corners.length; corner_i += 12) {
-            geo_color.push(
-                255,   0,   0, 255,
-                  0, 255,   0, 255,
-                  0,   0, 255, 255,
-                255,   0, 255, 255
-            )
-
-            const vbuf_i = geo_pos.length / 3;
-            geo_pos.push(corners[corner_i +  0], corners[corner_i +  1], corners[corner_i +  2]);
-            geo_pos.push(corners[corner_i +  3], corners[corner_i +  4], corners[corner_i +  5]);
-            geo_pos.push(corners[corner_i +  6], corners[corner_i +  7], corners[corner_i +  8]);
-            geo_pos.push(corners[corner_i +  9], corners[corner_i + 10], corners[corner_i + 11]);
-
-            geo_idx.push(
-              vbuf_i + 0,
-              vbuf_i + 1,
-              vbuf_i + 2,
-              vbuf_i + 2,
-              vbuf_i + 3,
-              vbuf_i + 0
-            );
-        }
-    }
+    const geo_idx = [];
+    const geo_pos = [];
+    const geo_uv  = [];
+    
     {
+        let scroll_length = 0;
+        function line(x0, z0, x1, z1) {
+            {
+                const dx = x0 - x1;
+                const dy = z0 - z1;
+                scroll_length += Math.sqrt(dx*dx + dy*dy);
+            }
+
+            const corners = [
+                -1, x0,  z0,   1, x0,  z0,   1, x1,  z1,  -1, x1,  z1, /* Top face    */
+            ];
+
+            for (let corner_i = 0; corner_i < corners.length; corner_i += 12) {
+                geo_uv.push(
+                    1.0,   0,
+                      0,   0,
+                      0, 1.0,
+                    1.0, 1.0
+                )
+
+                const vbuf_i = geo_pos.length / 3;
+                geo_pos.push(corners[corner_i +  0], corners[corner_i +  1], corners[corner_i +  2]);
+                geo_pos.push(corners[corner_i +  3], corners[corner_i +  4], corners[corner_i +  5]);
+                geo_pos.push(corners[corner_i +  6], corners[corner_i +  7], corners[corner_i +  8]);
+                geo_pos.push(corners[corner_i +  9], corners[corner_i + 10], corners[corner_i + 11]);
+
+                geo_idx.push(
+                  vbuf_i + 0,
+                  vbuf_i + 1,
+                  vbuf_i + 2,
+                  vbuf_i + 2,
+                  vbuf_i + 3,
+                  vbuf_i + 0
+                );
+            }
+        }
         const scroll_prog = input.scroll_prog;
         const bottom_scroll_x = -0.2;
         const scroll_height = 2.0;
@@ -590,7 +525,7 @@ requestAnimationFrame(function frame(timestamp) {
         {
             gl.useProgram(shaders.geo.program);
             gl.enableVertexAttribArray(shaders.geo.a_pos);
-            gl.enableVertexAttribArray(shaders.geo.a_color);
+            gl.enableVertexAttribArray(shaders.geo.a_uv);
 
             gl.uniformMatrix4fv(shaders.geo.u_matrix, false, u_vp);
 
@@ -601,8 +536,8 @@ requestAnimationFrame(function frame(timestamp) {
                 gl.vertexAttribPointer(shaders.geo.a_pos, 3, gl.FLOAT, false, 0, 0);
 
                 gl.bindBuffer(gl.ARRAY_BUFFER, buf.geo_v_color);
-                gl.bufferData(gl.ARRAY_BUFFER, new Uint8Array(geo_color), gl.STATIC_DRAW);
-                gl.vertexAttribPointer(shaders.geo.a_color, 4, gl.UNSIGNED_BYTE, true, 0, 0);
+                gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(geo_uv), gl.STATIC_DRAW);
+                gl.vertexAttribPointer(shaders.geo.a_uv, 2, gl.FLOAT, true, 0, 0);
 
                 gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, buf.geo_i);
                 gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, new Uint16Array(geo_idx), gl.STATIC_DRAW);
@@ -615,7 +550,7 @@ requestAnimationFrame(function frame(timestamp) {
         {
             gl.useProgram(shaders.grid.program);
             gl.enableVertexAttribArray(shaders.grid.a_pos);
-            gl.enableVertexAttribArray(shaders.grid.a_color);
+            gl.enableVertexAttribArray(shaders.grid.a_uv);
 
             gl.uniformMatrix4fv(shaders.grid.u_matrix, false, u_vp);
 
