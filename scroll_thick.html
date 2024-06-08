@@ -176,11 +176,12 @@ let tex_scroll = gl.createTexture();
     const ctx = canvas.getContext("2d");
 
     for (let y = 0; y < canvas.height; y++) {
-        let t = (0.7 + 0.25*(y / canvas.height));
-        t += 0.06*Math.sin((y / canvas.height) * Math.PI * 2 * 10);
-        const r = Math.floor(255 * (t * 0.70));
-        const g = Math.floor(255 * (t * 0.55));
-        const b = Math.floor(255 * (t * 0.40));
+        let t = (0.65 + 0.15*(y / canvas.height));
+        t += 0.04*Math.sin((y / canvas.height) * Math.PI * 2 * 10);
+        t += 0.01*Math.sin((y / canvas.height) * Math.PI * 2 *  5);
+        const r = Math.floor(255 * (t * 0.95));
+        const g = Math.floor(255 * (t * 0.85));
+        const b = Math.floor(255 * (t * 0.70));
         ctx.fillStyle = "rgb(" + r + "," + g + "," + b + ")";
         ctx.fillRect(0, y, canvas.width, 1);
     }
@@ -195,8 +196,8 @@ let tex_scroll = gl.createTexture();
             0.8, '  by order of imperial decree',
             1.0, '',
             2.0, '    or else!',
-            // 1.0, '',
-            0.8, '  thanks tmpvar & demongod <3'
+            1.0, '',
+            0.8, '  tmpvar steals babies'
         ];
         lines.push(1.0, '', 1.0, '', ...lines);
 
@@ -206,7 +207,7 @@ let tex_scroll = gl.createTexture();
             const text = lines[i + 1];
 
             ctx.font = (size * SCROLL_WIDTH * 0.08) + "px quill";
-            ctx.fillStyle = "black";
+            ctx.fillStyle = "rgb(20% 10% 7%)";
             y += 1/30;
 
             ctx.fillText(text, 30, y * canvas.height);
