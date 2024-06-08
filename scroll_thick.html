@@ -165,22 +165,23 @@ let tex_scroll = gl.createTexture();
 {
     const canvas = document.createElement("canvas");
     const SIZE = canvas.width = canvas.height = 500;
+    canvas.height *= ASPECT_RATIO;
     const ctx = canvas.getContext("2d");
 
-    for (let y = 0; y < SIZE; y++) {
-        let t = (0.8 + 0.2*(y / SIZE));
-        t += 0.1*Math.sin((y / SIZE) * Math.PI * 2 * 16);
+    for (let y = 0; y < canvas.height; y++) {
+        let t = (0.8 + 0.2*(y / canvas.height));
+        t += 0.1*Math.sin((y / canvas.height) * Math.PI * 2 * 16);
         const r = Math.floor(255 * (t * 0.70));
         const g = Math.floor(255 * (t * 0.55));
         const b = Math.floor(255 * (t * 0.40));
         ctx.fillStyle = "rgb(" + r + "," + g + "," + b + ")";
-        ctx.fillRect(0, y, SIZE, 1);
+        ctx.fillRect(0, y, canvas.width, 1);
     }
 
     for (let y = 0; y < 20; y++) {
         ctx.fillStyle = "black";
         ctx.font = "40px serif";
-        ctx.fillText('hi there', 100, y/20 * SIZE);
+        ctx.fillText('hi there', 100, y/20 * canvas.height);
     }
 
     gl.bindTexture(gl.TEXTURE_2D, tex_scroll);
@@ -484,8 +485,8 @@ requestAnimationFrame(function frame(timestamp) {
 
             if (backwards) {
                 for (let i = line_points.length-4; i >= 0; i -= 4) {
-                    line(line_points[i + 0], line_points[i + 1],
-                         line_points[i + 2], line_points[i + 3]);
+                    line(line_points[i + 2], line_points[i + 3],
+                         line_points[i + 0], line_points[i + 1]);
                 }
             } else
                 for (let i = 0; i < line_points.length; i += 4) {
@@ -493,7 +494,7 @@ requestAnimationFrame(function frame(timestamp) {
                          line_points[i + 2], line_points[i + 3]);
                 }
         }
-        draw_scroll(              0, -scroll_height*0.5,     scroll_prog,       0, true);
+        draw_scroll(bottom_scroll_x,  scroll_height*0.5, 1 - scroll_prog, Math.PI, true);
         {
             function bezier4_sample(out, p0, p1, p2, p3, t) {
                 out[0] = Math.pow(1 - t, 3) * p0[0] +
@@ -514,7 +515,8 @@ requestAnimationFrame(function frame(timestamp) {
             const control1 = [bottom_scroll_x + -scroll_radius,  scroll_height*0.3];
             const out_from = [0, 0]
             const out_to   = [0, 0]
-            for (let i = 1; i <= bezier_i; i++) {
+
+            for (let i = bezier_i; i > 0; i--) {
                 const t0 = (i - 1)/bezier_i;
                 bezier4_sample(out_from, a, control0, control1, b, t0);
 
@@ -522,12 +524,12 @@ requestAnimationFrame(function frame(timestamp) {
                 bezier4_sample(out_to  , a, control0, control1, b, t1);
 
                 line(
-                    out_from[0], out_from[1],
                     out_to  [0], out_to  [1],
+                    out_from[0], out_from[1],
                 );
             }
         }
-        draw_scroll(bottom_scroll_x,  scroll_height*0.5, 1 - scroll_prog, Math.PI, false);
+        draw_scroll(              0, -scroll_height*0.5,     scroll_prog,       0, false);
 
         /* we have a scroll length problem. */
         // console.log(scroll_length);
