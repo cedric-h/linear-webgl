@@ -986,42 +986,15 @@ class SensorRenderer {
 
         const p = [0, 0, 0, 1];
 
-        const spatial_hash = {};
-        for (const sensor_pos of sensor_positions) {
-            mat4_transform_vec4(p, sensor_pos, mvp);
-            const w = p[3];
-            p[0] = (0 + (p[0]/w*0.5 + 0.5))*gl.canvas.width;
-            p[1] = (1 - (p[1]/w*0.5 + 0.5))*gl.canvas.height;
-
-            const pad = (ATLAS_SHADOW_PAD / ATLAS_RESOLUTION) * ATLAS_SCREEN_SIZE_Y;
-            const min_x = p[0] + -size_x*0.5 - pad;
-            const min_y = p[1] -  size_y     - pad;
-            const max_x = p[0] +  size_x*0.5 + pad;
-            const max_y = p[1]               + pad;
-
-            for (const [corner_x, corner_y] of [
-                [max_x, min_y],
-                [min_x, min_y],
-                [min_x, max_y],
-                [max_x, max_y],
-            ]) {
-                const width  = size_x + pad * 2;
-                const height = size_y + pad * 2;
-                const hash_x = Math.floor(max_x / width);
-                const hash_y = Math.floor(max_x / width);
-                const key = hash_x + ',' + hash_y;
-                spatial_hash[key] ??= [];
-                spatial_hash[key].push(sensor_positions);
-            }
-        }
-
         sensor_positions.sort((a, b) => {
             const dist = p => Math.sqrt((p[0] - eye[0])*(p[0] - eye[0]) +
                                         (p[1] - eye[1])*(p[1] - eye[1]) +
                                         (p[2] - eye[2])*(p[2] - eye[2]));
             return dist(b) - dist(a);
         });
-        for (const sensor_pos of sensor_positions) {
+        for (const cluster of sensor_clusters) {
+            const sensor_pos = cluster.position;
+
             /* position on screen */
             mat4_transform_vec4(p, sensor_pos, mvp);
             const w = p[3];
@@ -1113,7 +1086,7 @@ class SensorRenderer {
 }
 
 
-let building_rooms, sensor_positions;
+let building_rooms, sensor_positions, sensor_clusters;
 {
     const e = 0.01;
     building_rooms = [
@@ -1161,6 +1134,57 @@ let building_rooms, sensor_positions;
                 mat4_from_scaling(    mat4_create(), size)
             ),
         );
+    }
+
+    const CLUSTER_RADIUS = 2.5;
+    const clustered = sensor_positions.map(p => [p]);
+
+    /* weee for naive quadratic algorithm */
+    for (let i = 0; i < sensor_positions.length; i++) {
+        for (let j = i+1; j < sensor_positions.length; j++) {
+            const dx = sensor_positions[i][0] - sensor_positions[j][0];
+            const dy = sensor_positions[i][1] - sensor_positions[j][1];
+            const dz = sensor_positions[i][2] - sensor_positions[j][2];
+            const dist = Math.sqrt(dx*dx + dy*dy + dz*dz);
+
+            if (dist < CLUSTER_RADIUS) {
+                const i_sensor = sensor_positions[i];
+                const j_sensor = sensor_positions[j];
+                const i_cluster_index = clustered.findIndex(cluster => cluster.some(c => c == i_sensor));
+                const j_cluster_index = clustered.findIndex(cluster => cluster.some(c => c == j_sensor));
+
+                /* while we only consider each pairing only once,
+                 * these two could share a third close neighbor,
+                 * and have been grouped together because of that. */
+                if (i_cluster_index == j_cluster_index) continue;
+
+                /* join the clusters */
+                clustered[j_cluster_index].push(...clustered[i_cluster_index]);
+                clustered.splice(i_cluster_index, 1);
+            }
+        }
+    }
+
+    console.log(clustered);
+    sensor_clusters = [];
+    for (const cluster of clustered) {
+
+        let x, y, z;
+        {
+            x = y = z = 0;
+            for (const p of cluster) 
+                x += p[0],
+                y += p[1],
+                z += p[2];
+            x /= cluster.length;
+            y /= cluster.length;
+            z /= cluster.length;
+        }
+
+        sensor_clusters.push({
+            position: [x, y, z, 1],
+            cluster
+        });
     }
 }
 
