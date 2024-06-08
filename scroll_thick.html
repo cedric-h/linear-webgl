@@ -171,8 +171,8 @@ let tex_scroll = gl.createTexture();
     const ctx = canvas.getContext("2d");
 
     for (let y = 0; y < canvas.height; y++) {
-        let t = (0.8 + 0.2*(y / canvas.height));
-        t += 0.1*Math.sin((y / canvas.height) * Math.PI * 2 * 10);
+        let t = (0.7 + 0.25*(y / canvas.height));
+        t += 0.06*Math.sin((y / canvas.height) * Math.PI * 2 * 10);
         const r = Math.floor(255 * (t * 0.70));
         const g = Math.floor(255 * (t * 0.55));
         const b = Math.floor(255 * (t * 0.40));
@@ -508,8 +508,8 @@ requestAnimationFrame(function frame(now) {
         const scroll_prog = input.scroll_prog;
         const btm_scroll_x = -0.2;
         const scroll_height = 2.0;
-        const btm_curl_radius = lerp(0.3, 0.34, 1.0 - scroll_prog);
-        const top_curl_radius = lerp(0.3, 0.34,       scroll_prog);
+        const btm_curl_radius = lerp(0.25, 0.34, 1.0 - scroll_prog);
+        const top_curl_radius = lerp(0.25, 0.34,       scroll_prog);
 
         draw_curl(
             /* start_x     */ btm_scroll_x,
