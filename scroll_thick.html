@@ -158,19 +158,20 @@ let shaders;
     }
 }
 
-const SCROLL_WIDTH = 2000;
-const ASPECT_RATIO = 8.332887651812422;
+const SCROLL_WIDTH = 1000;
+const SCROLL_LENGTH_WORLDSPACE = 7.198429;
 
 let tex_scroll = gl.createTexture();
 {
     const canvas = document.createElement("canvas");
-    const SIZE = canvas.width = canvas.height = 500;
-    canvas.height *= ASPECT_RATIO;
+    /* scroll is 2 units wide in worldspace so this gives us an aspect ratio. */
+    canvas.width = SCROLL_WIDTH;
+    canvas.height = SCROLL_WIDTH * (SCROLL_LENGTH_WORLDSPACE / 2.0);
     const ctx = canvas.getContext("2d");
 
     for (let y = 0; y < canvas.height; y++) {
         let t = (0.8 + 0.2*(y / canvas.height));
-        t += 0.1*Math.sin((y / canvas.height) * Math.PI * 2 * 16);
+        t += 0.1*Math.sin((y / canvas.height) * Math.PI * 2 * 10);
         const r = Math.floor(255 * (t * 0.70));
         const g = Math.floor(255 * (t * 0.55));
         const b = Math.floor(255 * (t * 0.40));
@@ -180,8 +181,8 @@ let tex_scroll = gl.createTexture();
 
     for (let y = 0; y < 20; y++) {
         ctx.fillStyle = "black";
-        ctx.font = "40px serif";
-        ctx.fillText('hi there', 100, y/20 * canvas.height);
+        ctx.font = (SCROLL_WIDTH * 0.08) + "px serif";
+        ctx.fillText((y+'.').padEnd(7) + ' sup nerds', 100, y/20 * canvas.height);
     }
 
     gl.bindTexture(gl.TEXTURE_2D, tex_scroll);
@@ -232,13 +233,9 @@ let input = {
     lmb_down: false,
     rmb_down: false,
 }
-let wheelTimeout;
 window.onwheel = e => {
     if (input.mouse_down) return;
-    input.scroll = e.deltaY;
-
-    clearTimeout(wheelTimeout);
-    wheelTimeout = setTimeout(() => input.scroll = 0, 100)
+    input.scroll += e.deltaY;
 };
 window.onmousedown = ev => {
     ev.preventDefault();
@@ -395,21 +392,17 @@ requestAnimationFrame(function frame(timestamp) {
         const e = ((Math.abs(-0.15 - vec[1]) < 0.5) &&
                    (Math.abs(        vec[0]) < 1.1));
 
-        /* if hovering parchment, scroll, otherwise zoom camera */
+        /* if hovering parchment, scroll, otherwise zoom camera (and decay scroll input) */
         if (e) {
-            /*
-            const full_height   = 1.0;
-            const window_height = 0.1;
+            const t = Math.sqrt(Math.abs(input.scroll)) * Math.sign(input.scroll);
+            input.scroll_prog += t * 0.0000002 * deltaTime;
+            input.scroll *= Math.pow(1 - 0.20, 60*deltaTime);
 
-            let scroll = input.scroll_prog;
-            scroll       += input.scroll * 0.00007 * deltaTime;
-            input.scroll *= Math.pow(1 - 0.15, 60*deltaTime);
-            scroll        = Math.max(scroll, 0);
-            scroll        = Math.min(scroll + window_height, full_height) - window_height;
-            */
-            input.scroll_prog += Math.sign(input.scroll) * 0.005;
+            /* clamp */
+            input.scroll_prog = Math.min(1.0, Math.max(0.0, input.scroll_prog))
         } else {
-            input.zoom += 0.025*Math.sign(input.scroll)*input.zoom;
+            input.zoom += 0.005*Math.sign(input.scroll)*input.zoom;
+            input.scroll *= Math.pow(1 - 0.8, 60*deltaTime);
         }
     }
 
@@ -433,10 +426,10 @@ requestAnimationFrame(function frame(timestamp) {
 
             for (let corner_i = 0; corner_i < corners.length; corner_i += 12) {
                 geo_uv.push(
-                    1.0, scroll_length_b4 / ASPECT_RATIO,
-                      0, scroll_length_b4 / ASPECT_RATIO,
-                      0, scroll_length    / ASPECT_RATIO,
-                    1.0, scroll_length    / ASPECT_RATIO
+                    1.0, scroll_length_b4 / SCROLL_LENGTH_WORLDSPACE,
+                      0, scroll_length_b4 / SCROLL_LENGTH_WORLDSPACE,
+                      0, scroll_length    / SCROLL_LENGTH_WORLDSPACE,
+                    1.0, scroll_length    / SCROLL_LENGTH_WORLDSPACE
                 )
 
                 const vbuf_i = geo_pos.length / 3;
@@ -455,19 +448,26 @@ requestAnimationFrame(function frame(timestamp) {
                 );
             }
         }
-        const scroll_prog = input.scroll_prog = Math.min(1.1, Math.max(-0.1, input.scroll_prog));
-        const bottom_scroll_x = -0.2;
-        const scroll_height = 2.0;
-        const scroll_radius = 0.3;
-        function draw_scroll(start_x, start_y, scroll_prog, rotation, backwards) {
+
+        function draw_curl(
+            start_x,
+            start_y,
+            curl_radius,
+            scroll_prog,
+            rotation,
+            backwards
+        ) {
+            let curl_length = 0;
+            let max_curl_length = lerp(1.5, 3.5, scroll_prog);
+
             const coils = 4;
             const theta_max = coils * Math.PI * 2;
-            const away_step = scroll_radius / theta_max;
-            const chord = (scroll_radius / 25);
-            const start = (scroll_radius / 7 ) / away_step;
+            const away_step = curl_radius / theta_max;
+            const chord = (curl_radius / 25);
+            const start = (curl_radius / 7 ) / away_step;
 
             const line_points = [];
-            for (let theta = theta_max; theta > lerp(start, theta_max-start*2, scroll_prog);) {
+            for (let theta = theta_max; curl_length < max_curl_length;) {
                 const x0 = Math.cos(theta + rotation) * (away_step * theta);
                 const y0 = Math.sin(theta + rotation) * (away_step * theta);
 
@@ -476,6 +476,12 @@ requestAnimationFrame(function frame(timestamp) {
                 const r1 = theta;
                 const x1 = Math.cos(theta + rotation) * (away_step * theta);
                 const y1 = Math.sin(theta + rotation) * (away_step * theta);
+
+                {
+                    const dx = x0 - x1;
+                    const dy = y0 - y1;
+                    curl_length += Math.sqrt(dx*dx + dy*dy);
+                }
 
                 line_points.push(
                     start_x + x0, start_y + y0,
@@ -494,7 +500,22 @@ requestAnimationFrame(function frame(timestamp) {
                          line_points[i + 2], line_points[i + 3]);
                 }
         }
-        draw_scroll(bottom_scroll_x,  scroll_height*0.5, 1 - scroll_prog, Math.PI, true);
+
+        const scroll_prog = input.scroll_prog;
+        const btm_scroll_x = -0.2;
+        const scroll_height = 2.0;
+        const btm_curl_radius = lerp(0.3, 0.34, 1.0 - scroll_prog);
+        const top_curl_radius = lerp(0.3, 0.34,       scroll_prog);
+
+        draw_curl(
+            /* start_x     */ btm_scroll_x,
+            /* start_y     */ scroll_height*0.5,
+            /* curl_radius */ btm_curl_radius,
+
+            /* scroll_prog */ 1 - scroll_prog,
+            /* rotation    */ Math.PI,
+            /* backwards   */ true
+        );
         {
             function bezier4_sample(out, p0, p1, p2, p3, t) {
                 out[0] = Math.pow(1 - t, 3) * p0[0] +
@@ -508,11 +529,10 @@ requestAnimationFrame(function frame(timestamp) {
             }
             const bezier_i = 85;
 
-            const e = scroll_radius * 0.45;
-            const a        = [              0 +  scroll_radius, -scroll_height*0.5];
-            const b        = [bottom_scroll_x + -scroll_radius,  scroll_height*0.5];
-            const control0 = [              0 +  scroll_radius, -scroll_height*0.3];
-            const control1 = [bottom_scroll_x + -scroll_radius,  scroll_height*0.3];
+            const a        = [           0 +  top_curl_radius, -scroll_height*0.5];
+            const b        = [btm_scroll_x + -btm_curl_radius,  scroll_height*0.5];
+            const control0 = [           0 +  top_curl_radius, -scroll_height*0.3];
+            const control1 = [btm_scroll_x + -btm_curl_radius,  scroll_height*0.3];
             const out_from = [0, 0]
             const out_to   = [0, 0]
 
@@ -529,9 +549,16 @@ requestAnimationFrame(function frame(timestamp) {
                 );
             }
         }
-        draw_scroll(              0, -scroll_height*0.5,     scroll_prog,       0, false);
+        draw_curl(
+            /* start_x     */ 0,
+            /* start_y     */ -scroll_height*0.5,
+            /* curl_radius */ top_curl_radius,
 
-        /* we have a scroll length problem. */
+            /* scroll_prog */ scroll_prog,
+            /* rotation    */ 0,
+            /* backwards   */ false
+        );
+
         // console.log(scroll_length);
     }
 
