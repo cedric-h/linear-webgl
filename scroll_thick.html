@@ -76,7 +76,7 @@ let shaders;
 
         void main() {
             gl_Position = u_matrix * vec4(a_pos.xyz, 1);
-            v_uv = (a_uv - 0.5)*abs(a_pos.xy);
+            v_uv = (a_uv - 0.5)*abs(a_pos.xy*10.0);
         }`;
 
     const fs_grid = `#version 300 es
@@ -109,8 +109,8 @@ let shaders;
             vec2 uv = (v_uv - 0.5) + 0.5/N;
             float grid = gridTextureGradBox(uv, dFdx(uv), dFdy(uv));
             frag_color = vec4(1.0 - grid);
-            frag_color *= 0.25;
-            frag_color *= 0.3 + 0.6*smoothstep(0.0, 0.1, 1.0 - length(v_uv)/5.5);
+            frag_color *= 0.5;
+            frag_color *= smoothstep(0.0, 0.8, 1.0 - length(v_uv)/9.5);
         }`;
 
 
@@ -253,7 +253,7 @@ let tex_scroll = gl.createTexture();
 
         const LINE_COUNT = 30;
         const lines = [
-            1.0, '  oh hell yeah',
+            1.0, '  made by ced',
             1.0, '',
             1.5, 'SIGN OVER YOUR',
             1.5, '    FIRST BORN',
@@ -261,11 +261,11 @@ let tex_scroll = gl.createTexture();
             1.0, '',
             2.0, '    or else!',
             1.0, '',
-            0.8, '  tmpvar steals babies'
+            0.8, ' sign below'
         ];
-        lines.push(1.0, '', 1.0, '', ...lines);
+        lines.push(1.0, '', 1.0, '', 1.0, '', ...lines);
 
-        let y = 8/30;
+        let y = 7/30;
         for (let i = 0; i < lines.length; i += 2) {
             const size = lines[i + 0];
             const text = lines[i + 1];
@@ -384,7 +384,7 @@ let input = {
     cam_pivot_z: -0.15,
 
     scroll_prog: 1.0,
-    zoom:        7,
+    zoom:        4,
     scroll:      0,
 
     mouse_x: 0,
@@ -483,7 +483,7 @@ requestAnimationFrame(function frame(now) {
         } else {
             const FIELD_OF_VIEW = 70 / 180 * Math.PI;
             const ar = window.innerWidth / window.innerHeight;
-            const projection = mat4_perspective(mat4_create(), FIELD_OF_VIEW, ar, 0.01, 100.0);
+            const projection = mat4_perspective(mat4_create(), FIELD_OF_VIEW, ar, 0.01, 1000.0);
 
             const view = mat4_create();
             {
