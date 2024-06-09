@@ -159,7 +159,7 @@ let shaders;
     }
 }
 
-const SCROLL_WIDTH = 1000;
+const SCROLL_WIDTH = 2000;
 const SCROLL_LENGTH_WORLDSPACE = 7.198429;
 
 let tex_scroll = gl.createTexture();
@@ -169,24 +169,57 @@ let tex_scroll = gl.createTexture();
     document.fonts.add(font);
     document.body.classList.add("fonts-loaded");
 
+    const img = new Image();
+    img.src = 'tex_scroll.jpg';
+    await new Promise(res => img.onload = res);
+
     const canvas = document.createElement("canvas");
     /* scroll is 2 units wide in worldspace so this gives us an aspect ratio. */
     canvas.width = SCROLL_WIDTH;
     canvas.height = SCROLL_WIDTH * (SCROLL_LENGTH_WORLDSPACE / 2.0);
     const ctx = canvas.getContext("2d");
 
-    for (let y = 0; y < canvas.height; y++) {
-        let t = (0.65 + 0.15*(y / canvas.height));
-        t += 0.04*Math.sin((y / canvas.height) * Math.PI * 2 * 10);
-        t += 0.01*Math.sin((y / canvas.height) * Math.PI * 2 *  5);
-        const r = Math.floor(255 * (t * 0.95));
-        const g = Math.floor(255 * (t * 0.85));
-        const b = Math.floor(255 * (t * 0.70));
-        ctx.fillStyle = "rgb(" + r + "," + g + "," + b + ")";
-        ctx.fillRect(0, y, canvas.width, 1);
-    }
+    for (let y = 0; y < canvas.height; y += img.height) ctx.drawImage(img, 0, y);
 
-    {
+    // for (let y = 0; y < canvas.height; y++) {
+    //     let t = (0.65 + 0.15*(y / canvas.height));
+    //     t += 0.04*Math.sin((y / canvas.height) * Math.PI * 2 * 10);
+    //     t += 0.01*Math.sin((y / canvas.height) * Math.PI * 2 *  5);
+    //     const r = Math.floor(255 * (t * 0.95));
+    //     const g = Math.floor(255 * (t * 0.85));
+    //     const b = Math.floor(255 * (t * 0.70));
+    //     ctx.fillStyle = "rgb(" + r + "," + g + "," + b + ")";
+    //     ctx.fillRect(0, y, canvas.width, 1);
+    // }
+
+    // const passes = [
+    //     [ 5.69, 6.87 ],
+    //     [ 0.22, 1.18 ],
+    //     [ 0.78, 9.18 ],
+    //     [ 8.24, 7.24 ],
+    //     [ 6.63, 3.71 ],
+    //     [ 9.96, 6.31 ],
+    //     [ 9.28, 8.14 ],
+    //     [ 8.22, 4.01 ],
+    //     [ 0.91, 3.92 ],
+    //     [ 3.49, 8.31 ]
+    // ]
+
+    const ITERATIONS = 20;
+    for (let i = 0; i < ITERATIONS; i++) {
+        ctx.save();
+
+        if (i == (ITERATIONS - 1)) {
+            ctx.globalAlpha = 0.7;
+            ctx.fillStyle = "rgb(15% 9% 7%)";
+        } else {
+            const shake = 15;
+            ctx.translate((0.5 - Math.random())*shake,
+                          (0.5 - Math.random())*shake);
+            ctx.globalAlpha = 0.07*Math.random();
+            ctx.fillStyle = "rgb(35% 10% 7%)";
+        }
+
         const LINE_COUNT = 30;
         const lines = [
             1.0, '  oh hell yeah',
@@ -207,11 +240,11 @@ let tex_scroll = gl.createTexture();
             const text = lines[i + 1];
 
             ctx.font = (size * SCROLL_WIDTH * 0.08) + "px quill";
-            ctx.fillStyle = "rgb(20% 10% 7%)";
             y += 1/30;
 
             ctx.fillText(text, 30, y * canvas.height);
         }
+        ctx.restore();
     }
 
     gl.bindTexture(gl.TEXTURE_2D, tex_scroll);
