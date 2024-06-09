@@ -56,11 +56,13 @@ let shaders;
         precision mediump float;
 
         uniform sampler2D u_texture;
+        uniform float u_color_mask;
 
         varying vec2 v_uv;
 
         void main() {
             gl_FragColor = texture2D(u_texture, v_uv);
+            gl_FragColor.xyz *= u_color_mask;
         }`;
 
 
@@ -564,6 +566,7 @@ requestAnimationFrame(function frame(now) {
 
             input.zoom += 0.005*t*input.zoom;
             input.scroll *= Math.pow(1 - 0.95, 60*deltaTime);
+            input.zoom = Math.min(20, input.zoom);
         }
     }
 
@@ -779,6 +782,7 @@ requestAnimationFrame(function frame(now) {
             gl.enableVertexAttribArray(shaders.geo.a_uv);
 
             gl.uniformMatrix4fv(shaders.geo.u_matrix, false, u_vp);
+            gl.uniform1f(shaders.geo.u_color_mask, 0.4);
 
             /* upload/bind atlas */
             {
@@ -808,6 +812,7 @@ requestAnimationFrame(function frame(now) {
             gl.enableVertexAttribArray(shaders.geo.a_uv);
 
             gl.uniformMatrix4fv(shaders.geo.u_matrix, false, u_vp);
+            gl.uniform1f(shaders.geo.u_color_mask, 1.0);
 
             /* upload/bind texture */
             {
