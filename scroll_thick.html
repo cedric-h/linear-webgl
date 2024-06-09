@@ -257,7 +257,7 @@ let tex_scroll = gl.createTexture();
             1.0, '',
             1.5, 'SIGN OVER YOUR',
             1.5, '    FIRST BORN',
-            0.8, '  by order of imperial decree',
+            0.8, '   by order of imperial decree',
             1.0, '',
             2.0, '    or else!',
             1.0, '',
@@ -273,7 +273,7 @@ let tex_scroll = gl.createTexture();
             ctx.font = (size * SCROLL_WIDTH * 0.08) + "px quill";
             y += 1/30;
 
-            ctx.fillText(text, 30, y * canvas.height);
+            ctx.fillText(text, 50, y * canvas.height);
         }
         ctx.restore();
     }
@@ -290,8 +290,8 @@ let tex_scroll = gl.createTexture();
         /* type,          */ gl.UNSIGNED_BYTE,
         /* data           */ canvas
     );
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.generateMipmap(gl.TEXTURE_2D);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
 })();
@@ -309,7 +309,60 @@ const buf = {
     grid_v_pos:  gl.createBuffer(),
     grid_v_uv:   gl.createBuffer(),
     grid_i:      gl.createBuffer(),
+    grid_i_count: 0,
 };
+
+/* generate grid geometry */
+{
+    const grid_idx = [];
+    const grid_pos = [];
+    const grid_uv  = [];
+    {
+        const z = -1.5;
+        const corners = [
+            -999, -999, z,  -999,  999, z,   999,  999, z,   999, -999, z, /* Bottom face */
+        ];
+
+        for (let corner_i = 0; corner_i < corners.length; corner_i += 3)
+            corners[corner_i+2] -= 0.025;
+
+        for (let corner_i = 0; corner_i < corners.length; corner_i += 12) {
+            grid_uv.push(
+                255,   0,
+                  0,   0,
+                  0, 255,
+                255, 255,
+            );
+
+            const vbuf_i = grid_pos.length / 3;
+            grid_pos.push(corners[corner_i +  0], corners[corner_i +  1], corners[corner_i +  2]);
+            grid_pos.push(corners[corner_i +  3], corners[corner_i +  4], corners[corner_i +  5]);
+            grid_pos.push(corners[corner_i +  6], corners[corner_i +  7], corners[corner_i +  8]);
+            grid_pos.push(corners[corner_i +  9], corners[corner_i + 10], corners[corner_i + 11]);
+
+            grid_idx.push(
+                vbuf_i + 0,
+                vbuf_i + 1,
+                vbuf_i + 2,
+                vbuf_i + 2,
+                vbuf_i + 3,
+                vbuf_i + 0
+            );
+        }
+    }
+
+    {
+        gl.bindBuffer(gl.ARRAY_BUFFER, buf.grid_v_pos);
+        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(grid_pos), gl.STATIC_DRAW);
+
+        gl.bindBuffer(gl.ARRAY_BUFFER, buf.grid_v_uv);
+        gl.bufferData(gl.ARRAY_BUFFER, new Uint8Array(grid_uv), gl.STATIC_DRAW);
+
+        gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, buf.grid_i);
+        gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, new Uint16Array(grid_idx), gl.STATIC_DRAW);
+    }
+    buf.grid_i_count = grid_idx.length;
+}
 
 /* generate skydome geometry */
 {
@@ -359,6 +412,7 @@ const buf = {
 		}
     }
 
+    /* upload to GPU */
     {
         gl.bindBuffer(gl.ARRAY_BUFFER, buf.skydome_v_pos);
         gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(geo_pos), gl.STATIC_DRAW);
@@ -726,43 +780,6 @@ requestAnimationFrame(function frame(now) {
         // console.log(scroll_length);
     }
 
-    const grid_idx = [];
-    const grid_pos = [];
-    const grid_uv  = [];
-    {
-        const z = -1.5;
-        const corners = [
-            -999, -999, z,  -999,  999, z,   999,  999, z,   999, -999, z, /* Bottom face */
-        ];
-
-        for (let corner_i = 0; corner_i < corners.length; corner_i += 3)
-            corners[corner_i+2] -= 0.025;
-
-        for (let corner_i = 0; corner_i < corners.length; corner_i += 12) {
-            grid_uv.push(
-                255,   0,
-                  0,   0,
-                  0, 255,
-                255, 255,
-            );
-
-            const vbuf_i = grid_pos.length / 3;
-            grid_pos.push(corners[corner_i +  0], corners[corner_i +  1], corners[corner_i +  2]);
-            grid_pos.push(corners[corner_i +  3], corners[corner_i +  4], corners[corner_i +  5]);
-            grid_pos.push(corners[corner_i +  6], corners[corner_i +  7], corners[corner_i +  8]);
-            grid_pos.push(corners[corner_i +  9], corners[corner_i + 10], corners[corner_i + 11]);
-
-            grid_idx.push(
-                vbuf_i + 0,
-                vbuf_i + 1,
-                vbuf_i + 2,
-                vbuf_i + 2,
-                vbuf_i + 3,
-                vbuf_i + 0
-            );
-        }
-    }
-
     {
         /* set up premultiplied alpha */
         gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
@@ -849,18 +866,15 @@ requestAnimationFrame(function frame(now) {
             /* upload/bind geometry */
             {
                 gl.bindBuffer(gl.ARRAY_BUFFER, buf.grid_v_pos);
-                gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(grid_pos), gl.STATIC_DRAW);
                 gl.vertexAttribPointer(shaders.grid.a_pos, 3, gl.FLOAT, false, 0, 0);
 
                 gl.bindBuffer(gl.ARRAY_BUFFER, buf.grid_v_uv);
-                gl.bufferData(gl.ARRAY_BUFFER, new Uint8Array(grid_uv), gl.STATIC_DRAW);
                 gl.vertexAttribPointer(shaders.grid.a_uv, 2, gl.UNSIGNED_BYTE, true, 0, 0);
 
                 gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, buf.grid_i);
-                gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, new Uint16Array(grid_idx), gl.STATIC_DRAW);
             }
 
-            gl.drawElements(gl.TRIANGLES, grid_idx.length, gl.UNSIGNED_SHORT, 0);
+            gl.drawElements(gl.TRIANGLES, buf.grid_i_count, gl.UNSIGNED_SHORT, 0);
         }
 
     }
