@@ -297,9 +297,13 @@ let tex_scroll = gl.createTexture();
 })();
 
 const buf = {
-    geo_v_pos:   gl.createBuffer(),
-    geo_v_color: gl.createBuffer(),
-    geo_i:       gl.createBuffer(),
+    scroll_v_pos:   gl.createBuffer(),
+    scroll_v_color: gl.createBuffer(),
+    scroll_i:       gl.createBuffer(),
+
+    quill_v_pos:   gl.createBuffer(),
+    quill_v_color: gl.createBuffer(),
+    quill_i:       gl.createBuffer(),
 
     skydome_v_pos: gl.createBuffer(),
     skydome_v_uv:  gl.createBuffer(),
@@ -617,7 +621,8 @@ requestAnimationFrame(function frame(now) {
         }
     }
 
-    { 
+    /* scroll parchment or zoom camera, depending */
+    {
         const vec = [0, 0, 0, 1];
         {
             vec[0] = -1 + (input.mouse_x / window.innerWidth )*2;
@@ -669,10 +674,10 @@ requestAnimationFrame(function frame(now) {
         }
     }
 
-    const geo_idx = [];
-    const geo_pos = [];
-    const geo_uv  = [];
-    
+    /* generate scroll geometry */
+    const scroll_idx = [];
+    const scroll_pos = [];
+    const scroll_uv  = [];
     {
         let scroll_length = 0;
         function line(x0, z0, x1, z1) {
@@ -688,20 +693,20 @@ requestAnimationFrame(function frame(now) {
             ];
 
             for (let corner_i = 0; corner_i < corners.length; corner_i += 12) {
-                geo_uv.push(
+                scroll_uv.push(
                     1.0, scroll_length_b4 / SCROLL_LENGTH_WORLDSPACE,
                       0, scroll_length_b4 / SCROLL_LENGTH_WORLDSPACE,
                       0, scroll_length    / SCROLL_LENGTH_WORLDSPACE,
                     1.0, scroll_length    / SCROLL_LENGTH_WORLDSPACE
                 )
 
-                const vbuf_i = geo_pos.length / 3;
-                geo_pos.push(corners[corner_i +  0], corners[corner_i +  1], corners[corner_i +  2]);
-                geo_pos.push(corners[corner_i +  3], corners[corner_i +  4], corners[corner_i +  5]);
-                geo_pos.push(corners[corner_i +  6], corners[corner_i +  7], corners[corner_i +  8]);
-                geo_pos.push(corners[corner_i +  9], corners[corner_i + 10], corners[corner_i + 11]);
+                const vbuf_i = scroll_pos.length / 3;
+                scroll_pos.push(corners[corner_i +  0], corners[corner_i +  1], corners[corner_i +  2]);
+                scroll_pos.push(corners[corner_i +  3], corners[corner_i +  4], corners[corner_i +  5]);
+                scroll_pos.push(corners[corner_i +  6], corners[corner_i +  7], corners[corner_i +  8]);
+                scroll_pos.push(corners[corner_i +  9], corners[corner_i + 10], corners[corner_i + 11]);
 
-                geo_idx.push(
+                scroll_idx.push(
                   vbuf_i + 0,
                   vbuf_i + 1,
                   vbuf_i + 2,
@@ -825,6 +830,73 @@ requestAnimationFrame(function frame(now) {
         // console.log(scroll_length);
     }
 
+    /* generate quill geometry */
+    const quill_idx = [];
+    const quill_pos = [];
+    const quill_uv  = [];
+    {
+        const corners = [
+            -1, -1,  1,   1, -1,  1,   1,  1,  1,  -1,  1,  1, /* Top face    */
+            -1, -1, -1,  -1,  1, -1,   1,  1, -1,   1, -1, -1, /* Bottom face */
+
+            -1,  1, -1,  -1,  1,  1,   1,  1,  1,   1,  1, -1, /* Front face  */
+            -1, -1, -1,   1, -1, -1,   1, -1,  1,  -1, -1,  1, /* Back face   */
+
+             1, -1, -1,   1,  1, -1,   1,  1,  1,   1, -1,  1, /* Right face  */
+            -1, -1, -1,  -1, -1,  1,  -1,  1,  1,  -1,  1, -1, /* Left face   */
+        ];
+
+        function push_transformed_cube(mat) {
+            for (let corner_i = 0; corner_i < corners.length; corner_i += 12) {
+                quill_uv.push(
+                    255,   0,
+                      0,   0,
+                      0, 255,
+                    255, 255
+                );
+
+                const vbuf_i = quill_pos.length / 3;
+                let p = [0, 0, 0, 1];
+                for (let i = 0; i < 12; i += 3) {
+                    mat4_transform_vec4_xyz(
+                        p,
+                        corners[corner_i + i + 0],
+                        corners[corner_i + i + 1],
+                        corners[corner_i + i + 2],
+                        1.0,
+                        mat
+                    );
+                    quill_pos.push(p[0], p[1], p[2]);
+                }
+
+                quill_idx.push(
+                  vbuf_i + 0,
+                  vbuf_i + 1,
+                  vbuf_i + 2,
+                  vbuf_i + 2,
+                  vbuf_i + 3,
+                  vbuf_i + 0
+                );
+            }
+        }
+
+        push_transformed_cube(
+            mat4_mul(
+                mat4_create(),
+                mat4_from_translation(mat4_create(), [0.0, 0.2, 0.0]),
+                mat4_from_scaling(mat4_create(), 0.05, 0.15, 0.01)
+            )
+        );
+        push_transformed_cube(
+            mat4_mul(
+                mat4_create(),
+                mat4_from_translation(mat4_create(), [0.0, 0.2, 0.0]),
+                mat4_from_scaling(mat4_create(), 0.03, 0.17, 0.01)
+            )
+        );
+        push_transformed_cube(mat4_from_scaling(scratch, 0.005, 0.10, 0.005));
+    }
+
     {
         /* set up premultiplied alpha */
         gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
@@ -867,7 +939,7 @@ requestAnimationFrame(function frame(now) {
             gl.drawElements(gl.TRIANGLES, buf.skydome_i_count, gl.UNSIGNED_SHORT, 0);
         }
 
-        /* geo pass */
+        /* scroll pass */
         {
             gl.useProgram(shaders.geo.program);
             gl.enableVertexAttribArray(shaders.geo.a_pos);
@@ -885,19 +957,52 @@ requestAnimationFrame(function frame(now) {
 
             /* upload/bind geometry */
             {
-                gl.bindBuffer(gl.ARRAY_BUFFER, buf.geo_v_pos);
-                gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(geo_pos), gl.STATIC_DRAW);
+                gl.bindBuffer(gl.ARRAY_BUFFER, buf.scroll_v_pos);
+                gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(scroll_pos), gl.STATIC_DRAW);
                 gl.vertexAttribPointer(shaders.geo.a_pos, 3, gl.FLOAT, false, 0, 0);
 
-                gl.bindBuffer(gl.ARRAY_BUFFER, buf.geo_v_color);
-                gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(geo_uv), gl.STATIC_DRAW);
+                gl.bindBuffer(gl.ARRAY_BUFFER, buf.scroll_v_color);
+                gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(scroll_uv), gl.STATIC_DRAW);
                 gl.vertexAttribPointer(shaders.geo.a_uv, 2, gl.FLOAT, true, 0, 0);
 
-                gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, buf.geo_i);
-                gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, new Uint16Array(geo_idx), gl.STATIC_DRAW);
+                gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, buf.scroll_i);
+                gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, new Uint16Array(scroll_idx), gl.STATIC_DRAW);
             }
 
-            gl.drawElements(gl.TRIANGLES, geo_idx.length, gl.UNSIGNED_SHORT, 0);
+            gl.drawElements(gl.TRIANGLES, scroll_idx.length, gl.UNSIGNED_SHORT, 0);
+        }
+
+        /* quill pass */
+        {
+            gl.useProgram(shaders.geo.program);
+            gl.enableVertexAttribArray(shaders.geo.a_pos);
+            gl.enableVertexAttribArray(shaders.geo.a_uv);
+
+            gl.uniformMatrix4fv(shaders.geo.u_matrix, false, u_vp);
+            gl.uniform1f(shaders.geo.u_color_mask, 1.0);
+
+            /* upload/bind texture */
+            {
+                gl.activeTexture(gl.TEXTURE0);
+                gl.bindTexture(gl.TEXTURE_2D, tex_skydome);
+                gl.uniform1i(shaders.geo.u_texture, 0);
+            }
+
+            /* upload/bind geometry */
+            {
+                gl.bindBuffer(gl.ARRAY_BUFFER, buf.quill_v_pos);
+                gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(quill_pos), gl.STATIC_DRAW);
+                gl.vertexAttribPointer(shaders.geo.a_pos, 3, gl.FLOAT, false, 0, 0);
+
+                gl.bindBuffer(gl.ARRAY_BUFFER, buf.quill_v_color);
+                gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(quill_uv), gl.STATIC_DRAW);
+                gl.vertexAttribPointer(shaders.geo.a_uv, 2, gl.FLOAT, true, 0, 0);
+
+                gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, buf.quill_i);
+                gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, new Uint16Array(quill_idx), gl.STATIC_DRAW);
+            }
+
+            gl.drawElements(gl.TRIANGLES, quill_idx.length, gl.UNSIGNED_SHORT, 0);
         }
 
         /* grid pass */
@@ -1096,18 +1201,18 @@ function mat4_from_z_rotation(out, rad) {
     return out;
 }
 
-function mat4_from_scaling(out, f) {
-    out[0] = f;
+function mat4_from_scaling(out, x, y=x, z=x) {
+    out[0] = x;
     out[1] = 0;
     out[2] = 0;
     out[3] = 0;
     out[4] = 0;
-    out[5] = f;
+    out[5] = y;
     out[6] = 0;
     out[7] = 0;
     out[8] = 0;
     out[9] = 0;
-    out[10] = f;
+    out[10] = z;
     out[11] = 0;
     out[12] = 0;
     out[13] = 0;
@@ -1138,6 +1243,14 @@ function mat4_from_translation(out, v) {
 
 function mat4_transform_vec4(out, a, m) {
     let x = a[0], y = a[1], z = a[2], w = a[3];
+    out[0] = m[0] * x + m[4] * y + m[8] * z + m[12] * w;
+    out[1] = m[1] * x + m[5] * y + m[9] * z + m[13] * w;
+    out[2] = m[2] * x + m[6] * y + m[10] * z + m[14] * w;
+    out[3] = m[3] * x + m[7] * y + m[11] * z + m[15] * w;
+    return out;
+}
+
+function mat4_transform_vec4_xyz(out, x, y, z, w, m) {
     out[0] = m[0] * x + m[4] * y + m[8] * z + m[12] * w;
     out[1] = m[1] * x + m[5] * y + m[9] * z + m[13] * w;
     out[2] = m[2] * x + m[6] * y + m[10] * z + m[14] * w;
