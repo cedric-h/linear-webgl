@@ -458,9 +458,12 @@ window.onmousedown = ev => {
     if (ev.button == 2) input.rmb_down = true;
 };
 window.onmousemove = ev => {
-    input.dampedEvent.button    = ev.button;
-    input.dampedEvent.movementX = ev.movementX;
-    input.dampedEvent.movementY = ev.movementY;
+    input.dampedEvent.button = input.rmb_down ? 2 : 0;
+
+    if (input.lmb_down || input.rmb_down) {
+        input.dampedEvent.movementX += ev.movementX;
+        input.dampedEvent.movementY += ev.movementY;
+    }
 
     input.mouse_x = ev.offsetX;
     input.mouse_y = ev.offsetY;
@@ -486,7 +489,7 @@ requestAnimationFrame(function frame(now) {
      * because we don't get input events at 60fps. so instead, we apply the changes every frame
      * and simply "damp them" so that they get weaker every frame.
      *
-     * (this should probably use delta time rather than simply *= 0.8) */
+     * one way this could be improved: fix how movement immediately stops when you release the mouse */
     {
         const ev = input.dampedEvent;
 
@@ -494,12 +497,12 @@ requestAnimationFrame(function frame(now) {
          * you're doing finer-detailed work and want more precise movements. */
         const zoom_fudge = Math.sqrt(input.zoom/10.0)*2.0;
 
-        if (input.lmb_down) {
-            input.pitch -= ev.movementX * 0.0035 * zoom_fudge;
-            input.yaw   -= ev.movementY * 0.0035 * zoom_fudge;
+        if (ev.button == 0) {
+            input.pitch -= ev.movementX * 0.0005 * zoom_fudge;
+            input.yaw   -= ev.movementY * 0.0005 * zoom_fudge;
         }
-        if (input.rmb_down) {
-            const unit = [0, -ev.movementX*0.0075*zoom_fudge, ev.movementY*0.0075*zoom_fudge, 1];
+        if (ev.button == 2) {
+            const unit = [0, -ev.movementX*0.00075*zoom_fudge, ev.movementY*0.00075*zoom_fudge, 1];
             {
                 const view    = mat4_create();
                 const scratch = mat4_create();
@@ -518,9 +521,8 @@ requestAnimationFrame(function frame(now) {
             input.cam_pivot_z += unit[2];
         }
 
-        ev.button    *= 0.8;
-        ev.movementX *= 0.8;
-        ev.movementY *= 0.8;
+        ev.movementX *= Math.pow(1 - 0.17, 60*deltaTime);
+        ev.movementY *= Math.pow(1 - 0.17, 60*deltaTime);
     }
 
     const ORTHO = false;
@@ -619,7 +621,7 @@ requestAnimationFrame(function frame(now) {
             const t = Math.cbrt(Math.abs(input.scroll)) * Math.sign(input.scroll);
 
             input.zoom += 0.005*t*input.zoom;
-            input.scroll *= Math.pow(1 - 0.95, 60*deltaTime);
+            input.scroll *= Math.pow(1 - 0.5, 60*deltaTime);
             input.zoom = Math.min(20, input.zoom);
         }
     }
