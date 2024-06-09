@@ -447,34 +447,76 @@ let input = {
     lmb_down: false,
     rmb_down: false,
 }
-window.onwheel = e => {
-    if (input.mouse_down) return;
-    input.scroll += e.deltaY;
-};
-window.onmousedown = ev => {
-    ev.preventDefault();
 
-    if (ev.button == 0) input.lmb_down = true;
-    if (ev.button == 2) input.rmb_down = true;
-};
-window.onmousemove = ev => {
-    input.dampedEvent.button = input.rmb_down ? 2 : 0;
+{
+    const opts = { passive: false };
 
-    if (input.lmb_down || input.rmb_down) {
-        input.dampedEvent.movementX += ev.movementX;
-        input.dampedEvent.movementY += ev.movementY;
-    }
+    window.addEventListener('wheel', e => {
+        e.preventDefault();
 
-    input.mouse_x = ev.offsetX;
-    input.mouse_y = ev.offsetY;
-};
-window.oncontextmenu = ev => ev.preventDefault();
-window.onmouseup = ev => {
-    ev.preventDefault();
+        if (input.mouse_down) return;
+        input.scroll += e.deltaY;
+    }, opts);
+    window.addEventListener('mousedown', ev => {
+        ev.preventDefault();
 
-    if (ev.button == 0) input.lmb_down = false;
-    if (ev.button == 2) input.rmb_down = false;
-};
+        if (ev.button == 0) input.lmb_down = true;
+        if (ev.button == 2) input.rmb_down = true;
+    }, opts);
+    window.addEventListener('mousemove', ev => {
+        ev.preventDefault();
+
+        input.dampedEvent.button = input.rmb_down ? 2 : 0;
+
+        if (input.lmb_down || input.rmb_down) {
+            input.dampedEvent.movementX += ev.movementX;
+            input.dampedEvent.movementY += ev.movementY;
+        }
+
+        input.mouse_x = ev.offsetX;
+        input.mouse_y = ev.offsetY;
+    }, opts);
+    window.addEventListener("contextmenu", ev => {
+        ev.preventDefault();
+    }, opts);
+    window.addEventListener('mouseup', ev => {
+        ev.preventDefault();
+
+        if (ev.button == 0) input.lmb_down = false;
+        if (ev.button == 2) input.rmb_down = false;
+    }, opts);
+}
+
+/* touch */
+{
+    const opts = { passive: false };
+
+    let touch_x = 0;
+    let touch_y = 0;
+    window.addEventListener("touchstart", ev => {
+        ev.preventDefault();
+
+        touch_x = ev.changedTouches[0].clientX;
+        touch_y = ev.changedTouches[0].clientY;
+
+        input.lmb_down = true;
+    }, opts);
+
+    window.addEventListener("touchmove", ev => {
+        ev.preventDefault();
+        input.dampedEvent.button = 0;
+
+        input.dampedEvent.movementX += ev.changedTouches[0].clientX - touch_x;
+        input.dampedEvent.movementY += ev.changedTouches[0].clientY - touch_y;
+        touch_x = ev.changedTouches[0].clientX;
+        touch_y = ev.changedTouches[0].clientY;
+    }, opts);
+
+    window.addEventListener("touchend", ev => {
+        ev.preventDefault();
+        input.lmb_down = false;
+    }, opts);
+}
 
 let then = 0;
 let deltaTime = 0;
@@ -500,6 +542,7 @@ requestAnimationFrame(function frame(now) {
         if (ev.button == 0) {
             input.pitch -= ev.movementX * 0.0005 * zoom_fudge;
             input.yaw   -= ev.movementY * 0.0005 * zoom_fudge;
+            input.yaw = Math.max(-Math.PI*0.5 + 0.01, Math.min(Math.PI*0.5 - 0.01, input.yaw));
         }
         if (ev.button == 2) {
             const unit = [0, -ev.movementX*0.00075*zoom_fudge, ev.movementY*0.00075*zoom_fudge, 1];
