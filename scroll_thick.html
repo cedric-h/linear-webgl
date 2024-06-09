@@ -159,6 +159,35 @@ let shaders;
     }
 }
 
+let tex_skydome = gl.createTexture();
+(async () => {
+    const img = new Image();
+    img.src = 'castle_zavelstein_cellar.jpg';
+    await new Promise(res => img.onload = res);
+
+    const canvas = document.createElement("canvas");
+    canvas.width  = img.width;
+    canvas.height = img.height;
+    canvas.getContext("2d").drawImage(img, 0, 0);
+
+    gl.bindTexture(gl.TEXTURE_2D, tex_skydome);
+    gl.texImage2D(
+        /* target         */ gl.TEXTURE_2D,
+        /* level          */ 0,
+        /* internalformat */ gl.RGBA,
+        /* width          */ canvas.width,
+        /* height         */ canvas.height,
+        /* border,        */ 0,
+        /* format,        */ gl.RGBA,
+        /* type,          */ gl.UNSIGNED_BYTE,
+        /* data           */ canvas
+    );
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+})();
+
 const SCROLL_WIDTH = 2000;
 const SCROLL_LENGTH_WORLDSPACE = 7.198429;
 
@@ -179,7 +208,7 @@ let tex_scroll = gl.createTexture();
     canvas.height = SCROLL_WIDTH * (SCROLL_LENGTH_WORLDSPACE / 2.0);
     const ctx = canvas.getContext("2d");
 
-    for (let y = 0; y < canvas.height; y += img.height) ctx.drawImage(img, 0, y);
+    for (let y = -img.height*0.75; y < canvas.height; y += img.height) ctx.drawImage(img, 0, y);
 
     // for (let y = 0; y < canvas.height; y++) {
     //     let t = (0.65 + 0.15*(y / canvas.height));
@@ -270,10 +299,77 @@ const buf = {
     geo_v_color: gl.createBuffer(),
     geo_i:       gl.createBuffer(),
 
+    skydome_v_pos: gl.createBuffer(),
+    skydome_v_uv:  gl.createBuffer(),
+    skydome_i:     gl.createBuffer(),
+    skydome_i_count: 0,
+
     grid_v_pos:  gl.createBuffer(),
     grid_v_uv:   gl.createBuffer(),
     grid_i:      gl.createBuffer(),
 };
+
+/* generate skydome geometry */
+{
+    const geo_idx = [];
+    const geo_pos = [];
+    const geo_uv  = [];
+    {
+        const WIDTH_SEGMENTS  = 1 << 6;
+        const HEIGHT_SEGMENTS = 1 << 5;
+        const RADIUS          = 100;
+
+        const grid = [];
+        let index = 0;
+		for (let iy = 0; iy <= HEIGHT_SEGMENTS; iy++) {
+			const v = iy / HEIGHT_SEGMENTS;
+
+			/* poles */
+			let u_offset = 0;
+			if (iy == 0              ) u_offset =   0.5 / WIDTH_SEGMENTS;
+            if (iy == HEIGHT_SEGMENTS) u_offset = - 0.5 / WIDTH_SEGMENTS;
+
+			for (let ix = 0; ix <= WIDTH_SEGMENTS; ix++) {
+				const u = ix / WIDTH_SEGMENTS;
+
+                geo_uv.push(u + u_offset, 1 - v);
+
+				geo_pos.push(
+                    RADIUS * -Math.cos(u * Math.PI*2) * Math.sin(v * Math.PI),
+                    RADIUS *  Math.sin(u * Math.PI*2) * Math.sin(v * Math.PI),
+                    RADIUS * -Math.cos(v * Math.PI)
+                );
+
+				grid.push(index++);
+			}
+		}
+
+		for (let iy = 0; iy < HEIGHT_SEGMENTS; iy++) {
+			for (let ix = 0; ix < WIDTH_SEGMENTS; ix++) {
+				const a = grid[(iy    )*(WIDTH_SEGMENTS + 1) + ix + 1];
+				const b = grid[(iy    )*(WIDTH_SEGMENTS + 1) + ix    ];
+				const c = grid[(iy + 1)*(WIDTH_SEGMENTS + 1) + ix    ];
+				const d = grid[(iy + 1)*(WIDTH_SEGMENTS + 1) + ix + 1];
+
+				if (iy !== 0                  ) geo_idx.push(a, b, d);
+				if (iy !== HEIGHT_SEGMENTS - 1) geo_idx.push(b, c, d);
+			}
+		}
+    }
+
+    {
+        gl.bindBuffer(gl.ARRAY_BUFFER, buf.skydome_v_pos);
+        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(geo_pos), gl.STATIC_DRAW);
+
+        gl.bindBuffer(gl.ARRAY_BUFFER, buf.skydome_v_uv);
+        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(geo_uv), gl.STATIC_DRAW);
+
+        gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, buf.skydome_i);
+        gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, new Uint16Array(geo_idx), gl.STATIC_DRAW);
+    }
+
+    buf.skydome_i_count = geo_idx.length;
+}
 
 let input = {
     pitch:  Math.PI*0.30,
@@ -286,7 +382,7 @@ let input = {
     cam_pivot_z: -0.15,
 
     scroll_prog: 1.0,
-    zoom:        5,
+    zoom:        7,
     scroll:      0,
 
     mouse_x: 0,
@@ -676,6 +772,35 @@ requestAnimationFrame(function frame(now) {
         gl.clearColor(0, 0, 0, 1);
         gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
 
+        /* skydome pass */
+        {
+            gl.useProgram(shaders.geo.program);
+            gl.enableVertexAttribArray(shaders.geo.a_pos);
+            gl.enableVertexAttribArray(shaders.geo.a_uv);
+
+            gl.uniformMatrix4fv(shaders.geo.u_matrix, false, u_vp);
+
+            /* upload/bind atlas */
+            {
+                gl.activeTexture(gl.TEXTURE0);
+                gl.bindTexture(gl.TEXTURE_2D, tex_skydome);
+                gl.uniform1i(shaders.geo.u_texture, 0);
+            }
+
+            /* upload/bind geometry */
+            {
+                gl.bindBuffer(gl.ARRAY_BUFFER, buf.skydome_v_pos);
+                gl.vertexAttribPointer(shaders.geo.a_pos, 3, gl.FLOAT, false, 0, 0);
+
+                gl.bindBuffer(gl.ARRAY_BUFFER, buf.skydome_v_uv);
+                gl.vertexAttribPointer(shaders.geo.a_uv, 2, gl.FLOAT, true, 0, 0);
+
+                gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, buf.skydome_i);
+            }
+
+            gl.drawElements(gl.TRIANGLES, buf.skydome_i_count, gl.UNSIGNED_SHORT, 0);
+        }
+
         /* geo pass */
         {
             gl.useProgram(shaders.geo.program);
@@ -708,7 +833,7 @@ requestAnimationFrame(function frame(now) {
             gl.drawElements(gl.TRIANGLES, geo_idx.length, gl.UNSIGNED_SHORT, 0);
         }
 
-        /* geo pass */
+        /* grid pass */
         {
             gl.useProgram(shaders.grid.program);
             gl.enableVertexAttribArray(shaders.grid.a_pos);
@@ -732,6 +857,7 @@ requestAnimationFrame(function frame(now) {
 
             gl.drawElements(gl.TRIANGLES, grid_idx.length, gl.UNSIGNED_SHORT, 0);
         }
+
     }
 })
 
