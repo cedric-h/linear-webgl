@@ -14,6 +14,11 @@
     <script>
 const canvas = document.getElementById('glcanvas');
 const gl = canvas.getContext('webgl2', {antialias: true});
+const gl_anisotropy =
+  gl.getExtension("EXT_texture_filter_anisotropic") ||
+  gl.getExtension("MOZ_EXT_texture_filter_anisotropic") ||
+  gl.getExtension("WEBKIT_EXT_texture_filter_anisotropic");
+gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, true);
 if (!gl) { alert('Failed to initialize WebGL'); }
 
 (window.onresize = () => {
@@ -62,6 +67,7 @@ let shaders;
 
         void main() {
             gl_FragColor = texture2D(u_texture, v_uv);
+            if (gl_FragColor.a <= 0.0) discard;
             gl_FragColor.xyz *= u_color_mask;
         }`;
 
@@ -188,6 +194,46 @@ let tex_skydome = gl.createTexture();
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+})();
+
+let tex_quill = gl.createTexture();
+(async () => {
+    const img = new Image();
+    img.src = 'tex_quill.png';
+    await new Promise(res => img.onload = res);
+
+    const canvas = document.createElement("canvas");
+    canvas.width  = img.width  * 1.2;
+    canvas.height = img.height * 1.2;
+    const ctx = canvas.getContext("2d");
+    ctx.save();
+    ctx.translate(canvas.width*0.5, 0);
+    ctx.rotate(Math.PI/2 * 0.5);
+    ctx.drawImage(img, 0, 0);
+    ctx.restore();
+
+    gl.bindTexture(gl.TEXTURE_2D, tex_quill);
+    gl.texImage2D(
+        /* target         */ gl.TEXTURE_2D,
+        /* level          */ 0,
+        /* internalformat */ gl.RGBA,
+        /* width          */ canvas.width,
+        /* height         */ canvas.height,
+        /* border,        */ 0,
+        /* format,        */ gl.RGBA,
+        /* type,          */ gl.UNSIGNED_BYTE,
+        /* data           */ canvas
+    );
+    gl.generateMipmap(gl.TEXTURE_2D);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+
+    if (gl_anisotropy) {
+      const max = gl.getParameter(gl_anisotropy.MAX_TEXTURE_MAX_ANISOTROPY_EXT);
+      gl.texParameterf(gl.TEXTURE_2D, gl_anisotropy.TEXTURE_MAX_ANISOTROPY_EXT, max);
+    }
 })();
 
 const SCROLL_WIDTH = 2000;
@@ -622,8 +668,9 @@ requestAnimationFrame(function frame(now) {
     }
 
     /* scroll parchment or zoom camera, depending */
+    const quill_mouse_pos = [0, 0, 0, 1]; /* in worldspace */
     {
-        const vec = [0, 0, 0, 1];
+        const vec = quill_mouse_pos;
         {
             vec[0] = -1 + (input.mouse_x / window.innerWidth )*2;
             vec[1] = +1 - (input.mouse_y / window.innerHeight)*2;
@@ -835,24 +882,34 @@ requestAnimationFrame(function frame(now) {
     const quill_pos = [];
     const quill_uv  = [];
     {
-        const corners = [
-            -1, -1,  1,   1, -1,  1,   1,  1,  1,  -1,  1,  1, /* Top face    */
-            -1, -1, -1,  -1,  1, -1,   1,  1, -1,   1, -1, -1, /* Bottom face */
+        quill_mouse_pos[0] += 1;
+        quill_mouse_pos[1] += 0.9;
+        quill_mouse_pos[2] += 0.6;
 
-            -1,  1, -1,  -1,  1,  1,   1,  1,  1,   1,  1, -1, /* Front face  */
-            -1, -1, -1,   1, -1, -1,   1, -1,  1,  -1, -1,  1, /* Back face   */
+        const mat = mat4_create();
+        {
+            const t = Math.sin(now*1.5) * 0.2;
+            mat4_mul(mat, mat, mat4_from_x_rotation(mat4_create(), -Math.PI/4 + t    ));
+            mat4_mul(mat, mat, mat4_from_y_rotation(mat4_create(),  Math.PI   + t*0.1));
+        }
 
-             1, -1, -1,   1,  1, -1,   1,  1,  1,   1, -1,  1, /* Right face  */
-            -1, -1, -1,  -1, -1,  1,  -1,  1,  1,  -1,  1, -1, /* Left face   */
-        ];
+        const QUILL_HEIGHT   = 1;
+        const QUILL_SPLIT    = -0.2;
+        const QUILL_SPLIT_UV = 1.0 - (QUILL_SPLIT + 1.0) * 0.5;
+        {
+            const corners = [
+              QUILL_SPLIT, QUILL_HEIGHT, -1,
+              QUILL_SPLIT, QUILL_HEIGHT,  1,
+                        1,          0.0,  1,
+                        1,          0.0, -1, /* Front face  */
+            ];
 
-        function push_transformed_cube(mat) {
             for (let corner_i = 0; corner_i < corners.length; corner_i += 12) {
                 quill_uv.push(
-                    255,   0,
-                      0,   0,
-                      0, 255,
-                    255, 255
+                    1.0, 0.0,
+                    0.0, 0.0,
+                    0.0, QUILL_SPLIT_UV,
+                    1.0, QUILL_SPLIT_UV
                 );
 
                 const vbuf_i = quill_pos.length / 3;
@@ -866,7 +923,11 @@ requestAnimationFrame(function frame(now) {
                         1.0,
                         mat
                     );
-                    quill_pos.push(p[0], p[1], p[2]);
+                    quill_pos.push(
+                        p[0] + quill_mouse_pos[0],
+                        p[1] + quill_mouse_pos[1],
+                        p[2] + quill_mouse_pos[2]
+                    );
                 }
 
                 quill_idx.push(
@@ -880,21 +941,53 @@ requestAnimationFrame(function frame(now) {
             }
         }
 
-        push_transformed_cube(
-            mat4_mul(
-                mat4_create(),
-                mat4_from_translation(mat4_create(), [0.0, 0.2, 0.0]),
-                mat4_from_scaling(mat4_create(), 0.05, 0.15, 0.01)
-            )
-        );
-        push_transformed_cube(
-            mat4_mul(
-                mat4_create(),
-                mat4_from_translation(mat4_create(), [0.0, 0.2, 0.0]),
-                mat4_from_scaling(mat4_create(), 0.03, 0.17, 0.01)
-            )
-        );
-        push_transformed_cube(mat4_from_scaling(scratch, 0.005, 0.10, 0.005));
+        {
+            const corners = [
+                     -1.0+2,          0.0, -1,
+                     -1.0+2,          0.0,  1,
+              QUILL_SPLIT+2, QUILL_HEIGHT,  1,
+              QUILL_SPLIT+2, QUILL_HEIGHT, -1, /* Front face  */
+            ];
+
+            for (let corner_i = 0; corner_i < corners.length; corner_i += 12) {
+                quill_uv.push(
+                    1.0, QUILL_SPLIT_UV,
+                    0.0, QUILL_SPLIT_UV,
+                    0.0, 1.0,
+                    1.0, 1.0
+                );
+
+                const vbuf_i = quill_pos.length / 3;
+                let p = [0, 0, 0, 1];
+                for (let i = 0; i < 12; i += 3) {
+                    mat4_transform_vec4_xyz(
+                        p,
+                        corners[corner_i + i + 0],
+                        corners[corner_i + i + 1],
+                        corners[corner_i + i + 2],
+                        1.0,
+                        mat
+                    );
+                    quill_pos.push(
+                        p[0] + quill_mouse_pos[0],
+                        p[1] + quill_mouse_pos[1],
+                        p[2] + quill_mouse_pos[2]
+                    );
+                }
+
+                quill_idx.push(
+                  vbuf_i + 0,
+                  vbuf_i + 1,
+                  vbuf_i + 2,
+                  vbuf_i + 2,
+                  vbuf_i + 3,
+                  vbuf_i + 0
+                );
+            }
+        }
+
+        // const arr = [...quill_idx.reverse()];
+        // quill_idx.push(...arr);
     }
 
     {
@@ -984,7 +1077,7 @@ requestAnimationFrame(function frame(now) {
             /* upload/bind texture */
             {
                 gl.activeTexture(gl.TEXTURE0);
-                gl.bindTexture(gl.TEXTURE_2D, tex_skydome);
+                gl.bindTexture(gl.TEXTURE_2D, tex_quill);
                 gl.uniform1i(shaders.geo.u_texture, 0);
             }
 
