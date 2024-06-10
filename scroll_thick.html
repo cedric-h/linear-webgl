@@ -882,15 +882,15 @@ requestAnimationFrame(function frame(now) {
     const quill_pos = [];
     const quill_uv  = [];
     {
-        quill_mouse_pos[0] += 1;
-        quill_mouse_pos[1] += 0.9;
-        quill_mouse_pos[2] += 0.6;
+        quill_mouse_pos[0] += 1.08;
+        quill_mouse_pos[1] += 0.72;
+        quill_mouse_pos[2] += 0.72;
 
         const mat = mat4_create();
         {
-            const t = Math.sin(now*1.5) * 0.2;
+            const t = Math.sin(now*1.5) * 0.05;
             mat4_mul(mat, mat, mat4_from_x_rotation(mat4_create(), -Math.PI/4 + t    ));
-            mat4_mul(mat, mat, mat4_from_y_rotation(mat4_create(),  Math.PI   + t*0.1));
+            mat4_mul(mat, mat, mat4_from_y_rotation(mat4_create(),  Math.PI   + t*0.3));
         }
 
         const QUILL_HEIGHT   = 1;
