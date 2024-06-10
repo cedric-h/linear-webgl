@@ -104,7 +104,12 @@ function createProgram(gl, vertexSource, fragmentSource) {
 /* if you're going to use this multiple times in a single program,
  * consider modifying it to not immediately delete all the shaders.
  *
- * or just take the shader compilation hit -- i don't care what you do. */
+ * or just take the shader compilation hit -- i don't care what you do.
+ *
+ * note, if you don't care about supporting Safari, you can generate shadows entirely in canvas
+ * https://developer.mozilla.org/en-US/docs/Web/API/CanvasRenderingContext2D/filter
+ *
+ */
 function shadowForTexture(texture, texture_width, texture_height, texture_pad) {
     /* compile shaders */
     let shaders;

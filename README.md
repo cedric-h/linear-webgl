@@ -134,12 +134,15 @@ I'll fix these eventually, but
 
 I say "high-retina" in almost every demo, where I should say "high-resolution retina" (one brain skip, copy/pasted a million times)
 
-paint.html is the only demo which has a touchscreen rotatable camera, and almost the only demo where the camera doesn't skip if you rotate up too far. (That is just a one-line fix after `yaw =`.) More work is necessary for many demos to make sure they work on mobile.
+paint.html is the only demo which has a touchscreen rotatable camera, and almost the only demo where the camera doesn't skip if you rotate up too far. (That is just a one-line fix after `yaw =`.) More work is necessary for many demos to make sure they work on mobile. EDIT: some issues with the touch controls here, needs a rework. Probably need to completely separate this codepath from mouse controls.
+
+On the topic of camera controls, scroll_thick.html and sphere_texture.html have _much smoother_ camera controls than cube_camera, cube_grid, cube_editor, etc. Also probably some other demos which use that camera code outside of the cube family which I have forgotten.
 
 I say "set up premultiplied alpha," then do `gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_DST_ALPHA)` but the way premultiplied alpha works, the color should be multiplied by ... nothing. `gl.ONE`. It's premultiplied. So I need to audit transparency in a lot of places. Alternatively, I could keep that "premultiplied alpha" blend func, and simply divide `rgb` by `a` in the shader, which may be preferable since premultiplication is lossy. Should note if so though because it's not obvious.
 
 There are some places where things aren't especially "linear" or flat. I do have indirection/object orientation/etc. in some instances. I ought to audit myself to see if I'm doing so tastefully. Or perhaps it simply doesn't matter.
 
+In several .htmls (cube family in particular) `input.released` is commented "true for a frame after up," when it is actually "true for a frame after down." Not as simple as just updating the comment, because `_released` shouldn't be the field name.
 
 # errata - optimization
 Plenty of matrices are allocated that don't need to be.

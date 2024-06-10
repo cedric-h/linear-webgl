@@ -79,7 +79,12 @@ function createProgram(gl, vertexSource, fragmentSource) {
 /* if you're going to use this multiple times in a single program,
  * consider modifying it to not immediately delete all the shaders.
  *
- * or just take the shader compilation hit -- i don't care what you do. */
+ * or just take the shader compilation hit -- i don't care what you do.
+ *
+ * note, if you don't care about supporting Safari, you can generate shadows entirely in canvas
+ * https://developer.mozilla.org/en-US/docs/Web/API/CanvasRenderingContext2D/filter
+ *
+ */
 function shadowForTexture(texture, texture_width, texture_height, texture_pad) {
     /* compile shaders */
     let shaders;
@@ -103,7 +108,7 @@ function shadowForTexture(texture, texture_width, texture_height, texture_pad) {
             varying vec2 v_uv;
 
             uniform sampler2D u_texture;
-            uniform vec2 u_mask;
+            uniform vec4 u_mask;
 
             void main() {
                 gl_FragColor = texture2D(u_texture, v_uv);
@@ -111,8 +116,8 @@ function shadowForTexture(texture, texture_width, texture_height, texture_pad) {
                 /* somehow alpha got overmultiplied, freaky af */
                 // gl_FragColor.xyz /= gl_FragColor.w;
 
-                gl_FragColor.xyz *= u_mask.x;
-                gl_FragColor.w   *= u_mask.y;
+                gl_FragColor.rgb *= u_mask.rgb;
+                gl_FragColor     *= u_mask.a;
             }`;
 
 
@@ -263,7 +268,7 @@ function shadowForTexture(texture, texture_width, texture_height, texture_pad) {
         gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
 
         /* shadow img pass (see color mask) */
-        function imgPass(u_color_mask, u_alpha_mask) {
+        function imgPass(u_mask_r, u_mask_g, u_mask_b, u_alpha_mask) {
             gl.useProgram(shaders.img.program);
             gl.enableVertexAttribArray(shaders.img.a_pos);
             gl.enableVertexAttribArray(shaders.img.a_uv);
@@ -276,7 +281,7 @@ function shadowForTexture(texture, texture_width, texture_height, texture_pad) {
             }
 
             gl.uniformMatrix4fv(shaders.img.u_matrix, false, pMatrix);
-            gl.uniform2f(shaders.img.u_mask, u_color_mask, u_alpha_mask);
+            gl.uniform4f(shaders.img.u_mask, u_mask_r, u_mask_g, u_mask_b, u_alpha_mask);
 
             /* upload/bind geometry */
 
@@ -300,7 +305,7 @@ function shadowForTexture(texture, texture_width, texture_height, texture_pad) {
         gl.enable(gl.BLEND);
 
         //imgPass(0.08, 0.2);
-        imgPass(0, 0.02);
+        imgPass(1, 0, 0, 0.02);
 
         /* blur time */
         {
@@ -336,7 +341,7 @@ function shadowForTexture(texture, texture_width, texture_height, texture_pad) {
 
         gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
         gl.enable(gl.BLEND);
-        imgPass(1, 1);
+        imgPass(0, 1, 1, 1);
       }
 
       gl.deleteBuffer(img_vbuf_pos);
@@ -468,8 +473,11 @@ let input = {
     zoom:   10,
     scroll:  0,
 
-    lmb_down: false,
-    rmb_down: false,
+    lmb_down:    false,
+    lmb_clicked: false, /* true for a frame after down */
+    rmb_down:    false,
+    mouse_x: 0,
+    mouse_y: 0,
 }
 let wheelTimeout;
 window.onwheel = e => {
@@ -482,13 +490,17 @@ window.onwheel = e => {
 window.onmousedown = ev => {
     ev.preventDefault();
 
-    if (ev.button == 0) input.lmb_down = true;
+    if (ev.button == 0) input.lmb_down = input.lmb_clicked = true;
     if (ev.button == 2) input.rmb_down = true;
+    input.mouse_x = ev.clientX*window.devicePixelRatio;
+    input.mouse_y = ev.clientY*window.devicePixelRatio;
 };
 window.onmousemove = ev => {
     input.dampedEvent.button    = ev.button;
     input.dampedEvent.movementX = ev.movementX;
     input.dampedEvent.movementY = ev.movementY;
+    input.mouse_x = ev.clientX*window.devicePixelRatio;
+    input.mouse_y = ev.clientY*window.devicePixelRatio;
 };
 window.oncontextmenu = ev => ev.preventDefault();
 window.onmouseup = ev => {
@@ -496,6 +508,8 @@ window.onmouseup = ev => {
 
     if (ev.button == 0) input.lmb_down = false;
     if (ev.button == 2) input.rmb_down = false;
+    input.mouse_x = ev.clientX*window.devicePixelRatio;
+    input.mouse_y = ev.clientY*window.devicePixelRatio;
 };
 
 
@@ -516,7 +530,8 @@ const SDF_FONT_SIZE = 48;
 class SensorRenderer {
     constructor(gl) {
         this.dynamic_scale = 32;
-        this.color = [1.00, 0.64, 0.00, 1];
+        this.color0 = [1.00, 0.64, 0.00, 1];
+        this.color1 = [1.00, 1.00, 1.00, 1];
 
         this.z = -0.2;
 
@@ -538,20 +553,21 @@ class SensorRenderer {
 
         /* compile shaders */
         {
-            const vs_sensor = `
-                attribute vec3 a_pos;
-                attribute vec2 a_texcoord;
+            const vs_sensor = `#version 300 es
+
+                in vec3 a_pos;
+                in vec2 a_texcoord;
 
                 uniform mat4 u_matrix;
                 uniform vec2 u_texsize;
 
-                varying vec2 v_texcoord;
-                varying float v_variant;
+                out vec2 v_texcoord;
+                flat out int v_variant;
 
                 void main() {
-                    v_variant = a_pos.z;
+                    v_variant = int(a_pos.z);
 
-                    if (v_variant == ${SUBSHADER_TEXT.toFixed(1)}) {
+                    if ((v_variant&1) == ${SUBSHADER_TEXT}) {
                         gl_Position = u_matrix * vec4(a_pos.xy, 0, 1);
                         v_texcoord = a_texcoord / u_texsize;
                     } else {
@@ -560,25 +576,37 @@ class SensorRenderer {
                     }
                 }`;
 
-            const fs_sensor = `
+            const fs_sensor = `#version 300 es
+
                 precision mediump float;
 
                 uniform sampler2D u_tex_font;
                 uniform sampler2D u_tex_atlas;
-                uniform vec4 u_color;
+                uniform vec4 u_color0;
+                uniform vec4 u_color1;
                 uniform float u_buffer;
                 uniform float u_gamma;
 
-                varying vec2 v_texcoord;
-                varying float v_variant;
+                in vec2 v_texcoord;
+                flat in int v_variant;
+
+                out vec4 frag_color;
 
                 void main() {
-                    if (v_variant == ${SUBSHADER_TEXT.toFixed(1)}) {
-                        float dist = texture2D(u_tex_font, v_texcoord).r;
+                    if ((v_variant&1) == ${SUBSHADER_TEXT}) {
+                        /* TEXT's colors are flipped vs. IMAGE */
+                        vec4 color = ((v_variant&2) == 2) ? u_color1 : u_color0;
+
+                        float dist = texture(u_tex_font, v_texcoord).r;
                         float alpha = smoothstep(u_buffer - u_gamma, u_buffer + u_gamma, dist);
-                        gl_FragColor = vec4(u_color.rgb, u_color.a) * alpha;
+                        frag_color = color * alpha;
                     } else {
-                        gl_FragColor = texture2D(u_tex_atlas, v_texcoord);
+                        vec4 major_color = ((v_variant&2) == 2) ? u_color0 : u_color1;
+                        vec4 minor_color = ((v_variant&2) == 2) ? u_color1 : u_color0;
+                        vec4 sampled = texture(u_tex_atlas, v_texcoord);
+                        frag_color = vec4(0.0, 0.0, 0.0, sampled.r);
+                        frag_color += major_color * sampled.g;
+                        frag_color += minor_color * sampled.b;
                     }
                 }`;
 
@@ -602,7 +630,7 @@ class SensorRenderer {
             const CORNER_RADIUS = (size_y - TRI_HEIGHT)*0.5;
 
             {
-                ctx.fillStyle = "white";
+                ctx.fillStyle = "rgb(255, 255, 0)";
 
                 const q = Math.PI*0.5;
                 {
@@ -636,10 +664,8 @@ class SensorRenderer {
             {
                 ctx.beginPath();
                 ctx.arc(180, 200, 110, 0, Math.PI*2);
-                ctx.fillStyle = "pink";
+                ctx.fillStyle = "rgb(0, 0, 255)";
                 ctx.fill();
-                ctx.font = '130px sans-serif';
-                ctx.fillText('🌡️', 115, 260);
             }
 
             gl.bindTexture(gl.TEXTURE_2D, this.image_atlas);
@@ -927,7 +953,7 @@ class SensorRenderer {
         })
     }
 
-    drawText(str, x, y, align) {
+    drawText(str, x, y, align, highlight) {
         const { sdfs } = this;
 
         const fontsize = SDF_FONT_SIZE;
@@ -949,12 +975,15 @@ class SensorRenderer {
             const advance = sdfs[str[i]].glyph.glyphAdvance;
             const by = sdfs[str[i]].glyph.glyphTop - (fontsize / 2 + buf); // bearing y
 
+            let subshader = SUBSHADER_TEXT;
+            subshader |= (highlight << 1);
+
             const vbuf_i = this.text_vbuf_pos.length / 3;
             this.text_vbuf_pos.push(
-                pen.x + ((bx - buf) * scale)        , pen.y - by * scale           , SUBSHADER_TEXT,
-                pen.x + ((bx - buf + width) * scale), pen.y - by * scale           , SUBSHADER_TEXT,
-                pen.x + ((bx - buf) * scale)        , pen.y + (height - by) * scale, SUBSHADER_TEXT,
-                pen.x + ((bx - buf + width) * scale), pen.y + (height - by) * scale, SUBSHADER_TEXT 
+                pen.x + ((bx - buf) * scale)        , pen.y - by * scale           , subshader,
+                pen.x + ((bx - buf + width) * scale), pen.y - by * scale           , subshader,
+                pen.x + ((bx - buf) * scale)        , pen.y + (height - by) * scale, subshader,
+                pen.x + ((bx - buf + width) * scale), pen.y + (height - by) * scale, subshader 
             );
 
             this.text_vbuf_uv.push(
@@ -980,19 +1009,25 @@ class SensorRenderer {
 
     frame(gl, eye, mvp) {
 
-        /* bubble width, height */
-        const size_y = ATLAS_SCREEN_SIZE_Y;
-        const size_x = size_y * ATLAS_ASPECT_RATIO;
-
         const p = [0, 0, 0, 1];
 
-        sensor_positions.sort((a, b) => {
+        const cluster_indices = sensor_clusters.map((_, i) => i);
+        cluster_indices.sort((a, b) => {
             const dist = p => Math.sqrt((p[0] - eye[0])*(p[0] - eye[0]) +
                                         (p[1] - eye[1])*(p[1] - eye[1]) +
                                         (p[2] - eye[2])*(p[2] - eye[2]));
-            return dist(b) - dist(a);
+            return dist(sensor_clusters[b].position) - dist(sensor_clusters[a].position);
         });
-        for (const cluster of sensor_clusters) {
+
+        /* bubble width, height */
+        const base_size_y = ATLAS_SCREEN_SIZE_Y;
+        const base_size_x = base_size_y * ATLAS_ASPECT_RATIO;
+
+        /* in the event that the mouse is clicked while hovering over
+         * multiple sensor, this variable ensures only the topmost one is clicked. */
+        let cluster_selected = false;
+        for (const cluster_i of cluster_indices) {
+            const cluster = sensor_clusters[cluster_i];
             const sensor_pos = cluster.position;
 
             /* position on screen */
@@ -1001,7 +1036,42 @@ class SensorRenderer {
             p[0] = (0 + (p[0]/w*0.5 + 0.5))*gl.canvas.width;
             p[1] = (1 - (p[1]/w*0.5 + 0.5))*gl.canvas.height;
 
+            let scale = 1.0;
+            let size_x = base_size_x;
+            let size_y = base_size_y;
+
+            /* scale up if hovered */
             {
+                const hsize_x = size_x * 0.5;
+                const hsize_y = size_y * 0.5;
+
+                let hovered = true;
+                hovered &&= Math.abs(input.mouse_x - p[0]          ) < hsize_x;
+                hovered &&= Math.abs(input.mouse_y - p[1] + hsize_y) < hsize_y;
+
+                if (hovered) {
+                    scale = 1.2;
+                    size_x = base_size_x*scale;
+                    size_y = base_size_y*scale;
+                }
+
+                if (hovered && input.lmb_down && !cluster_selected) {
+                    cluster_selected = true;
+                    selected_cluster_idx = cluster_i;
+                }
+            }
+
+            const highlight = selected_cluster_idx == cluster_i;
+            if (highlight) {
+                scale = 1.2;
+                size_x = base_size_x*scale;
+                size_y = base_size_y*scale;
+            }
+
+            {
+                let subshader = SUBSHADER_IMAGE;
+                subshader |= (highlight << 1);
+
                 const pad = (ATLAS_SHADOW_PAD / ATLAS_RESOLUTION) * ATLAS_SCREEN_SIZE_Y;
                 const min_x = p[0] + -size_x*0.5 - pad;
                 const min_y = p[1] -  size_y     - pad;
@@ -1009,10 +1079,10 @@ class SensorRenderer {
                 const max_y = p[1]               + pad;
 
                 const vbuf_i = this.text_vbuf_pos.length / 3;
-                this.text_vbuf_pos.push(max_x, min_y, SUBSHADER_IMAGE);
-                this.text_vbuf_pos.push(min_x, min_y, SUBSHADER_IMAGE);
-                this.text_vbuf_pos.push(min_x, max_y, SUBSHADER_IMAGE);
-                this.text_vbuf_pos.push(max_x, max_y, SUBSHADER_IMAGE);
+                this.text_vbuf_pos.push(max_x, min_y, subshader);
+                this.text_vbuf_pos.push(min_x, min_y, subshader);
+                this.text_vbuf_pos.push(min_x, max_y, subshader);
+                this.text_vbuf_pos.push(max_x, max_y, subshader);
 
                 this.text_vbuf_uv.push(1, 0, 0, 0, 0, 1, 1, 1);
 
@@ -1025,9 +1095,14 @@ class SensorRenderer {
 
             /* put it in pMatrix space */
             {
-                p[0] -= size_x * 0.125;
-                p[1] -= size_y * 0.4 + this.dynamic_scale;
-                this.drawText('74.2°F', p[0], p[1], 0);
+                const scale_b4 = this.dynamic_scale;
+                this.dynamic_scale *= scale;
+                {
+                    p[0] -= size_x * 0.125;
+                    p[1] -= size_y * 0.4 + this.dynamic_scale;
+                    this.drawText('74.2°F', p[0], p[1], ALIGN_LEFT, highlight);
+                }
+                this.dynamic_scale = scale_b4;
             }
         }
 
@@ -1048,7 +1123,8 @@ class SensorRenderer {
         {
             const gamma = 2;
             gl.uniformMatrix4fv(this.shaders.sensor.u_matrix, false, pMatrix);
-            gl.uniform4fv(this.shaders.sensor.u_color, this.color);
+            gl.uniform4fv(this.shaders.sensor.u_color0, this.color0);
+            gl.uniform4fv(this.shaders.sensor.u_color1, this.color1);
             gl.uniform1f(this.shaders.sensor.u_buffer, 0.75);
             gl.uniform1f(this.shaders.sensor.u_gamma, gamma * 1.4142 / this.dynamic_scale);
 
@@ -1082,11 +1158,12 @@ class SensorRenderer {
         }
 
         this.clear();
+        input.lmb_clicked = false;
     }
 }
 
 
-let building_rooms, sensor_positions, sensor_clusters;
+let building_rooms, sensor_positions, sensor_clusters, selected_cluster_idx = -11;
 {
     const e = 0.01;
     building_rooms = [
@@ -1165,7 +1242,6 @@ let building_rooms, sensor_positions, sensor_clusters;
         }
     }
 
-    console.log(clustered);
     sensor_clusters = [];
     for (const cluster of clustered) {
 
