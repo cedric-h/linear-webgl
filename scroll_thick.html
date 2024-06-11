@@ -426,40 +426,40 @@ const buf = {
 
         const grid = [];
         let index = 0;
-		for (let iy = 0; iy <= HEIGHT_SEGMENTS; iy++) {
-			const v = iy / HEIGHT_SEGMENTS;
+        for (let iy = 0; iy <= HEIGHT_SEGMENTS; iy++) {
+            const v = iy / HEIGHT_SEGMENTS;
 
-			/* poles */
-			let u_offset = 0;
-			if (iy == 0              ) u_offset =   0.5 / WIDTH_SEGMENTS;
+            /* poles */
+            let u_offset = 0;
+            if (iy == 0              ) u_offset =   0.5 / WIDTH_SEGMENTS;
             if (iy == HEIGHT_SEGMENTS) u_offset = - 0.5 / WIDTH_SEGMENTS;
 
-			for (let ix = 0; ix <= WIDTH_SEGMENTS; ix++) {
-				const u = ix / WIDTH_SEGMENTS;
+            for (let ix = 0; ix <= WIDTH_SEGMENTS; ix++) {
+                const u = ix / WIDTH_SEGMENTS;
 
                 geo_uv.push(u + u_offset, 1 - v);
 
-				geo_pos.push(
+                geo_pos.push(
                     RADIUS * -Math.cos(u * Math.PI*2) * Math.sin(v * Math.PI),
                     RADIUS *  Math.sin(u * Math.PI*2) * Math.sin(v * Math.PI),
                     RADIUS * -Math.cos(v * Math.PI)
                 );
 
-				grid.push(index++);
-			}
-		}
+                grid.push(index++);
+            }
+        }
 
-		for (let iy = 0; iy < HEIGHT_SEGMENTS; iy++) {
-			for (let ix = 0; ix < WIDTH_SEGMENTS; ix++) {
-				const a = grid[(iy    )*(WIDTH_SEGMENTS + 1) + ix + 1];
-				const b = grid[(iy    )*(WIDTH_SEGMENTS + 1) + ix    ];
-				const c = grid[(iy + 1)*(WIDTH_SEGMENTS + 1) + ix    ];
-				const d = grid[(iy + 1)*(WIDTH_SEGMENTS + 1) + ix + 1];
+        for (let iy = 0; iy < HEIGHT_SEGMENTS; iy++) {
+            for (let ix = 0; ix < WIDTH_SEGMENTS; ix++) {
+                const a = grid[(iy    )*(WIDTH_SEGMENTS + 1) + ix + 1];
+                const b = grid[(iy    )*(WIDTH_SEGMENTS + 1) + ix    ];
+                const c = grid[(iy + 1)*(WIDTH_SEGMENTS + 1) + ix    ];
+                const d = grid[(iy + 1)*(WIDTH_SEGMENTS + 1) + ix + 1];
 
-				if (iy !== 0                  ) geo_idx.push(a, b, d);
-				if (iy !== HEIGHT_SEGMENTS - 1) geo_idx.push(b, c, d);
-			}
-		}
+                if (iy !== 0                  ) geo_idx.push(a, b, d);
+                if (iy !== HEIGHT_SEGMENTS - 1) geo_idx.push(b, c, d);
+            }
+        }
     }
 
     /* upload to GPU */
