@@ -272,8 +272,8 @@ let input = {
             input.dampedEvent.movementY += ev.movementY;
         }
 
-        input.mouse_x = ev.offsetX;
-        input.mouse_y = ev.offsetY;
+        input.mouse_x = ev.offsetX*window.devicePixelRatio;
+        input.mouse_y = ev.offsetY*window.devicePixelRatio;
     }, opts);
     window.addEventListener("contextmenu", ev => {
         ev.preventDefault();
@@ -358,8 +358,7 @@ requestAnimationFrame(function frame(now) {
     /* we could apply these changes directly in the event handlers, but the result feels "low fps"
      * because we don't get input events at 60fps. so instead, we apply the changes every frame
      * and simply "damp them" so that they get weaker every frame.
-     *
-     * one way this could be improved: fix how movement immediately stops when you release the mouse */
+     */
     {
         const ev = input.dampedEvent;
 
