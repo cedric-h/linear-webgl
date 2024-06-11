@@ -347,12 +347,11 @@ let atlas = gl.createTexture();
 })();
 
 let then = 0;
-let deltaTime = 0;
 requestAnimationFrame(function frame(now) {
     requestAnimationFrame(frame);
 
     now *= 0.001;
-    deltaTime = now - then;
+    const deltaTime = now - then;
     then = now;
 
     /* we could apply these changes directly in the event handlers, but the result feels "low fps"
