@@ -256,31 +256,14 @@ let tex_scroll = gl.createTexture();
     canvas.height = SCROLL_WIDTH * (SCROLL_LENGTH_WORLDSPACE / 2.0);
     const ctx = canvas.getContext("2d");
 
-    for (let y = -img.height*0.75; y < canvas.height; y += img.height) ctx.drawImage(img, 0, y);
-
-    // for (let y = 0; y < canvas.height; y++) {
-    //     let t = (0.65 + 0.15*(y / canvas.height));
-    //     t += 0.04*Math.sin((y / canvas.height) * Math.PI * 2 * 10);
-    //     t += 0.01*Math.sin((y / canvas.height) * Math.PI * 2 *  5);
-    //     const r = Math.floor(255 * (t * 0.95));
-    //     const g = Math.floor(255 * (t * 0.85));
-    //     const b = Math.floor(255 * (t * 0.70));
-    //     ctx.fillStyle = "rgb(" + r + "," + g + "," + b + ")";
-    //     ctx.fillRect(0, y, canvas.width, 1);
-    // }
-
-    // const passes = [
-    //     [ 5.69, 6.87 ],
-    //     [ 0.22, 1.18 ],
-    //     [ 0.78, 9.18 ],
-    //     [ 8.24, 7.24 ],
-    //     [ 6.63, 3.71 ],
-    //     [ 9.96, 6.31 ],
-    //     [ 9.28, 8.14 ],
-    //     [ 8.22, 4.01 ],
-    //     [ 0.91, 3.92 ],
-    //     [ 3.49, 8.31 ]
-    // ]
+    for (let i = 0, y = 0; y < canvas.height; y += img.height, i++) {
+        ctx.save();
+        ctx.translate(img.width*0.5, img.height*0.5 + y);
+        if (i%2) ctx.rotate(Math.PI);
+        else     ctx.scale(-1, 1);
+        ctx.drawImage(img, -img.width*0.5, -img.height*0.5);
+        ctx.restore();
+    }
 
     const ITERATIONS = 20;
     for (let i = 0; i < ITERATIONS; i++) {
@@ -299,7 +282,7 @@ let tex_scroll = gl.createTexture();
 
         const LINE_COUNT = 30;
         const lines = [
-            1.0, '  made by ced',
+            1.0, '',
             1.0, '',
             1.5, 'SIGN OVER YOUR',
             1.5, '    FIRST BORN',
@@ -307,7 +290,7 @@ let tex_scroll = gl.createTexture();
             1.0, '',
             2.0, '    or else!',
             1.0, '',
-            0.8, ' sign below'
+            0.8, ''
         ];
         lines.push(1.0, '', 1.0, '', 1.0, '', ...lines);
 
