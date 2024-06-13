@@ -463,6 +463,8 @@ const buf = {
 const save = {
     quill: [0, 0],
     quill_inertia: [0, 0],
+
+    scroll_prog: 0.9,
 }
 
 let input = {
@@ -475,7 +477,6 @@ let input = {
     cam_pivot_y:  0,
     cam_pivot_z: -0.15,
 
-    scroll_prog: 1.0,
     zoom:        4,
     scroll:      0,
 
@@ -565,47 +566,6 @@ requestAnimationFrame(function frame(now) {
     deltaTime = now - then;
     then = now;
 
-    /* we could apply these changes directly in the event handlers, but the result feels "low fps"
-     * because we don't get input events at 60fps. so instead, we apply the changes every frame
-     * and simply "damp them" so that they get weaker every frame.
-     *
-     * one way this could be improved: fix how movement immediately stops when you release the mouse */
-    {
-        const ev = input.dampedEvent;
-
-        /* based on the assumption that if you're zoomed in more,
-         * you're doing finer-detailed work and want more precise movements. */
-        const zoom_fudge = Math.sqrt(input.zoom/10.0)*2.0;
-
-        if (ev.button == 0) {
-            input.pitch -= ev.movementX * 0.0005 * zoom_fudge;
-            input.yaw   -= ev.movementY * 0.0005 * zoom_fudge;
-            input.yaw = Math.max(-Math.PI*0.5 + 0.01, Math.min(Math.PI*0.5 - 0.01, input.yaw));
-        }
-        if (ev.button == 2) {
-            const unit = [0, -ev.movementX*0.00075*zoom_fudge, ev.movementY*0.00075*zoom_fudge, 1];
-            {
-                const view    = mat4_create();
-                const scratch = mat4_create();
-
-                mat4_from_z_rotation(scratch, input.pitch);
-                mat4_mul(view, view, scratch);
-
-                mat4_from_y_rotation(scratch, input.yaw);
-                mat4_mul(view, view, scratch);
-
-                mat4_transform_vec4(unit, unit, view);
-            }
-
-            input.cam_pivot_x += unit[0];
-            input.cam_pivot_y += unit[1];
-            input.cam_pivot_z += unit[2];
-        }
-
-        ev.movementX *= Math.pow(1 - 0.17, 60*deltaTime);
-        ev.movementY *= Math.pow(1 - 0.17, 60*deltaTime);
-    }
-
     const ORTHO = false;
     const u_vp_inv = mat4_create();
     const u_vp = mat4_create();
@@ -655,19 +615,14 @@ requestAnimationFrame(function frame(now) {
         }
     }
 
-    /* scroll parchment or zoom camera, depending */
-    const quill_mouse_pos = [0, 0, 0, 1]; /* in worldspace */
-    {
-        {
-            const t = 1 - Math.pow(1 - 0.15, 60*deltaTime);
-            save.quill[0] = lerp(save.quill[0], input.mouse_x, t);
-            save.quill[1] = lerp(save.quill[1], input.mouse_y, t);
-        }
 
+    const quill_mouse_pos = [0, 0, 0, 1]; /* in worldspace */
+    let quill_hovering_parchment;
+    {
         const vec = quill_mouse_pos;
-        {
-            vec[0] = -1 + (save.quill[0] / window.innerWidth )*2;
-            vec[1] = +1 - (save.quill[1] / window.innerHeight)*2;
+        function project_onto_parchment(screen_x, screen_y) {
+            vec[0] = -1 + (screen_x / window.innerWidth )*2;
+            vec[1] = +1 - (screen_y / window.innerHeight)*2;
             vec[2] = 1;
             vec[3] = 1;
 
@@ -692,20 +647,85 @@ requestAnimationFrame(function frame(now) {
                 x,   y,    z, /* plane vector */
             );
         }
+        project_onto_parchment(input.mouse_x, input.mouse_y);
 
         /* hardcoded parchment extents, WEEEE */
-        const e = ((Math.abs(-0.15 - vec[1]) < 0.5) &&
-                   (Math.abs(        vec[0]) < 1.1));
+        quill_hovering_parchment = true;
+        quill_hovering_parchment &&= Math.abs(-0.15 - vec[1]) < 0.5;
+        quill_hovering_parchment &&= Math.abs(        vec[0]) < 1.1;
+
+        if (!quill_hovering_parchment) {
+            const p = [-1.50, 0.00, -1.15, 1.0];
+            mat4_transform_vec4(p, p, u_vp);
+            input.mouse_x = (0.0 + (p[0] / p[3] + 1.0) / 2.0) * gl.canvas.width  * window.devicePixelRatio;
+            input.mouse_y = (1.0 - (p[1] / p[3] + 1.0) / 2.0) * gl.canvas.height * window.devicePixelRatio;
+        } 
+
+        const t = 1 - Math.pow(1 - 0.15, 60*deltaTime);
+        save.quill[0] = lerp(save.quill[0], input.mouse_x, t);
+        save.quill[1] = lerp(save.quill[1], input.mouse_y, t);
+
+        project_onto_parchment(save.quill[0], save.quill[1]);
+    }
+
+    /* we could apply these changes directly in the event handlers, but the result feels "low fps"
+     * because we don't get input events at 60fps. so instead, we apply the changes every frame
+     * and simply "damp them" so that they get weaker every frame.
+     *
+     * one way this could be improved: fix how movement immediately stops when you release the mouse */
+    {
+        const ev = input.dampedEvent;
+
+        /* based on the assumption that if you're zoomed in more,
+         * you're doing finer-detailed work and want more precise movements. */
+        const zoom_fudge = Math.sqrt(input.zoom/10.0)*2.0;
+
+        document.body.style.cursor = 'grab';
+        if (input.lmb_down || input.rmb_down) document.body.style.cursor = 'grabbing';
+        if (quill_hovering_parchment)         document.body.style.cursor = 'crosshair';
+
+        if (ev.button == 0 && !quill_hovering_parchment) {
+            input.pitch -= ev.movementX * 0.0005 * zoom_fudge;
+            input.yaw   -= ev.movementY * 0.0005 * zoom_fudge;
+            input.yaw = Math.max(-Math.PI*0.5 + 0.01, Math.min(Math.PI*0.5 - 0.01, input.yaw));
+        }
+        if (ev.button == 2) {
+
+            const unit = [0, -ev.movementX*0.00075*zoom_fudge, ev.movementY*0.00075*zoom_fudge, 1];
+            {
+                const view    = mat4_create();
+                const scratch = mat4_create();
+
+                mat4_from_z_rotation(scratch, input.pitch);
+                mat4_mul(view, view, scratch);
+
+                mat4_from_y_rotation(scratch, input.yaw);
+                mat4_mul(view, view, scratch);
+
+                mat4_transform_vec4(unit, unit, view);
+            }
+
+            input.cam_pivot_x += unit[0];
+            input.cam_pivot_y += unit[1];
+            input.cam_pivot_z += unit[2];
+        }
+
+        ev.movementX *= Math.pow(1 - 0.17, 60*deltaTime);
+        ev.movementY *= Math.pow(1 - 0.17, 60*deltaTime);
+    }
+
+    /* scroll parchment or zoom camera, depending */
+    {
 
         /* if hovering parchment, scroll, otherwise zoom camera (and decay scroll input) */
-        if (e) {
+        if (quill_hovering_parchment) {
             const t = Math.sqrt(Math.abs(input.scroll)) * Math.sign(input.scroll);
 
-            input.scroll_prog += t * 0.05 * deltaTime;
+            save.scroll_prog += t * 0.05 * deltaTime;
             input.scroll *= Math.pow(1 - 0.20, 60*deltaTime);
 
             /* clamp */
-            input.scroll_prog = Math.min(1.0, Math.max(0.0, input.scroll_prog))
+            save.scroll_prog = Math.min(1.0, Math.max(0.0, save.scroll_prog))
         } else {
             const t = Math.cbrt(Math.abs(input.scroll)) * Math.sign(input.scroll);
 
@@ -810,7 +830,7 @@ requestAnimationFrame(function frame(now) {
                 }
         }
 
-        const scroll_prog = input.scroll_prog;
+        const scroll_prog = save.scroll_prog;
         const btm_scroll_x = -0.2;
         const scroll_height = 2.0;
         const btm_curl_radius = lerp(0.25, 0.34, 1.0 - scroll_prog);
@@ -885,11 +905,11 @@ requestAnimationFrame(function frame(now) {
             save.quill_inertia[0] *= 1 - Math.pow(1 - 0.90, 60*deltaTime);
             save.quill_inertia[1] *= 1 - Math.pow(1 - 0.90, 60*deltaTime);
 
-            const dx = save.quill_inertia[0] * 0.001;
-            const dy = save.quill_inertia[1] * 0.001;
+            const dx = save.quill_inertia[0] * (quill_hovering_parchment ? 0.002 : 0.0001);
+            const dy = save.quill_inertia[1] * (quill_hovering_parchment ? 0.001 : 0.0001);
 
             mat4_mul(mat, mat, mat4_from_y_rotation(mat4_create(), dx));
-            mat4_mul(mat, mat, mat4_from_x_rotation(mat4_create(), dy + Math.PI*0.11 + Math.PI*0.25 * t));
+            mat4_mul(mat, mat, mat4_from_x_rotation(mat4_create(), dy + Math.PI*0.21 + Math.PI*0.25 * t));
             mat4_mul(mat, mat, mat4_from_translation(mat4_create(), [1.08, 1.07, 0.00]));
             mat4_mul(mat, mat, mat4_from_x_rotation(mat4_create(), -Math.PI/2));
             mat4_mul(mat, mat, mat4_from_y_rotation(mat4_create(),  Math.PI  ));
