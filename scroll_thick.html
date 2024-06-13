@@ -460,6 +460,11 @@ const buf = {
     buf.skydome_i_count = geo_idx.length;
 }
 
+const save = {
+    quill: [0, 0],
+    quill_inertia: [0, 0],
+}
+
 let input = {
     pitch:  Math.PI*0.30,
     yaw:   -Math.PI*0.15,
@@ -653,10 +658,16 @@ requestAnimationFrame(function frame(now) {
     /* scroll parchment or zoom camera, depending */
     const quill_mouse_pos = [0, 0, 0, 1]; /* in worldspace */
     {
+        {
+            const t = 1 - Math.pow(1 - 0.15, 60*deltaTime);
+            save.quill[0] = lerp(save.quill[0], input.mouse_x, t);
+            save.quill[1] = lerp(save.quill[1], input.mouse_y, t);
+        }
+
         const vec = quill_mouse_pos;
         {
-            vec[0] = -1 + (input.mouse_x / window.innerWidth )*2;
-            vec[1] = +1 - (input.mouse_y / window.innerHeight)*2;
+            vec[0] = -1 + (save.quill[0] / window.innerWidth )*2;
+            vec[1] = +1 - (save.quill[1] / window.innerHeight)*2;
             vec[2] = 1;
             vec[3] = 1;
 
@@ -865,15 +876,23 @@ requestAnimationFrame(function frame(now) {
     const quill_pos = [];
     const quill_uv  = [];
     {
-        quill_mouse_pos[0] += 1.08;
-        quill_mouse_pos[1] += 0.72;
-        quill_mouse_pos[2] += 0.72;
-
         const mat = mat4_create();
         {
             const t = Math.sin(now*1.5) * 0.05;
-            mat4_mul(mat, mat, mat4_from_x_rotation(mat4_create(), -Math.PI/4 + t    ));
-            mat4_mul(mat, mat, mat4_from_y_rotation(mat4_create(),  Math.PI   + t*0.3));
+
+            save.quill_inertia[0] += save.quill[0] - input.mouse_x;
+            save.quill_inertia[1] += save.quill[1] - input.mouse_y;
+            save.quill_inertia[0] *= 1 - Math.pow(1 - 0.90, 60*deltaTime);
+            save.quill_inertia[1] *= 1 - Math.pow(1 - 0.90, 60*deltaTime);
+
+            const dx = save.quill_inertia[0] * 0.001;
+            const dy = save.quill_inertia[1] * 0.001;
+
+            mat4_mul(mat, mat, mat4_from_y_rotation(mat4_create(), dx));
+            mat4_mul(mat, mat, mat4_from_x_rotation(mat4_create(), dy + Math.PI*0.11 + Math.PI*0.25 * t));
+            mat4_mul(mat, mat, mat4_from_translation(mat4_create(), [1.08, 1.07, 0.00]));
+            mat4_mul(mat, mat, mat4_from_x_rotation(mat4_create(), -Math.PI/2));
+            mat4_mul(mat, mat, mat4_from_y_rotation(mat4_create(),  Math.PI  ));
         }
 
         const QUILL_HEIGHT   = 1;
