@@ -928,10 +928,10 @@ const TITLE_COLOR_NORMAL = [0.38, 0.70, 0.90, 0.95];
 new TextRenderer(gl).then(x => {
     tr = x;
     fonts = {
-        title: tr.useFont(40, [0.70, 0.38, 0.90, 0.95]),
-        done:  tr.useFont(25, [0.20, 0.90, 0.40, 0.95]),
-        todo:  tr.useFont(25, [0.01, 0.90, 0.90, 0.95]),
-        later: tr.useFont(25, [0.28, 0.40, 0.50, 0.95]),
+        title: tr.useFont(window.devicePixelRatio*40, [0.70, 0.38, 0.90, 0.95]),
+        done:  tr.useFont(window.devicePixelRatio*25, [0.20, 0.90, 0.40, 0.95]),
+        todo:  tr.useFont(window.devicePixelRatio*25, [0.01, 0.90, 0.90, 0.95]),
+        later: tr.useFont(window.devicePixelRatio*25, [0.28, 0.40, 0.50, 0.95]),
     };
 });
 
@@ -1756,8 +1756,8 @@ requestAnimationFrame(function frame(timestamp) {
             if (~~(Date.now() / 500) % 2)
                 fonts.title.drawText(
                     "PRESS SPACE TO CONTINUE",
-                    window.innerWidth * 0.5,
-                    window.innerHeight - fonts.title.dynamic_scale*3,
+                    gl.canvas.width * 0.5,
+                    gl.canvas.height - fonts.title.dynamic_scale*3,
                     ALIGN_CENTER
                 );
 

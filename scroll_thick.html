@@ -1082,8 +1082,8 @@ requestAnimationFrame(function frame(now) {
         gl.uniform4fv(shaders.paint.u_color, hsl_to_rgb([Date.now() / 3000 % 1, 0.9, 0.75, 1.0]));
         gl.uniform2f(
             shaders.paint.u_brush,
-            -1 + (input.mouse_x / window.innerWidth )*2,
-            +1 - (input.mouse_y / window.innerHeight)*2
+            -1 + (input.mouse_x / window.innerWidth )*2 * input.lmb_down,
+            +1 - (input.mouse_y / window.innerHeight)*2 * input.lmb_down
         );
         gl.uniform2f(
             shaders.paint.u_aspect_ratio,
