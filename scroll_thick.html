@@ -44,6 +44,35 @@ if (!gl) { alert('Failed to initialize WebGL'); }
 let shaders;
 /* compile shaders */
 {
+    const paint_vs =
+        'attribute vec3 a_pos;' +
+        'attribute vec2 a_uv;' +
+
+        'uniform mat4 u_matrix;' +
+
+        'varying vec2 v_pos;' +
+
+        'void main() {' +
+        '    vec4 full_pos = u_matrix * vec4(a_pos.xyz, 1.0);' +
+        '    v_pos = full_pos.xy / full_pos.w;' +
+        '    gl_Position = vec4(a_uv*2.0 - 1.0, 0.0, 1.0);' +
+        '}';
+
+    const paint_fs =
+        'precision mediump float;' +
+
+        'varying vec2 v_pos;' +
+
+        'uniform vec4 u_color;' +
+        'uniform vec2 u_brush;' +
+        'uniform vec2 u_aspect_ratio;' +
+
+        'void main() {' +
+        '  vec2 delta = (v_pos - u_brush)*u_aspect_ratio;' +
+        '  const float scale = 0.3;' +
+        '  gl_FragColor = smoothstep(0.023*scale, 0.02*scale, length(delta)) * u_color;' +
+        '}';
+
     const vs_geo = `
         attribute vec3 a_pos;
         attribute vec2 a_uv;
@@ -98,8 +127,8 @@ let shaders;
             vec2 w = max(abs(ddx), abs(ddy)) + 0.01;
 
             // analytic (box) filtering
-            vec2 a = p + 0.5*w;                        
-            vec2 b = p - 0.5*w;           
+            vec2 a = p + 0.5*w;
+            vec2 b = p - 0.5*w;
             vec2 i = (floor(a)+min(fract(a)*N,1.0)-
                       floor(b)-min(fract(b)*N,1.0))/(N*w);
             //pattern
@@ -162,8 +191,9 @@ let shaders;
 
 
     shaders = {
-        geo:  createProgram(gl, vs_geo , fs_geo ),
-        grid: createProgram(gl, vs_grid, fs_grid),
+        geo:    createProgram(gl, vs_geo , fs_geo ),
+        grid:   createProgram(gl, vs_grid, fs_grid),
+        paint:  createProgram(gl, paint_vs, paint_fs),
     }
 }
 
@@ -239,7 +269,9 @@ let tex_quill = gl.createTexture();
 const SCROLL_WIDTH = 2000;
 const SCROLL_LENGTH_WORLDSPACE = 7.198429;
 
-let tex_scroll = gl.createTexture();
+const tex_scroll_fb   = gl.createFramebuffer();
+const tex_scroll      = gl.createTexture();
+let tex_scroll_loaded = false;
 (async () => {
     const font = new FontFace("quill", "url(https://fonts.gstatic.com/s/medievalsharp/v26/EvOJzAlL3oU5AQl2mP5KdgptMqhwMinUPDg.woff2) format('woff2')")
     await font.load();
@@ -319,10 +351,14 @@ let tex_scroll = gl.createTexture();
         /* type,          */ gl.UNSIGNED_BYTE,
         /* data           */ canvas
     );
-    gl.generateMipmap(gl.TEXTURE_2D);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+
+    tex_scroll_loaded = true;
+    gl.bindFramebuffer(gl.FRAMEBUFFER, tex_scroll_fb);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tex_scroll, 0);
 })();
 
 const buf = {
@@ -659,7 +695,7 @@ requestAnimationFrame(function frame(now) {
             mat4_transform_vec4(p, p, u_vp);
             input.mouse_x = (0.0 + (p[0] / p[3] + 1.0) / 2.0) * gl.canvas.width  / window.devicePixelRatio;
             input.mouse_y = (1.0 - (p[1] / p[3] + 1.0) / 2.0) * gl.canvas.height / window.devicePixelRatio;
-        } 
+        }
 
         const t = 1 - Math.pow(1 - 0.15, 60*deltaTime);
         save.quill[0] = lerp(save.quill[0], input.mouse_x, t);
@@ -1007,9 +1043,107 @@ requestAnimationFrame(function frame(now) {
                 );
             }
         }
+    }
 
-        // const arr = [...quill_idx.reverse()];
-        // quill_idx.push(...arr);
+    /* upload scroll geometry */
+    {
+        gl.bindBuffer(gl.ARRAY_BUFFER, buf.scroll_v_pos);
+        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(scroll_pos), gl.STATIC_DRAW);
+
+        gl.bindBuffer(gl.ARRAY_BUFFER, buf.scroll_v_color);
+        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(scroll_uv), gl.STATIC_DRAW);
+
+        gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, buf.scroll_i);
+        gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, new Uint16Array(scroll_idx), gl.STATIC_DRAW);
+    }
+
+    /* drawing pass */
+    if (tex_scroll_loaded) {
+        /* bind to scroll texture */
+        {
+            gl.bindFramebuffer(gl.FRAMEBUFFER, tex_scroll_fb);
+            gl.viewport(
+                0,
+                0,
+                SCROLL_WIDTH,
+                SCROLL_WIDTH * (SCROLL_LENGTH_WORLDSPACE / 2.0)
+            );
+
+            /* set up premultiplied alpha */
+            gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
+            gl.enable(gl.BLEND);
+        }
+
+        gl.useProgram(shaders.paint.program);
+        gl.enableVertexAttribArray(shaders.paint.a_pos);
+        gl.enableVertexAttribArray(shaders.paint.a_uv);
+
+        gl.uniformMatrix4fv(shaders.paint.u_matrix, false, u_vp);
+        gl.uniform4fv(shaders.paint.u_color, hsl_to_rgb([Date.now() / 3000 % 1, 0.9, 0.75, 1.0]));
+        gl.uniform2f(
+            shaders.paint.u_brush,
+            -1 + (input.mouse_x / window.innerWidth )*2,
+            +1 - (input.mouse_y / window.innerHeight)*2
+        );
+        gl.uniform2f(
+            shaders.paint.u_aspect_ratio,
+            (window.innerWidth  / window.innerWidth),
+            (window.innerHeight / window.innerWidth)
+        );
+
+        /* upload/bind scroll geometry for paint */
+        {
+            gl.bindBuffer(gl.ARRAY_BUFFER, buf.scroll_v_pos);
+            gl.vertexAttribPointer(shaders.paint.a_pos, 3, gl.FLOAT, false, 0, 0);
+
+            gl.bindBuffer(gl.ARRAY_BUFFER, buf.scroll_v_color);
+            gl.vertexAttribPointer(shaders.paint.a_uv, 2, gl.FLOAT, false, 0, 0);
+
+            gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, buf.scroll_i);
+        }
+
+        gl.drawElements(gl.TRIANGLES, scroll_idx.length, gl.UNSIGNED_SHORT, 0);
+
+        function hsl_to_rgb(arr) {
+            function hue_to_rgb(p, q, t) {
+              if (t < 0) t += 1;
+              if (t > 1) t -= 1;
+              if (t < 1/6) return p + (q - p) * 6 * t;
+              if (t < 1/2) return q;
+              if (t < 2/3) return p + (q - p) * (2/3 - t) * 6;
+              return p;
+            }
+
+            const h = arr[0];
+            const s = arr[1];
+            const l = arr[2];
+
+            if (s === 0) {
+                r = g = b = l; // achromatic
+            } else {
+                const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
+                const p = 2 * l - q;
+                r = hue_to_rgb(p, q, h + 1/3);
+                g = hue_to_rgb(p, q, h);
+                b = hue_to_rgb(p, q, h - 1/3);
+            }
+
+            arr[0] = r;
+            arr[1] = g;
+            arr[2] = b;
+            return arr;
+        }
+    }
+
+    {
+        gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+
+        gl.viewport(
+            0,
+            0,
+            canvas.width,
+            canvas.height
+        );
     }
 
     {
@@ -1073,15 +1207,12 @@ requestAnimationFrame(function frame(now) {
             /* upload/bind geometry */
             {
                 gl.bindBuffer(gl.ARRAY_BUFFER, buf.scroll_v_pos);
-                gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(scroll_pos), gl.STATIC_DRAW);
                 gl.vertexAttribPointer(shaders.geo.a_pos, 3, gl.FLOAT, false, 0, 0);
 
                 gl.bindBuffer(gl.ARRAY_BUFFER, buf.scroll_v_color);
-                gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(scroll_uv), gl.STATIC_DRAW);
                 gl.vertexAttribPointer(shaders.geo.a_uv, 2, gl.FLOAT, true, 0, 0);
 
                 gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, buf.scroll_i);
-                gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, new Uint16Array(scroll_idx), gl.STATIC_DRAW);
             }
 
             gl.drawElements(gl.TRIANGLES, scroll_idx.length, gl.UNSIGNED_SHORT, 0);
