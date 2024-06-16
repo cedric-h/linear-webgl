@@ -65,6 +65,7 @@ let shaders;
         'uniform vec2 u_stroke_from;' +
         'uniform vec2 u_stroke_to;' +
         'uniform vec2 u_aspect_ratio;' +
+        'uniform sampler2D u_tex_depth;' +
 
         /* thanks iq! https://iquilezles.org/articles/distfunctions2d/ */
         'float sd_segment( in vec2 p, in vec2 a, in vec2 b ) {' +
@@ -73,14 +74,25 @@ let shaders;
         '    return length( pa - ba*h );' +
         '}' +
 
+        'float decode_float_rgba(vec4 rgba) {' +
+        '  return dot(rgba, vec4(1.0, 1.0/255.0, 1.0/65025.0, 1.0/16581375.0));' +
+        '}' +
+
         'void main() {' +
         '  vec4 full_pos = u_matrix * vec4(v_pos.xyz, 1.0);' +
         '  vec2 screen_pos = full_pos.xy / full_pos.w;' +
         '' +
+        '  float occluding_depth = decode_float_rgba(texture2D(u_tex_depth, (screen_pos * 0.5) + 0.5));' +
+        '  float frag_depth = (full_pos.z / full_pos.w * 0.5) + 0.5;' +
+        '' +
+        '  const float bias = 0.0039;' +
+        '  float occlusion = step(frag_depth, occluding_depth - bias);' +
+        '' +
         '  vec2 ar = u_aspect_ratio;' +
         '  float dist = sd_segment(screen_pos*ar, u_stroke_from*ar, u_stroke_to*ar);' +
         '  const float brush_size = 0.18;' +
-        '  gl_FragColor = smoothstep(0.023*brush_size, 0.02*brush_size, dist) * u_color;' +
+        '  gl_FragColor = smoothstep(0.023*brush_size, 0.02*brush_size, dist) * u_color * occlusion;' +
+        // '  gl_FragColor = occlusion * u_color;' +
         '}';
 
     const vs_geo = `
@@ -160,6 +172,36 @@ let shaders;
             frag_color *= smoothstep(0.0, 0.8, 1.0 - length(v_uv)/9.5);
         }`;
 
+    var depth_vs =
+        'precision mediump float;' +
+
+        'uniform mat4 u_matrix;' +
+
+        'attribute vec4 a_pos;' +
+
+        'varying vec4 v_pos;' +
+
+        'void main() {' +
+        '  gl_Position = v_pos = u_matrix * a_pos;' +
+        '}';
+
+    var depth_fs =
+        'precision mediump float;' +
+
+        'varying vec4 v_pos;' +
+
+        'vec4 encode_float_rgba(float v) {' +
+        '  vec4 enc = vec4(1.0, 255.0, 65025.0, 16581375.0) * v;' +
+        '  enc = fract(enc);' +
+        '  enc -= enc.yzww * vec4(1.0/255.0,1.0/255.0,1.0/255.0,0.0);' +
+        '  return enc;' +
+        '}' +
+
+        'void main() {' +
+        '  float depth = v_pos.z / v_pos.w;' +
+        '  gl_FragColor = encode_float_rgba(depth * 0.5 + 0.5);' +
+        '}';
+
 
     function createProgram(gl, vertexSource, fragmentSource) {
         function createShader(gl, type, source) {
@@ -203,9 +245,10 @@ let shaders;
 
 
     shaders = {
-        geo:    createProgram(gl, vs_geo , fs_geo ),
-        grid:   createProgram(gl, vs_grid, fs_grid),
-        paint:  createProgram(gl, paint_vs, paint_fs),
+        geo:   createProgram(gl, vs_geo  , fs_geo  ),
+        grid:  createProgram(gl, vs_grid , fs_grid ),
+        paint: createProgram(gl, paint_vs, paint_fs),
+        depth: createProgram(gl, depth_vs, depth_fs),
     }
 }
 
@@ -372,6 +415,62 @@ let tex_scroll_loaded = false;
     gl.bindFramebuffer(gl.FRAMEBUFFER, tex_scroll_fb);
     gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tex_scroll, 0);
 })();
+
+/* we need a depth texture so we can sample it when painting,
+ * to determine if the fragment should be occluded */
+let depth_color = gl.createTexture();
+let depth_depth = gl.createTexture();
+let depth_fb = gl.createFramebuffer();
+const DEPTH_TEX_SIZE = 1 << 9;
+{
+    {
+        gl.bindTexture(gl.TEXTURE_2D, depth_color);
+        gl.texImage2D(
+            /* target         */ gl.TEXTURE_2D,
+            /* level          */ 0,
+            /* internalformat */ gl.RGBA,
+            /* width          */ DEPTH_TEX_SIZE,
+            /* height         */ DEPTH_TEX_SIZE,
+            /* border,        */ 0,
+            /* format,        */ gl.RGBA,
+            /* type,          */ gl.UNSIGNED_BYTE,
+            /* data           */ null
+        );
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+
+        gl.bindFramebuffer(gl.FRAMEBUFFER, depth_fb);
+        gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, depth_color, 0);
+    }
+    {
+        gl.bindTexture(gl.TEXTURE_2D, depth_depth);
+
+        // define size and format of level 0
+        gl.texImage2D(
+            gl.TEXTURE_2D,
+            /* level,          */ 0,
+            /* internalFormat, */ gl.DEPTH_COMPONENT24,
+            /* width,          */ DEPTH_TEX_SIZE,
+            /* height,         */ DEPTH_TEX_SIZE,
+            /* border,         */ 0,
+            /* format,         */ gl.DEPTH_COMPONENT,
+            /* type,           */ gl.UNSIGNED_INT,
+            /* data            */ null
+        );
+
+        // set the filtering so we don't need mips
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+
+        /* bind depth tex to our framebuffer */
+        gl.bindFramebuffer(gl.FRAMEBUFFER, depth_fb);
+        gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.TEXTURE_2D, depth_depth, 0);
+    }
+}
 
 const buf = {
     scroll_v_pos:   gl.createBuffer(),
@@ -705,7 +804,7 @@ requestAnimationFrame(function frame(now) {
                 x,   y,    z, /* plane vector */
             );
         }
-        project_onto_parchment(input.pen_screen_x, input.pen_screen_y);
+        project_onto_parchment(input.raw_mouse_x, input.raw_mouse_y);
 
         /* hardcoded parchment extents, WEEEE */
         quill_hovering_parchment = true;
@@ -1079,6 +1178,47 @@ requestAnimationFrame(function frame(now) {
         gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, new Uint16Array(scroll_idx), gl.STATIC_DRAW);
     }
 
+    /* depth_pass */
+    {
+        /* bind depth and clear */
+        {
+            gl.viewport(
+                0,
+                0,
+                DEPTH_TEX_SIZE,
+                DEPTH_TEX_SIZE
+            );
+            gl.bindFramebuffer(gl.FRAMEBUFFER, depth_fb); // null);
+
+            /* enable depth */
+            gl.enable(gl.DEPTH_TEST);
+            gl.depthFunc(gl.LEQUAL);
+
+            /* backface culling */
+            // gl.cullFace(gl.BACK);
+            // gl.enable(gl.CULL_FACE);
+
+            /* clear all */
+            gl.clearColor(1, 0, 0, 1);
+            gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+        }
+
+        gl.useProgram(shaders.depth.program);
+        gl.enableVertexAttribArray(shaders.depth.a_pos);
+
+        gl.uniformMatrix4fv(shaders.depth.u_matrix, false, u_vp);
+
+        /* upload/bind geometry */
+        {
+            gl.bindBuffer(gl.ARRAY_BUFFER, buf.scroll_v_pos);
+            gl.vertexAttribPointer(shaders.paint.a_pos, 3, gl.FLOAT, false, 0, 0);
+
+            gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, buf.scroll_i);
+        }
+
+        gl.drawElements(gl.TRIANGLES, scroll_idx.length, gl.UNSIGNED_SHORT, 0);
+    }
+
     /* drawing pass */
     if (tex_scroll_loaded) {
         /* bind to scroll texture */
@@ -1129,6 +1269,13 @@ requestAnimationFrame(function frame(now) {
             gl.vertexAttribPointer(shaders.paint.a_uv, 2, gl.FLOAT, false, 0, 0);
 
             gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, buf.scroll_i);
+        }
+
+        /* bind depth texture for paint occlusion */
+        {
+            gl.activeTexture(gl.TEXTURE0);
+            gl.bindTexture(gl.TEXTURE_2D, depth_color);
+            gl.uniform1i(shaders.paint.u_tex_depth, 0);
         }
 
         gl.drawElements(gl.TRIANGLES, scroll_idx.length, gl.UNSIGNED_SHORT, 0);
