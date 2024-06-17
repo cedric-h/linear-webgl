@@ -1643,7 +1643,7 @@ requestAnimationFrame(function frame(now) {
                 let norm_mouse_y = +1 - (input.raw_mouse_y / window.innerHeight)*2;
 
                 hovered = true;
-                hovered &&= Math.abs(norm_mouse_x - x) < 0.1;
+                hovered &&= Math.abs(norm_mouse_x - x) < 0.1*ar;
                 hovered &&= Math.abs(norm_mouse_y - y) < 0.1;
             }
 
