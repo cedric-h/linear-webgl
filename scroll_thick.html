@@ -41,6 +41,47 @@ if (!gl) { alert('Failed to initialize WebGL'); }
     );
 })();
 
+function createProgram(gl, vertexSource, fragmentSource) {
+    function createShader(gl, type, source) {
+        const shader = gl.createShader(type);
+        gl.shaderSource(shader, source);
+        gl.compileShader(shader);
+        if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+            throw new Error(gl.getShaderInfoLog(shader));
+        }
+        return shader;
+    }
+
+    const program = gl.createProgram();
+
+    const vertexShader = createShader(gl, gl.VERTEX_SHADER, vertexSource);
+    const fragmentShader = createShader(gl, gl.FRAGMENT_SHADER, fragmentSource);
+
+    gl.attachShader(program, vertexShader);
+    gl.attachShader(program, fragmentShader);
+
+    gl.linkProgram(program);
+    if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+        throw new Error(gl.getProgramInfoLog(program));
+    }
+
+    const wrapper = {program};
+
+    const numAttributes = gl.getProgramParameter(program, gl.ACTIVE_ATTRIBUTES);
+    for (let i = 0; i < numAttributes; i++) {
+        const attribute = gl.getActiveAttrib(program, i);
+        wrapper[attribute.name] = gl.getAttribLocation(program, attribute.name);
+    }
+    const numUniforms = gl.getProgramParameter(program, gl.ACTIVE_UNIFORMS);
+    for (let i = 0; i < numUniforms; i++) {
+        const uniform = gl.getActiveUniform(program, i);
+        wrapper[uniform.name] = gl.getUniformLocation(program, uniform.name);
+    }
+
+    return wrapper;
+}
+
+
 let shaders;
 /* compile shaders */
 {
@@ -85,8 +126,8 @@ let shaders;
         '  float occluding_depth = decode_float_rgba(texture2D(u_tex_depth, (screen_pos * 0.5) + 0.5));' +
         '  float frag_depth = (full_pos.z / full_pos.w * 0.5) + 0.5;' +
         '' +
-        '  const float bias = 0.0039;' +
-        '  float occlusion = step(frag_depth, occluding_depth - bias);' +
+        '  const float bias = 0.00001;' +
+        '  float occlusion = step(frag_depth - bias, occluding_depth);' +
         '' +
         '  vec2 ar = u_aspect_ratio;' +
         '  float dist = sd_segment(screen_pos*ar, u_stroke_from*ar, u_stroke_to*ar);' +
@@ -203,47 +244,6 @@ let shaders;
         '}';
 
 
-    function createProgram(gl, vertexSource, fragmentSource) {
-        function createShader(gl, type, source) {
-            const shader = gl.createShader(type);
-            gl.shaderSource(shader, source);
-            gl.compileShader(shader);
-            if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
-                throw new Error(gl.getShaderInfoLog(shader));
-            }
-            return shader;
-        }
-
-        const program = gl.createProgram();
-
-        const vertexShader = createShader(gl, gl.VERTEX_SHADER, vertexSource);
-        const fragmentShader = createShader(gl, gl.FRAGMENT_SHADER, fragmentSource);
-
-        gl.attachShader(program, vertexShader);
-        gl.attachShader(program, fragmentShader);
-
-        gl.linkProgram(program);
-        if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
-            throw new Error(gl.getProgramInfoLog(program));
-        }
-
-        const wrapper = {program};
-
-        const numAttributes = gl.getProgramParameter(program, gl.ACTIVE_ATTRIBUTES);
-        for (let i = 0; i < numAttributes; i++) {
-            const attribute = gl.getActiveAttrib(program, i);
-            wrapper[attribute.name] = gl.getAttribLocation(program, attribute.name);
-        }
-        const numUniforms = gl.getProgramParameter(program, gl.ACTIVE_UNIFORMS);
-        for (let i = 0; i < numUniforms; i++) {
-            const uniform = gl.getActiveUniform(program, i);
-            wrapper[uniform.name] = gl.getUniformLocation(program, uniform.name);
-        }
-
-        return wrapper;
-    }
-
-
     shaders = {
         geo:   createProgram(gl, vs_geo  , fs_geo  ),
         grid:  createProgram(gl, vs_grid , fs_grid ),
@@ -251,6 +251,366 @@ let shaders;
         depth: createProgram(gl, depth_vs, depth_fs),
     }
 }
+
+let emoji_atlas = gl.createTexture();
+const ATLAS_SIZE = 2; /* in emoji */
+const EMOJI_SIZE = 256;
+{
+    const canvas = document.createElement("canvas");
+
+    canvas.width = canvas.height = ATLAS_SIZE * EMOJI_SIZE;
+
+    const ctx = canvas.getContext("2d");
+
+    {
+        const atlas = ['✒️', '🌈', '🤚', '📜'];
+        const PAD = EMOJI_SIZE*0.2;
+        ctx.font = (EMOJI_SIZE - PAD*2) + 'px sans-serif';
+
+        let i = 0;
+        for (const char of atlas) {
+            const x = (           i % ATLAS_SIZE ) * EMOJI_SIZE;
+            const y = (Math.floor(i / ATLAS_SIZE)) * EMOJI_SIZE;
+
+            ctx.fillText(
+                char,
+                x + PAD,
+                y + EMOJI_SIZE - PAD
+            );
+
+            i++;
+        }
+    }
+
+    gl.bindTexture(gl.TEXTURE_2D, emoji_atlas);
+    gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, true);
+    gl.texImage2D(
+        /* target         */ gl.TEXTURE_2D,
+        /* level          */ 0,
+        /* internalformat */ gl.RGBA,
+        /* width          */ canvas.width,
+        /* height         */ canvas.height,
+        /* border,        */ 0,
+        /* format,        */ gl.RGBA,
+        /* type,          */ gl.UNSIGNED_BYTE,
+        /* data           */ canvas
+    );
+
+    if (1) {
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+
+        const shadowed = shadowForTexture(
+            emoji_atlas,
+            canvas.width,
+            canvas.height,
+            0
+        );
+        gl.disableVertexAttribArray(1);
+        gl.deleteTexture(emoji_atlas);
+        emoji_atlas = shadowed;
+    }
+
+    gl.bindTexture(gl.TEXTURE_2D, emoji_atlas);
+    gl.generateMipmap(gl.TEXTURE_2D);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+
+
+    /* if you're going to use this multiple times in a single program,
+     * consider modifying it to not immediately delete all the shaders.
+     *
+     * or just take the shader compilation hit -- i don't care what you do.
+     *
+     * note, if you don't care about supporting Safari, you can generate shadows entirely in canvas
+     * https://developer.mozilla.org/en-US/docs/Web/API/CanvasRenderingContext2D/filter
+     *
+     */
+    function shadowForTexture(texture, texture_width, texture_height, texture_pad) {
+        /* compile shaders */
+        let shaders;
+        {
+            const vs_img = `
+                attribute vec3 a_pos;
+                attribute vec2 a_uv;
+
+                uniform mat4 u_matrix;
+
+                varying vec2 v_uv;
+
+                void main() {
+                    gl_Position = u_matrix * vec4(a_pos.xyz, 1);
+                    v_uv = a_uv;
+                }`;
+
+            const fs_img = `
+                precision mediump float;
+
+                varying vec2 v_uv;
+
+                uniform sampler2D u_texture;
+                uniform vec4 u_mask;
+
+                void main() {
+                    gl_FragColor = texture2D(u_texture, v_uv);
+
+                    /* somehow alpha got overmultiplied, freaky af */
+                    // gl_FragColor.xyz /= gl_FragColor.w;
+
+                    gl_FragColor.rgb *= u_mask.rgb;
+                    gl_FragColor     *= u_mask.a;
+                }`;
+
+
+            const vs_fullscreen_blur = `#version 300 es
+                precision mediump float;
+
+                out vec2 v_texcoord;
+
+                void main(void) {
+                    float x = float((gl_VertexID & 1) << 2);
+                    float y = float((gl_VertexID & 2) << 1);
+                    v_texcoord.x = x * 0.5;
+                    v_texcoord.y = y * 0.5;
+                    gl_Position = vec4(x - 1.0, y - 1.0, 0, 1);
+                }
+            `;
+
+            const fs_fullscreen_blur = `#version 300 es
+                precision mediump float;
+
+                uniform sampler2D u_texture;
+                uniform vec2 u_direction;
+
+                in vec2 v_texcoord;
+
+                out vec4 frag_color;
+
+                void main(void) {
+                    vec2 one_pixel = u_direction*(vec2(1) / vec2(textureSize(u_texture, 0)));
+
+                    frag_color = texture(u_texture, v_texcoord) * 0.2270270270;
+
+                    frag_color += texture(u_texture, v_texcoord + one_pixel    ) * 0.1945945946;
+                    frag_color += texture(u_texture, v_texcoord - one_pixel    ) * 0.1945945946;
+
+                    frag_color += texture(u_texture, v_texcoord + one_pixel*2.0) * 0.1216216216;
+                    frag_color += texture(u_texture, v_texcoord - one_pixel*2.0) * 0.1216216216;
+
+                    frag_color += texture(u_texture, v_texcoord + one_pixel*3.0) * 0.0540540541;
+                    frag_color += texture(u_texture, v_texcoord - one_pixel*3.0) * 0.0540540541;
+
+                    frag_color += texture(u_texture, v_texcoord + one_pixel*4.0) * 0.0162162162;
+                    frag_color += texture(u_texture, v_texcoord - one_pixel*4.0) * 0.0162162162;
+                }
+            `;
+
+            shaders = {
+                img:             createProgram(gl, vs_img            , fs_img            ),
+                fullscreen_blur: createProgram(gl, vs_fullscreen_blur, fs_fullscreen_blur),
+            };
+        }
+
+        let prebaked;
+        {
+          /* some suggestions on AA/multisampling https://stackoverflow.com/a/55976760 */
+          const canvas_width  = texture_width  + texture_pad*2;
+          const canvas_height = texture_height + texture_pad*2;
+
+          gl.viewport(
+              0,
+              0,
+              canvas_width,
+              canvas_height
+          );
+
+          /* this way we can just draw the image from (0, 0)..(width,height)
+           * and it will have even padding on all sides */
+          const pMatrix = mat4_ortho(
+              mat4_create(),
+              -texture_pad,
+              texture_width +texture_pad,
+              -texture_pad,
+              texture_height+texture_pad,
+              1,
+              -1
+          );
+
+          const render_targets = [
+            { tex: gl.createTexture(), fb: gl.createFramebuffer() },
+            { tex: gl.createTexture(), fb: gl.createFramebuffer() },
+          ];
+         
+          for (const rt of render_targets) {
+              gl.bindTexture(gl.TEXTURE_2D, rt.tex);
+
+              // Upload the image into the texture.
+              gl.texImage2D(
+                  /* target         */ gl.TEXTURE_2D,
+                  /* level          */ 0,
+                  /* internalformat */ gl.RGBA,
+                  /* width          */ canvas_width ,
+                  /* height         */ canvas_height,
+                  /* border,        */ 0,
+                  /* format,        */ gl.RGBA,
+                  /* type,          */ gl.UNSIGNED_BYTE,
+                  /* data           */ null
+              );
+              gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+              gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+              gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+
+              gl.bindFramebuffer(gl.FRAMEBUFFER, rt.fb);
+              gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, rt.tex, 0);
+          }
+
+          /* prebaked rt is bound */
+          
+          const img_vbuf_pos = gl.createBuffer();
+          const img_vbuf_uv  = gl.createBuffer();
+          const img_ibuf     = gl.createBuffer();
+
+          {
+            const img_idx = [];
+            const img_pos = [];
+            const img_uv  = [];
+
+            {
+                const min_x = 0;
+                const min_y = 0;
+                const max_x = texture_width;
+                const max_y = texture_height;
+
+                img_uv.push(
+                    1, 0,
+                    0, 0,
+                    0, 1,
+                    1, 1
+                );
+
+                const vbuf_i = img_pos.length / 3;
+                img_pos.push(max_x, min_y, 0.1);
+                img_pos.push(min_x, min_y, 0.1);
+                img_pos.push(min_x, max_y, 0.1);
+                img_pos.push(max_x, max_y, 0.1);
+
+                img_idx.push(vbuf_i + 0, vbuf_i + 1, vbuf_i + 2, vbuf_i + 2, vbuf_i + 3, vbuf_i + 0);
+            }
+
+            /* set up premultiplied alpha */
+            gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
+            gl.enable(gl.BLEND);
+
+            gl.enable(gl.DEPTH_TEST);
+            gl.depthFunc(gl.LEQUAL);
+
+            /* clear all */
+            gl.clearColor(0, 0, 0, 0);
+            gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+
+            /* shadow img pass (see color mask) */
+            function imgPass(u_mask_r, u_mask_g, u_mask_b, u_alpha_mask) {
+                gl.useProgram(shaders.img.program);
+                gl.enableVertexAttribArray(shaders.img.a_pos);
+                gl.enableVertexAttribArray(shaders.img.a_uv);
+
+                /* upload/bind atlas */
+                {
+                    gl.activeTexture(gl.TEXTURE0);
+                    gl.bindTexture(gl.TEXTURE_2D, texture);
+                    gl.uniform1i(shaders.img.u_texture, 0);
+                }
+
+                gl.uniformMatrix4fv(shaders.img.u_matrix, false, pMatrix);
+                gl.uniform4f(shaders.img.u_mask, u_mask_r, u_mask_g, u_mask_b, u_alpha_mask);
+
+                /* upload/bind geometry */
+
+                {
+                    gl.bindBuffer(gl.ARRAY_BUFFER, img_vbuf_pos);
+                    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(img_pos), gl.STATIC_DRAW);
+                    gl.vertexAttribPointer(shaders.img.a_pos, 3, gl.FLOAT, false, 0, 0);
+
+                    gl.bindBuffer(gl.ARRAY_BUFFER, img_vbuf_uv);
+                    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(img_uv), gl.STATIC_DRAW);
+                    gl.vertexAttribPointer(shaders.img.a_uv, 2, gl.FLOAT, true, 0, 0);
+
+                    gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, img_ibuf);
+                    gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, new Uint16Array(img_idx), gl.STATIC_DRAW);
+                }
+
+                gl.drawElements(gl.TRIANGLES, img_idx.length, gl.UNSIGNED_SHORT, 0);
+            }
+
+            gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
+            gl.enable(gl.BLEND);
+
+            imgPass(0.20, 0.20, 0.20, 0.20);
+
+            /* blur time */
+            {
+                const passes = [
+                    // [render_targets[1].fb, render_targets[0].tex, [ 0, 10]],
+                    // [render_targets[0].fb, render_targets[1].tex, [ 9,  0]],
+                    // [render_targets[1].fb, render_targets[0].tex, [ 0,  8]],
+                    // [render_targets[0].fb, render_targets[1].tex, [ 7,  0]],
+                    [render_targets[1].fb, render_targets[0].tex, [ 0,  6]],
+                    [render_targets[0].fb, render_targets[1].tex, [ 5,  0]],
+                    [render_targets[1].fb, render_targets[0].tex, [ 0,  4]],
+                    [render_targets[0].fb, render_targets[1].tex, [ 3,  0]],
+                    [render_targets[1].fb, render_targets[0].tex, [ 0,  2]],
+                    [render_targets[0].fb, render_targets[1].tex, [ 1,  0]]
+                ];
+                for (const [dst_fb, src_tex, dir] of passes) {
+                    gl.bindFramebuffer(gl.FRAMEBUFFER, dst_fb);
+
+                    gl.useProgram(shaders.fullscreen_blur.program);
+
+                    gl.uniform2fv(shaders.fullscreen_blur.u_direction, [dir[0]*2, dir[1]*2]);
+
+                    /* bind tex */
+                    {
+                        gl.activeTexture(gl.TEXTURE0);
+                        gl.bindTexture(gl.TEXTURE_2D, src_tex);
+                        gl.uniform1i(shaders.fullscreen_blur.u_texture, 0);
+                    }
+
+                    gl.drawArrays(gl.TRIANGLE_FAN, 0, 3);
+                }
+            }
+
+            gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
+            gl.enable(gl.BLEND);
+            imgPass(1, 1, 1, 1);
+          }
+
+          gl.deleteBuffer(img_vbuf_pos);
+          gl.deleteBuffer(img_vbuf_uv );
+          gl.deleteBuffer(img_ibuf    );
+
+          gl.deleteProgram(shaders.img.program);
+          gl.deleteShader(shaders.img.vs);
+          gl.deleteShader(shaders.img.fs);
+
+          gl.deleteProgram(shaders.fullscreen_blur.program);
+          gl.deleteShader(shaders.fullscreen_blur.vs);
+          gl.deleteShader(shaders.fullscreen_blur.fs);
+
+          gl.deleteFramebuffer(render_targets[0].fb);
+          gl.deleteFramebuffer(render_targets[1].fb);
+          gl.deleteTexture(render_targets[1].tex);
+          prebaked = render_targets[0].tex;
+
+          gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+        }
+
+        return prebaked;
+    }
+}
+
 
 let tex_skydome = gl.createTexture();
 (async () => {
@@ -473,13 +833,17 @@ const DEPTH_TEX_SIZE = 1 << 9;
 }
 
 const buf = {
-    scroll_v_pos:   gl.createBuffer(),
-    scroll_v_color: gl.createBuffer(),
-    scroll_i:       gl.createBuffer(),
+    scroll_v_pos: gl.createBuffer(),
+    scroll_v_uv:  gl.createBuffer(),
+    scroll_i:     gl.createBuffer(),
 
-    quill_v_pos:   gl.createBuffer(),
-    quill_v_color: gl.createBuffer(),
-    quill_i:       gl.createBuffer(),
+    quill_v_pos: gl.createBuffer(),
+    quill_v_uv:  gl.createBuffer(),
+    quill_i:     gl.createBuffer(),
+
+    emoji_v_pos: gl.createBuffer(),
+    emoji_v_uv:  gl.createBuffer(),
+    emoji_i:     gl.createBuffer(),
 
     skydome_v_pos: gl.createBuffer(),
     skydome_v_uv:  gl.createBuffer(),
@@ -607,9 +971,16 @@ const buf = {
     buf.skydome_i_count = geo_idx.length;
 }
 
+const INPUT_MODE_GRAB_SCROLL = 0;
+const INPUT_MODE_PEN         = 1;
+const INPUT_MODE_PEN_RAINBOW = 2;
+const INPUT_MODE_COUNT       = 3;
+
 const save = {
     quill: [0, 0],
     quill_inertia: [0, 0],
+
+    input_mode_button_y_offsets: Array.from({ length: INPUT_MODE_COUNT }, _ => 0),
 
     scroll_prog: 0.9,
 }
@@ -629,12 +1000,15 @@ let input = {
 
     pen_screen_x: 0,
     pen_screen_y: 0,
+    mode: INPUT_MODE_GRAB_SCROLL,
+
     raw_mouse_x: 0,
     raw_mouse_y: 0,
     last_mouse_x: 0,
     last_mouse_y: 0,
 
     lmb_down: false,
+    lmb_clicked: false,/* true for a frame after mousedown */
     rmb_down: false,
 }
 
@@ -653,7 +1027,7 @@ let input = {
         input.raw_mouse_x = ev.offsetX;
         input.raw_mouse_y = ev.offsetY;
 
-        if (ev.button == 0) input.lmb_down = true;
+        if (ev.button == 0) input.lmb_down = input.lmb_clicked = true;
         if (ev.button == 2) input.rmb_down = true;
     }, opts);
     window.addEventListener('mousemove', ev => {
@@ -1166,12 +1540,104 @@ requestAnimationFrame(function frame(now) {
         }
     }
 
+    /* generate emoji geometry */
+    const emoji_idx = [];
+    const emoji_pos = [];
+    const emoji_uv  = [];
+    {
+        function moji(x, y, size, atlas_index) {
+
+            /* generate UVs from atlas_index */
+            {
+                const u = (           atlas_index % ATLAS_SIZE );
+                const v = (Math.floor(atlas_index / ATLAS_SIZE));
+
+                emoji_uv.push(
+                    (u+1)/ATLAS_SIZE, (v+1)/ATLAS_SIZE,
+                    (u+0)/ATLAS_SIZE, (v+1)/ATLAS_SIZE,
+                    (u+0)/ATLAS_SIZE, (v+0)/ATLAS_SIZE,
+                    (u+1)/ATLAS_SIZE, (v+0)/ATLAS_SIZE,
+                );
+            }
+
+            /* generate position + index */
+            {
+                const vbuf_i = emoji_pos.length / 3;
+                const ar = window.innerHeight / window.innerWidth;
+                emoji_pos.push(x+size*ar, y-size, 0.1);
+                emoji_pos.push(x-size*ar, y-size, 0.1);
+                emoji_pos.push(x-size*ar, y+size, 0.1);
+                emoji_pos.push(x+size*ar, y+size, 0.1);
+
+                emoji_idx.push(
+                    vbuf_i + 0,
+                    vbuf_i + 1,
+                    vbuf_i + 2,
+                    vbuf_i + 2,
+                    vbuf_i + 3,
+                    vbuf_i + 0
+                );
+            }
+        }
+
+        for (let i = 0; i < INPUT_MODE_COUNT; i++) {
+            let x = -0.850 + 0.20*i;
+            let y = -0.950;
+
+            let hovered;
+            {
+                let norm_mouse_x = -1 + (input.last_mouse_x / window.innerWidth )*2;
+                let norm_mouse_y = +1 - (input.last_mouse_y / window.innerHeight)*2;
+
+                hovered = true;
+                hovered &&= Math.abs(norm_mouse_x - x) < 0.1;
+                hovered &&= Math.abs(norm_mouse_y - y) < 0.1;
+            }
+
+            {
+                if (input.lmb_clicked && hovered) input.mode = i;
+
+                let goal_y_offset = 0;
+                if (i == input.mode) goal_y_offset = 0.06;
+                if (hovered && input.mode != i) goal_y_offset = 0.08;
+
+                save.input_mode_button_y_offsets[i] = lerp(
+                    save.input_mode_button_y_offsets[i],
+                    goal_y_offset,
+                    1 - Math.pow(1 - 0.15, 60*deltaTime)
+                );
+                y += save.input_mode_button_y_offsets[i];
+            }
+
+            const ATLAS_PEN     = 0;
+            const ATLAS_RAINBOW = 1;
+            const ATLAS_HAND    = 2;
+            const ATLAS_PAPER   = 3;
+
+            switch (i) {
+                case INPUT_MODE_GRAB_SCROLL: {
+                    moji(x      , y,       0.10, ATLAS_PAPER);
+                    moji(x+0.025, y,       0.05, ATLAS_HAND);
+                } break;
+
+                case INPUT_MODE_PEN: {
+                    moji(x      , y,       0.10, ATLAS_PEN);
+                } break;
+
+                case INPUT_MODE_PEN_RAINBOW: {
+                    moji(x      , y,       0.10, ATLAS_RAINBOW);
+                    moji(x-0.020, y+0.030, 0.07, ATLAS_PEN);
+                } break;
+            }
+        }
+    }
+
     /* upload scroll geometry */
     {
         gl.bindBuffer(gl.ARRAY_BUFFER, buf.scroll_v_pos);
         gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(scroll_pos), gl.STATIC_DRAW);
 
-        gl.bindBuffer(gl.ARRAY_BUFFER, buf.scroll_v_color);
+        gl.bindBuffer(gl.ARRAY_BUFFER, buf.scroll_v_uv);
         gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(scroll_uv), gl.STATIC_DRAW);
 
         gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, buf.scroll_i);
@@ -1188,15 +1654,15 @@ requestAnimationFrame(function frame(now) {
                 DEPTH_TEX_SIZE,
                 DEPTH_TEX_SIZE
             );
-            gl.bindFramebuffer(gl.FRAMEBUFFER, depth_fb); // null);
+            gl.bindFramebuffer(gl.FRAMEBUFFER, depth_fb);
 
             /* enable depth */
             gl.enable(gl.DEPTH_TEST);
             gl.depthFunc(gl.LEQUAL);
 
-            /* backface culling */
-            // gl.cullFace(gl.BACK);
-            // gl.enable(gl.CULL_FACE);
+            /* set up premultiplied alpha */
+            gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
+            gl.disable(gl.BLEND);
 
             /* clear all */
             gl.clearColor(1, 0, 0, 1);
@@ -1241,7 +1707,21 @@ requestAnimationFrame(function frame(now) {
         gl.enableVertexAttribArray(shaders.paint.a_uv);
 
         gl.uniformMatrix4fv(shaders.paint.u_matrix, false, u_vp);
-        gl.uniform4fv(shaders.paint.u_color, hsl_to_rgb([Date.now() / 3000 % 1, 0.9, 0.75, 1.0]));
+        if (input.mode == INPUT_MODE_PEN_RAINBOW) {
+            gl.uniform4fv(
+                shaders.paint.u_color,
+                hsl_to_rgb([Date.now() / 3000 % 1, 0.9, 0.75, 1.0])
+                    // .map(x => x * (input.lmb_down && quill_hovering_parchment))
+            );
+        } else {
+            gl.uniform4f(
+                shaders.paint.u_color,
+                0.30,
+                0.22,
+                0.15,
+                0.9
+            );
+        }
         gl.uniform2f(
             shaders.paint.u_stroke_from,
             -1 + (input.last_mouse_x / window.innerWidth )*2 * input.lmb_down,
@@ -1265,7 +1745,7 @@ requestAnimationFrame(function frame(now) {
             gl.bindBuffer(gl.ARRAY_BUFFER, buf.scroll_v_pos);
             gl.vertexAttribPointer(shaders.paint.a_pos, 3, gl.FLOAT, false, 0, 0);
 
-            gl.bindBuffer(gl.ARRAY_BUFFER, buf.scroll_v_color);
+            gl.bindBuffer(gl.ARRAY_BUFFER, buf.scroll_v_uv);
             gl.vertexAttribPointer(shaders.paint.a_uv, 2, gl.FLOAT, false, 0, 0);
 
             gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, buf.scroll_i);
@@ -1387,7 +1867,7 @@ requestAnimationFrame(function frame(now) {
                 gl.bindBuffer(gl.ARRAY_BUFFER, buf.scroll_v_pos);
                 gl.vertexAttribPointer(shaders.geo.a_pos, 3, gl.FLOAT, false, 0, 0);
 
-                gl.bindBuffer(gl.ARRAY_BUFFER, buf.scroll_v_color);
+                gl.bindBuffer(gl.ARRAY_BUFFER, buf.scroll_v_uv);
                 gl.vertexAttribPointer(shaders.geo.a_uv, 2, gl.FLOAT, true, 0, 0);
 
                 gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, buf.scroll_i);
@@ -1419,7 +1899,7 @@ requestAnimationFrame(function frame(now) {
                 gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(quill_pos), gl.STATIC_DRAW);
                 gl.vertexAttribPointer(shaders.geo.a_pos, 3, gl.FLOAT, false, 0, 0);
 
-                gl.bindBuffer(gl.ARRAY_BUFFER, buf.quill_v_color);
+                gl.bindBuffer(gl.ARRAY_BUFFER, buf.quill_v_uv);
                 gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(quill_uv), gl.STATIC_DRAW);
                 gl.vertexAttribPointer(shaders.geo.a_uv, 2, gl.FLOAT, true, 0, 0);
 
@@ -1452,7 +1932,45 @@ requestAnimationFrame(function frame(now) {
             gl.drawElements(gl.TRIANGLES, buf.grid_i_count, gl.UNSIGNED_SHORT, 0);
         }
 
+        /* geo pass */
+        {
+            gl.disable(gl.DEPTH_TEST);
+
+            gl.useProgram(shaders.geo.program);
+            gl.enableVertexAttribArray(shaders.geo.a_pos);
+            gl.enableVertexAttribArray(shaders.geo.a_uv);
+
+            gl.uniformMatrix4fv(shaders.geo.u_matrix, false, mat4_create());
+            gl.uniform1f(shaders.geo.u_color_mask, 1.0);
+            gl.uniform1f(shaders.geo.u_alpha_mask, 1.0);
+
+            /* upload/bind atlas */
+            {
+                gl.activeTexture(gl.TEXTURE0);
+                gl.bindTexture(gl.TEXTURE_2D, emoji_atlas);
+                gl.uniform1i(shaders.geo.u_texture, 0);
+            }
+
+            /* upload/bind geometry */
+            {
+                gl.bindBuffer(gl.ARRAY_BUFFER, buf.emoji_v_pos);
+                gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(emoji_pos), gl.STATIC_DRAW);
+                gl.vertexAttribPointer(shaders.geo.a_pos, 3, gl.FLOAT, false, 0, 0);
+
+                gl.bindBuffer(gl.ARRAY_BUFFER, buf.emoji_v_uv);
+                gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(emoji_uv), gl.STATIC_DRAW);
+                gl.vertexAttribPointer(shaders.geo.a_uv, 2, gl.FLOAT, false, 0, 0);
+
+                gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, buf.emoji_i);
+                gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, new Uint16Array(emoji_idx), gl.STATIC_DRAW);
+            }
+
+            gl.drawElements(gl.TRIANGLES, emoji_idx.length, gl.UNSIGNED_SHORT, 0);
+        }
+
     }
+
+    input.lmb_clicked = false;
 })
 
 function mat4_create() {

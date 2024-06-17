@@ -112,7 +112,7 @@ let shaders;
 
 let atlas = gl.createTexture();
 const ATLAS_SIZE = 2; /* in emoji */
-const EMOJI_SIZE = 300;
+const EMOJI_SIZE = 256;
 
 {
     const canvas = document.createElement("canvas");
@@ -123,7 +123,7 @@ const EMOJI_SIZE = 300;
 
     {
         const atlas = ['⭐️', '💫', '✨', '🪐'];
-        const PAD = EMOJI_SIZE*0.05;
+        const PAD = EMOJI_SIZE*0.2;
         ctx.font = (EMOJI_SIZE - PAD*2) + 'px sans-serif';
 
         let i = 0;
@@ -134,7 +134,7 @@ const EMOJI_SIZE = 300;
             ctx.fillText(
                 char,
                 x + PAD,
-                y + EMOJI_SIZE - PAD*2
+                y + EMOJI_SIZE - PAD
             );
 
             i++;
@@ -142,6 +142,7 @@ const EMOJI_SIZE = 300;
     }
 
     gl.bindTexture(gl.TEXTURE_2D, atlas);
+    gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, true);
     gl.texImage2D(
         /* target         */ gl.TEXTURE_2D,
         /* level          */ 0,
@@ -153,8 +154,8 @@ const EMOJI_SIZE = 300;
         /* type,          */ gl.UNSIGNED_BYTE,
         /* data           */ canvas
     );
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.generateMipmap(gl.TEXTURE_2D);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
 }
@@ -184,10 +185,11 @@ const geo = {
         /* generate position + index */
         {
             const vbuf_i = geo.pos.length / 3;
-            geo.pos.push(x+size, y-size, 0.1);
-            geo.pos.push(x-size, y-size, 0.1);
-            geo.pos.push(x-size, y+size, 0.1);
-            geo.pos.push(x+size, y+size, 0.1);
+            const ar = window.innerWidth / window.innerHeight;
+            geo.pos.push(x+size, y-size*ar, 0.1);
+            geo.pos.push(x-size, y-size*ar, 0.1);
+            geo.pos.push(x-size, y+size*ar, 0.1);
+            geo.pos.push(x+size, y+size*ar, 0.1);
 
             geo.idx.push(
                 vbuf_i + 0,
@@ -220,12 +222,9 @@ requestAnimationFrame(function frame(timestamp) {
         gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
         gl.enable(gl.BLEND);
 
-        gl.enable(gl.DEPTH_TEST);
-        gl.depthFunc(gl.LEQUAL);
-
         /* clear all */
-        gl.clearColor(0, 0, 0, 1);
-        gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+        gl.clearColor(1, 1, 1, 1);
+        gl.clear(gl.COLOR_BUFFER_BIT);
 
         /* geo pass */
         {
