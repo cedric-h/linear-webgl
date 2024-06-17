@@ -1067,8 +1067,8 @@ let input = {
     window.addEventListener("touchstart", ev => {
         ev.preventDefault();
 
-        touch_x = ev.changedTouches[0].clientX;
-        touch_y = ev.changedTouches[0].clientY;
+        input.raw_mouse_x = touch_x = ev.changedTouches[0].clientX;
+        input.raw_mouse_y = touch_y = ev.changedTouches[0].clientY;
 
         input.lmb_down = true;
     }, opts);
@@ -1079,12 +1079,17 @@ let input = {
 
         input.dampedEvent.movementX += ev.changedTouches[0].clientX - touch_x;
         input.dampedEvent.movementY += ev.changedTouches[0].clientY - touch_y;
-        touch_x = ev.changedTouches[0].clientX;
-        touch_y = ev.changedTouches[0].clientY;
+
+        input.raw_mouse_x = input.pen_screen_x = touch_x = ev.changedTouches[0].clientX;
+        input.raw_mouse_y = input.pen_screen_y = touch_y = ev.changedTouches[0].clientY;
     }, opts);
 
     window.addEventListener("touchend", ev => {
         ev.preventDefault();
+
+        input.raw_mouse_x = ev.changedTouches[0].clientX;
+        input.raw_mouse_y = ev.changedTouches[0].clientY;
+
         input.lmb_down = false;
     }, opts);
 }
@@ -1598,7 +1603,8 @@ requestAnimationFrame(function frame(now) {
         }
 
         for (let i = 0; i < INPUT_MODE_COUNT; i++) {
-            let x = -0.850 + 0.20*i;
+            const ar = window.innerHeight / window.innerWidth;
+            let x = -0.850 + ar*0.20*i;
             let y = -0.950;
 
             let hovered;
@@ -1633,17 +1639,17 @@ requestAnimationFrame(function frame(now) {
 
             switch (i) {
                 case INPUT_MODE_GRAB_SCROLL: {
-                    moji(x      , y,       0.10, ATLAS_PAPER);
-                    moji(x+0.025, y,       0.05, ATLAS_HAND);
+                    moji(x         , y,       0.10, ATLAS_PAPER);
+                    moji(x+0.025*ar, y,       0.05, ATLAS_HAND);
                 } break;
 
                 case INPUT_MODE_PEN: {
-                    moji(x      , y,       0.10, ATLAS_PEN);
+                    moji(x         , y,       0.10, ATLAS_PEN);
                 } break;
 
                 case INPUT_MODE_PEN_RAINBOW: {
-                    moji(x      , y,       0.10, ATLAS_RAINBOW);
-                    moji(x-0.020, y+0.030, 0.07, ATLAS_PEN);
+                    moji(x         , y,       0.10, ATLAS_RAINBOW);
+                    moji(x-0.020*ar, y+0.030, 0.07, ATLAS_PEN);
                 } break;
             }
         }
