@@ -1070,7 +1070,7 @@ let input = {
         input.last_mouse_x = input.raw_mouse_x = touch_x = ev.changedTouches[0].clientX;
         input.last_mouse_y = input.raw_mouse_y = touch_y = ev.changedTouches[0].clientY;
 
-        input.lmb_down = true;
+        input.lmb_clicked = input.lmb_down = true;
     }, opts);
 
     window.addEventListener("touchmove", ev => {
