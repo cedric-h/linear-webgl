@@ -990,6 +990,7 @@ let input = {
     yaw:   -Math.PI*0.15,
 
     dampedEvent: { button: 0, movementX: 0, movementY: 0 },
+    hand_grabbing_parchment: false,
 
     cam_pivot_x:  0,
     cam_pivot_y:  0,
@@ -1027,13 +1028,13 @@ let input = {
         input.raw_mouse_x = ev.offsetX;
         input.raw_mouse_y = ev.offsetY;
 
+        input.dampedEvent.button = ev.button;
+
         if (ev.button == 0) input.lmb_down = input.lmb_clicked = true;
         if (ev.button == 2) input.rmb_down = true;
     }, opts);
     window.addEventListener('mousemove', ev => {
         ev.preventDefault();
-
-        input.dampedEvent.button = input.rmb_down ? 2 : 0;
 
         if (input.lmb_down || input.rmb_down) {
             input.dampedEvent.movementX += ev.movementX;
@@ -1185,6 +1186,17 @@ requestAnimationFrame(function frame(now) {
         quill_hovering_parchment &&= Math.abs(-0.15 - vec[1]) < 0.5;
         quill_hovering_parchment &&= Math.abs(        vec[0]) < 1.1;
 
+        if (input.mode == INPUT_MODE_GRAB_SCROLL) {
+            quill_hovering_parchment = false;
+
+            if (input.lmb_clicked && quill_hovering_parchment) {
+                input.hand_grabbing_parchment = true;
+            }
+            if (!input.lmb_down && Math.abs(input.dampedEvent.movementY) < 1) {
+                input.hand_grabbing_parchment = false;
+            }
+        }
+
         if (!quill_hovering_parchment) {
             const p = [-1.50, 0.00, -1.15, 1.0];
             mat4_transform_vec4(p, p, u_vp);
@@ -1215,11 +1227,12 @@ requestAnimationFrame(function frame(now) {
         if (input.lmb_down || input.rmb_down) document.body.style.cursor = 'grabbing';
         if (quill_hovering_parchment)         document.body.style.cursor = 'crosshair';
 
-        if (ev.button == 0 && !quill_hovering_parchment) {
+        if (ev.button == 0 && !quill_hovering_parchment && !input.hand_grabbing_parchment) {
             input.pitch -= ev.movementX * 0.0005 * zoom_fudge;
             input.yaw   -= ev.movementY * 0.0005 * zoom_fudge;
             input.yaw = Math.max(-Math.PI*0.5 + 0.01, Math.min(Math.PI*0.5 - 0.01, input.yaw));
         }
+
         if (ev.button == 2) {
 
             const unit = [0, -ev.movementX*0.00075*zoom_fudge, ev.movementY*0.00075*zoom_fudge, 1];
@@ -1247,22 +1260,26 @@ requestAnimationFrame(function frame(now) {
 
     /* scroll parchment or zoom camera, depending */
     {
+        /* i like math */
+        const { sqrt, abs, sign, cbrt, pow, min, max } = Math;
 
         /* if hovering parchment, scroll, otherwise zoom camera (and decay scroll input) */
-        if (quill_hovering_parchment) {
-            const t = Math.sqrt(Math.abs(input.scroll)) * Math.sign(input.scroll);
+        if (quill_hovering_parchment || input.hand_grabbing_parchment) {
+            let t = 0;
+            if (quill_hovering_parchment) t = sqrt(abs(input.scroll)) * sign(input.scroll);
+            if (input.hand_grabbing_parchment) t = input.dampedEvent.movementY * 0.5;
 
             save.scroll_prog += t * 0.05 * deltaTime;
-            input.scroll *= Math.pow(1 - 0.20, 60*deltaTime);
+            input.scroll *= pow(1 - 0.20, 60*deltaTime);
 
             /* clamp */
-            save.scroll_prog = Math.min(1.0, Math.max(0.0, save.scroll_prog))
+            save.scroll_prog = min(1.0, max(0.0, save.scroll_prog))
         } else {
-            const t = Math.cbrt(Math.abs(input.scroll)) * Math.sign(input.scroll);
+            const t = cbrt(abs(input.scroll)) * sign(input.scroll);
 
             input.zoom += 0.005*t*input.zoom;
-            input.scroll *= Math.pow(1 - 0.5, 60*deltaTime);
-            input.zoom = Math.min(20, input.zoom);
+            input.scroll *= pow(1 - 0.5, 60*deltaTime);
+            input.zoom = min(20, input.zoom);
         }
     }
 
@@ -1586,8 +1603,8 @@ requestAnimationFrame(function frame(now) {
 
             let hovered;
             {
-                let norm_mouse_x = -1 + (input.last_mouse_x / window.innerWidth )*2;
-                let norm_mouse_y = +1 - (input.last_mouse_y / window.innerHeight)*2;
+                let norm_mouse_x = -1 + (input.raw_mouse_x / window.innerWidth )*2;
+                let norm_mouse_y = +1 - (input.raw_mouse_y / window.innerHeight)*2;
 
                 hovered = true;
                 hovered &&= Math.abs(norm_mouse_x - x) < 0.1;
@@ -1686,7 +1703,7 @@ requestAnimationFrame(function frame(now) {
     }
 
     /* drawing pass */
-    if (tex_scroll_loaded) {
+    if (tex_scroll_loaded && input.mode != INPUT_MODE_GRAB_SCROLL) {
         /* bind to scroll texture */
         {
             gl.bindFramebuffer(gl.FRAMEBUFFER, tex_scroll_fb);
