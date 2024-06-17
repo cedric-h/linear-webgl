@@ -1025,8 +1025,8 @@ let input = {
     window.addEventListener('mousedown', ev => {
         ev.preventDefault();
 
-        input.raw_mouse_x = ev.offsetX;
-        input.raw_mouse_y = ev.offsetY;
+        input.last_mouse_x = input.raw_mouse_x = ev.offsetX;
+        input.last_mouse_y = input.raw_mouse_y = ev.offsetY;
 
         input.dampedEvent.button = ev.button;
 
@@ -1050,8 +1050,8 @@ let input = {
     window.addEventListener('mouseup', ev => {
         ev.preventDefault();
 
-        input.raw_mouse_x = ev.offsetX;
-        input.raw_mouse_y = ev.offsetY;
+        input.last_mouse_x = input.raw_mouse_x = ev.offsetX;
+        input.last_mouse_y = input.raw_mouse_y = ev.offsetY;
 
         if (ev.button == 0) input.lmb_down = false;
         if (ev.button == 2) input.rmb_down = false;
@@ -1067,8 +1067,8 @@ let input = {
     window.addEventListener("touchstart", ev => {
         ev.preventDefault();
 
-        input.raw_mouse_x = touch_x = ev.changedTouches[0].clientX;
-        input.raw_mouse_y = touch_y = ev.changedTouches[0].clientY;
+        input.last_mouse_x = input.raw_mouse_x = touch_x = ev.changedTouches[0].clientX;
+        input.last_mouse_y = input.raw_mouse_y = touch_y = ev.changedTouches[0].clientY;
 
         input.lmb_down = true;
     }, opts);
@@ -1087,8 +1087,8 @@ let input = {
     window.addEventListener("touchend", ev => {
         ev.preventDefault();
 
-        input.raw_mouse_x = ev.changedTouches[0].clientX;
-        input.raw_mouse_y = ev.changedTouches[0].clientY;
+        input.last_mouse_x = input.raw_mouse_x = ev.changedTouches[0].clientX;
+        input.last_mouse_y = input.raw_mouse_y = ev.changedTouches[0].clientY;
 
         input.lmb_down = false;
     }, opts);
@@ -1192,14 +1192,14 @@ requestAnimationFrame(function frame(now) {
         quill_hovering_parchment &&= Math.abs(        vec[0]) < 1.1;
 
         if (input.mode == INPUT_MODE_GRAB_SCROLL) {
-            quill_hovering_parchment = false;
-
             if (input.lmb_clicked && quill_hovering_parchment) {
                 input.hand_grabbing_parchment = true;
             }
             if (!input.lmb_down && Math.abs(input.dampedEvent.movementY) < 1) {
                 input.hand_grabbing_parchment = false;
             }
+
+            quill_hovering_parchment = false;
         }
 
         if (!quill_hovering_parchment) {
