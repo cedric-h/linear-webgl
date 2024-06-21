@@ -1120,6 +1120,33 @@ requestAnimationFrame(function frame(now) {
             const ar = window.innerWidth / window.innerHeight;
             const projection = mat4_perspective(mat4_create(), FIELD_OF_VIEW, ar, 0.01, 1000.0);
 
+            const view_no_translate = mat4_create();
+            {
+                const view = view_no_translate;
+
+                eye[0] = input.zoom;
+                eye[1] = 0;
+                eye[2] = 0;
+                eye[3] = 1;
+                {
+                    mat4_from_z_rotation(scratch, input.pitch);
+                    mat4_mul(view, view, scratch);
+
+                    mat4_from_y_rotation(scratch, input.yaw);
+                    mat4_mul(view, view, scratch);
+
+                    mat4_transform_vec4(eye, eye, view);
+                }
+
+                mat4_target_to(
+                    view,
+                    eye,
+                    [0, 0, 1],
+                    [0, 0, 1]
+                );
+                mat4_invert(view, view);
+            }
+
             const view = mat4_create();
             {
                 eye[0] = input.zoom;
@@ -1144,33 +1171,6 @@ requestAnimationFrame(function frame(now) {
                     eye,
                     [input.cam_pivot_x, input.cam_pivot_y, input.cam_pivot_z],
                     [                0,                 0,                 1]
-                );
-                mat4_invert(view, view);
-            }
-
-            const view_no_translate = mat4_create();
-            {
-                const view = view_no_translate;
-
-                eye[0] = input.zoom;
-                eye[1] = 0;
-                eye[2] = 0;
-                eye[3] = 1;
-                {
-                    mat4_from_z_rotation(scratch, input.pitch);
-                    mat4_mul(view, view, scratch);
-
-                    mat4_from_y_rotation(scratch, input.yaw);
-                    mat4_mul(view, view, scratch);
-
-                    mat4_transform_vec4(eye, eye, view);
-                }
-
-                mat4_target_to(
-                    view,
-                    eye,
-                    [0, 0, 1],
-                    [0, 0, 1]
                 );
                 mat4_invert(view, view);
             }
