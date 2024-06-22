@@ -241,7 +241,7 @@ let input = {
     cam_pivot_y: 0,
     cam_pivot_z: 0,
 
-    zoom:   10,
+    zoom:   20,
     scroll:  0,
 
     lmb_down: false,
@@ -259,13 +259,13 @@ let input = {
     window.addEventListener('mousedown', ev => {
         ev.preventDefault();
 
+        input.dampedEvent.button = ev.button;
+
         if (ev.button == 0) input.lmb_down = true;
         if (ev.button == 2) input.rmb_down = true;
     }, opts);
     window.addEventListener('mousemove', ev => {
         ev.preventDefault();
-
-        input.dampedEvent.button = input.rmb_down ? 2 : 0;
 
         if (input.lmb_down || input.rmb_down) {
             input.dampedEvent.movementX += ev.movementX;
@@ -394,38 +394,45 @@ requestAnimationFrame(function frame(now) {
         ev.movementY *= Math.pow(1 - 0.17, 60*deltaTime);
     }
 
+    /* zoom */
     {
         const t = Math.cbrt(Math.abs(input.scroll)) * Math.sign(input.scroll);
 
         input.zoom += 0.005*t*input.zoom;
         input.scroll *= Math.pow(1 - 0.5, 60*deltaTime);
-        input.zoom = Math.min(20, input.zoom);
     }
 
     const ORTHO = false;
-    const mvp = mat4_create();
+    const u_vp         = mat4_create();
+    const u_vp_skydome = mat4_create(); /* used for skydome */
     const scratch = mat4_create();
     {
-        const model = mat4_create();
-        {
-            // mat4_from_z_rotation(model, input.pitch);
-
-            // mat4_from_y_rotation(scratch, input.yaw);
-            // mat4_mul(model, scratch, model);
-
-            mat4_from_scaling(scratch, 0.5)
-            mat4_mul(model, scratch, model);
-        }
-
         if (ORTHO) {
             const ar = window.innerWidth / window.innerHeight;
-            const projection = mat4_ortho(mat4_create(), -ar, ar, -1, 1, -2, 2);
-
-            mat4_mul(mvp, projection, model);
+            mat4_ortho(u_vp, -ar, ar, -1, 1, -2, 2);
         } else {
             const FIELD_OF_VIEW = 70 / 180 * Math.PI;
             const ar = window.innerWidth / window.innerHeight;
-            const projection = mat4_perspective(mat4_create(), FIELD_OF_VIEW, ar, 0.01, 10000.0);
+            const projection = mat4_perspective(mat4_create(), FIELD_OF_VIEW, ar, 0.01, 1000.0);
+
+            const view_skydome = mat4_create();
+            {
+                const view = view_skydome;
+
+                const eye = [30, 0, 0, 1];
+                {
+                    mat4_from_z_rotation(scratch, input.pitch);
+                    mat4_mul(view, view, scratch);
+
+                    mat4_from_y_rotation(scratch, input.yaw);
+                    mat4_mul(view, view, scratch);
+
+                    mat4_transform_vec4(eye, eye, view);
+                }
+
+                mat4_target_to(view, eye, [0, 0, 1], [0, 0, 1]);
+                mat4_invert(view, view);
+            }
 
             const view = mat4_create();
             {
@@ -452,8 +459,8 @@ requestAnimationFrame(function frame(now) {
                 mat4_invert(view, view);
             }
 
-            mat4_mul(mvp, projection, view);
-            mat4_mul(mvp, mvp, model);
+            mat4_mul(u_vp_skydome, projection, view_skydome);
+            mat4_mul(u_vp        , projection, view        );
         }
     }
 
@@ -511,7 +518,7 @@ requestAnimationFrame(function frame(now) {
             gl.enableVertexAttribArray(shaders.geo.a_pos);
             gl.enableVertexAttribArray(shaders.geo.a_uv);
 
-            gl.uniformMatrix4fv(shaders.geo.u_matrix, false, mvp);
+            gl.uniformMatrix4fv(shaders.geo.u_matrix, false, u_vp_skydome);
 
             /* upload/bind atlas */
             {
@@ -540,7 +547,7 @@ requestAnimationFrame(function frame(now) {
             gl.enableVertexAttribArray(shaders.grid.a_pos);
             gl.enableVertexAttribArray(shaders.grid.a_uv);
 
-            gl.uniformMatrix4fv(shaders.grid.u_matrix, false, mvp);
+            gl.uniformMatrix4fv(shaders.grid.u_matrix, false, u_vp);
 
             /* upload/bind geometry */
             {
