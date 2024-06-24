@@ -4,7 +4,8 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <title>WebGL Demo</title>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🏔️</text></svg>">
+    <title>🖌️ terrain painter</title>
     <style> document, body { margin: 0px; padding: 0px; overflow: hidden; } </style>
   </head>
 
@@ -14,6 +15,9 @@
 const canvas = document.getElementById('glcanvas');
 const gl = canvas.getContext('webgl2', {antialias: true});
 if (!gl) { alert('Failed to initialize WebGL'); }
+
+/* square tile's "radius" is just its size (width/length) */
+const TERRAIN_RADIUS = 7;
 
 (window.onresize = () => {
     canvas.width = window.innerWidth;
@@ -26,13 +30,6 @@ if (!gl) { alert('Failed to initialize WebGL'); }
         canvas.width *= window.devicePixelRatio;
         canvas.height *= window.devicePixelRatio;
     }
-
-    gl.viewport(
-        0,
-        0,
-        canvas.width,
-        canvas.height
-    );
 })();
 
 let shaders;
@@ -65,22 +62,62 @@ let shaders;
 
     const vs_grid = `#version 300 es
         in vec3 a_pos;
+        in vec2 a_uv;
 
         uniform mat4 u_matrix;
 
+        uniform sampler2D u_texture;
+
+        out vec2 v_uv;
+
         void main() {
-            gl_Position = u_matrix * vec4(a_pos.xyz*0.01, 1);
+            v_uv = a_uv;
+            float z = 1.0 + (1.0 - texture(u_texture, v_uv).r) * 5.0;
+            gl_Position = u_matrix * vec4(a_pos.xy, z, 1);
         }`;
 
     const fs_grid = `#version 300 es
         precision mediump float;
 
+        uniform sampler2D u_texture;
+
+        in  vec2 v_uv;
         out vec4 frag_color;
 
         void main() {
-            frag_color = vec4(0.1, 0.1, 0.1, 0.0);
+            frag_color = texture(u_texture, v_uv);
+            frag_color.xyz = 1.0 - frag_color.xyz;
         }`;
 
+    const vs_paint = 
+        'attribute vec3 a_pos;' +
+        'attribute vec2 a_uv;' +
+
+        'varying vec3 v_pos;' +
+
+        'void main() {' +
+        '    v_pos = a_pos;' +
+        '    gl_Position = vec4(a_uv*2.0 - 1.0, 0.0, 1.0);' +
+        '}';
+
+    const fs_paint = 
+        'precision mediump float;' +
+
+        'uniform mat4 u_matrix;' +
+        'varying vec3 v_pos;' +
+
+        'uniform vec4 u_color;' +
+        'uniform vec2 u_brush;' +
+        'uniform vec2 u_aspect_ratio;' +
+
+        'void main() {' +
+        '    vec4 world_pos = u_matrix * vec4(v_pos, 1.0);' +
+        '    world_pos.xy = world_pos.xy / world_pos.w;' +
+        
+        '    vec2 delta = (world_pos.xy - u_brush)*u_aspect_ratio;' +
+        '    const float scale = 2.0;' +
+        '    gl_FragColor = smoothstep(0.023*scale, 0.02*scale, length(delta)) * u_color;' +
+        '}';
 
     function createProgram(gl, vertexSource, fragmentSource) {
         function createShader(gl, type, source) {
@@ -124,8 +161,9 @@ let shaders;
 
 
     shaders = {
-        geo:  createProgram(gl, vs_geo , fs_geo ),
-        grid: createProgram(gl, vs_grid, fs_grid),
+        geo:   createProgram(gl, vs_geo  , fs_geo  ),
+        grid:  createProgram(gl, vs_grid , fs_grid ),
+        paint: createProgram(gl, vs_paint, fs_paint),
     }
 }
 
@@ -135,11 +173,52 @@ const buf = {
     skydome_i:     gl.createBuffer(),
     skydome_i_count: 0,
 
+    emoji_v_pos: gl.createBuffer(),
+    emoji_v_uv:  gl.createBuffer(),
+    emoji_i:     gl.createBuffer(),
+
     grid_v_pos:  gl.createBuffer(),
-    // grid_v_uv:   gl.createBuffer(),
+    grid_v_uv:   gl.createBuffer(),
     grid_i:      gl.createBuffer(),
     grid_i_count: 0,
 };
+
+const PAINT_ATLAS_RESOLUTION = 1 << 9;
+const paint_atlas_color = gl.createTexture();
+const paint_atlas_fb = gl.createFramebuffer();
+{
+    gl.bindTexture(gl.TEXTURE_2D, paint_atlas_color);
+    gl.texImage2D(
+        /* target         */ gl.TEXTURE_2D,
+        /* level          */ 0,
+        /* internalformat */ gl.RGBA,
+        /* width          */ PAINT_ATLAS_RESOLUTION,
+        /* height         */ PAINT_ATLAS_RESOLUTION,
+        /* border,        */ 0,
+        /* format,        */ gl.RGBA,
+        /* type,          */ gl.UNSIGNED_BYTE,
+        /* data           */ null
+    );
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+
+    gl.bindFramebuffer(gl.FRAMEBUFFER, paint_atlas_fb);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, paint_atlas_color, 0);
+
+    /* clear the fb to white*/
+    {
+        gl.viewport(
+            0,
+            0,
+            PAINT_ATLAS_RESOLUTION,
+            PAINT_ATLAS_RESOLUTION,
+        );
+        gl.clearColor(1, 1, 1, 1);
+        gl.clear(gl.COLOR_BUFFER_BIT);
+    }
+}
 
 /* generate skydome geometry */
 {
@@ -208,18 +287,21 @@ const buf = {
     const grid_idx = [];
     const grid_pos = [];
     const grid_uv  = [];
-    {
+    if (0) {
         const corners = [
-            -999, -999, -0,  -999,  999, -0,   999,  999, -0,   999, -999, -0, /* Bottom face */
+            -TERRAIN_RADIUS, -TERRAIN_RADIUS, -0,
+            -TERRAIN_RADIUS,  TERRAIN_RADIUS, -0,
+             TERRAIN_RADIUS,  TERRAIN_RADIUS, -0,
+             TERRAIN_RADIUS, -TERRAIN_RADIUS, -0, /* Bottom face */
         ];
 
         for (let corner_i = 0; corner_i < corners.length; corner_i += 12) {
-            // grid_uv.push(
-            //     255,   0,
-            //       0,   0,
-            //       0, 255,
-            //     255, 255,
-            // );
+            grid_uv.push(
+                255,   0,
+                  0,   0,
+                  0, 255,
+                255, 255,
+            );
 
             const vbuf_i = grid_pos.length / 3;
             grid_pos.push(corners[corner_i +  0], corners[corner_i +  1], corners[corner_i +  2]);
@@ -239,11 +321,43 @@ const buf = {
     }
 
     {
+        const WIDTH_SEGMENTS  = 1 << 5;
+        const HEIGHT_SEGMENTS = 1 << 5;
+        const RADIUS          = TERRAIN_RADIUS;
+
+        const grid = [];
+        let index = 0;
+        for (let iy = 0; iy <= HEIGHT_SEGMENTS; iy++) {
+            const v = iy / HEIGHT_SEGMENTS;
+
+            for (let ix = 0; ix <= WIDTH_SEGMENTS; ix++) {
+                const u = ix / WIDTH_SEGMENTS;
+
+                grid_uv.push(255*u, 255*(1 - v));
+                grid_pos.push((u - 0.5) * 2 * TERRAIN_RADIUS, (v - 0.5) * 2 * TERRAIN_RADIUS, 0);
+                grid.push(index++);
+            }
+        }
+
+        for (let iy = 0; iy < HEIGHT_SEGMENTS; iy++) {
+            for (let ix = 0; ix < WIDTH_SEGMENTS; ix++) {
+                const a = grid[(iy    )*(WIDTH_SEGMENTS + 1) + ix + 1];
+                const b = grid[(iy    )*(WIDTH_SEGMENTS + 1) + ix    ];
+                const c = grid[(iy + 1)*(WIDTH_SEGMENTS + 1) + ix    ];
+                const d = grid[(iy + 1)*(WIDTH_SEGMENTS + 1) + ix + 1];
+
+                grid_idx.push(a, b, d);
+                grid_idx.push(b, c, d);
+            }
+        }
+    }
+
+    {
         gl.bindBuffer(gl.ARRAY_BUFFER, buf.grid_v_pos);
         gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(grid_pos), gl.STATIC_DRAW);
 
-        // gl.bindBuffer(gl.ARRAY_BUFFER, buf.grid_v_uv);
-        // gl.bufferData(gl.ARRAY_BUFFER, new Uint8Array(grid_uv), gl.STATIC_DRAW);
+        gl.bindBuffer(gl.ARRAY_BUFFER, buf.grid_v_uv);
+        gl.bufferData(gl.ARRAY_BUFFER, new Uint8Array(grid_uv), gl.STATIC_DRAW);
 
         gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, buf.grid_i);
         gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, new Uint16Array(grid_idx), gl.STATIC_DRAW);
@@ -253,11 +367,17 @@ const buf = {
 }
 
 
+const INTENT_NONE  = 0;
+const INTENT_PIVOT = 1;
+const INTENT_PAN   = 2;
+const INTENT_DRAW  = 3;
 let input = {
     pitch:  Math.PI*0.25,
     yaw:   -Math.PI*0.25,
 
-    dampedEvent: { button: 0, movementX: 0, movementY: 0 },
+    hovering_terrain: false,
+
+    dampedEvent: { intent: INTENT_NONE, movementX: 0, movementY: 0 },
 
     cam_pivot_x: 0,
     cam_pivot_y: 0,
@@ -281,10 +401,10 @@ let input = {
     window.addEventListener('mousedown', ev => {
         ev.preventDefault();
 
-        input.dampedEvent.button = ev.button;
+        if (ev.button == 0) input.lmb_down = true, input.dampedEvent.intent = INTENT_PIVOT;
+        if (ev.button == 2) input.rmb_down = true, input.dampedEvent.intent = INTENT_PAN;
 
-        if (ev.button == 0) input.lmb_down = true;
-        if (ev.button == 2) input.rmb_down = true;
+        if (ev.button == 0 && input.hovering_terrain) input.dampedEvent.intent = INTENT_DRAW;
     }, opts);
     window.addEventListener('mousemove', ev => {
         ev.preventDefault();
@@ -325,7 +445,7 @@ let input = {
 
     window.addEventListener("touchmove", ev => {
         ev.preventDefault();
-        input.dampedEvent.button = 0;
+        input.dampedEvent.intent = INTENT_NONE;
 
         input.dampedEvent.movementX += ev.changedTouches[0].clientX - touch_x;
         input.dampedEvent.movementY += ev.changedTouches[0].clientY - touch_y;
@@ -339,7 +459,367 @@ let input = {
     }, opts);
 }
 
-let atlas = gl.createTexture();
+let tex_emoji_atlas = gl.createTexture();
+const ATLAS_SIZE = 2; /* in emoji */
+const EMOJI_SIZE = 256;
+{
+    const canvas = document.createElement("canvas");
+
+    canvas.width = canvas.height = ATLAS_SIZE * EMOJI_SIZE;
+
+    const ctx = canvas.getContext("2d");
+
+    {
+        const atlas = ['✒️', '🌈', '🤚', '📜'];
+        const PAD = EMOJI_SIZE*0.2;
+        ctx.font = (EMOJI_SIZE - PAD*2) + 'px sans-serif';
+
+        let i = 0;
+        for (const char of atlas) {
+            const x = (           i % ATLAS_SIZE ) * EMOJI_SIZE;
+            const y = (Math.floor(i / ATLAS_SIZE)) * EMOJI_SIZE;
+
+            ctx.fillText(
+                char,
+                x + PAD,
+                y + EMOJI_SIZE - PAD
+            );
+
+            i++;
+        }
+    }
+
+    gl.bindTexture(gl.TEXTURE_2D, tex_emoji_atlas);
+    gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, true);
+    gl.texImage2D(
+        /* target         */ gl.TEXTURE_2D,
+        /* level          */ 0,
+        /* internalformat */ gl.RGBA,
+        /* width          */ canvas.width,
+        /* height         */ canvas.height,
+        /* border,        */ 0,
+        /* format,        */ gl.RGBA,
+        /* type,          */ gl.UNSIGNED_BYTE,
+        /* data           */ canvas
+    );
+
+    /* add shadow to images in atlas */
+    {
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+
+        const shadowed = shadowForTexture(
+            tex_emoji_atlas,
+            canvas.width,
+            canvas.height,
+            0
+        );
+        gl.disableVertexAttribArray(1);
+        gl.deleteTexture(tex_emoji_atlas);
+        tex_emoji_atlas = shadowed;
+    }
+
+    gl.bindTexture(gl.TEXTURE_2D, tex_emoji_atlas);
+    gl.generateMipmap(gl.TEXTURE_2D);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+
+
+    /* if you're going to use this multiple times in a single program,
+     * consider modifying it to not immediately delete all the shaders.
+     *
+     * or just take the shader compilation hit -- i don't care what you do.
+     *
+     * note, if you don't care about supporting Safari, you can generate shadows entirely in canvas
+     * https://developer.mozilla.org/en-US/docs/Web/API/CanvasRenderingContext2D/filter
+     *
+     */
+    function shadowForTexture(texture, texture_width, texture_height, texture_pad) {
+        /* compile shaders */
+        let shaders;
+        {
+            const vs_img = `
+                attribute vec3 a_pos;
+                attribute vec2 a_uv;
+
+                uniform mat4 u_matrix;
+
+                varying vec2 v_uv;
+
+                void main() {
+                    gl_Position = u_matrix * vec4(a_pos.xyz, 1);
+                    v_uv = a_uv;
+                }`;
+
+            const fs_img = `
+                precision mediump float;
+
+                varying vec2 v_uv;
+
+                uniform sampler2D u_texture;
+                uniform vec4 u_mask;
+
+                void main() {
+                    gl_FragColor = texture2D(u_texture, v_uv);
+
+                    /* somehow alpha got overmultiplied, freaky af */
+                    // gl_FragColor.xyz /= gl_FragColor.w;
+
+                    gl_FragColor.rgb *= u_mask.rgb;
+                    gl_FragColor     *= u_mask.a;
+                }`;
+
+
+            const vs_fullscreen_blur = `#version 300 es
+                precision mediump float;
+
+                out vec2 v_texcoord;
+
+                void main(void) {
+                    float x = float((gl_VertexID & 1) << 2);
+                    float y = float((gl_VertexID & 2) << 1);
+                    v_texcoord.x = x * 0.5;
+                    v_texcoord.y = y * 0.5;
+                    gl_Position = vec4(x - 1.0, y - 1.0, 0, 1);
+                }
+            `;
+
+            const fs_fullscreen_blur = `#version 300 es
+                precision mediump float;
+
+                uniform sampler2D u_texture;
+                uniform vec2 u_direction;
+
+                in vec2 v_texcoord;
+
+                out vec4 frag_color;
+
+                void main(void) {
+                    vec2 one_pixel = u_direction*(vec2(1) / vec2(textureSize(u_texture, 0)));
+
+                    frag_color = texture(u_texture, v_texcoord) * 0.2270270270;
+
+                    frag_color += texture(u_texture, v_texcoord + one_pixel    ) * 0.1945945946;
+                    frag_color += texture(u_texture, v_texcoord - one_pixel    ) * 0.1945945946;
+
+                    frag_color += texture(u_texture, v_texcoord + one_pixel*2.0) * 0.1216216216;
+                    frag_color += texture(u_texture, v_texcoord - one_pixel*2.0) * 0.1216216216;
+
+                    frag_color += texture(u_texture, v_texcoord + one_pixel*3.0) * 0.0540540541;
+                    frag_color += texture(u_texture, v_texcoord - one_pixel*3.0) * 0.0540540541;
+
+                    frag_color += texture(u_texture, v_texcoord + one_pixel*4.0) * 0.0162162162;
+                    frag_color += texture(u_texture, v_texcoord - one_pixel*4.0) * 0.0162162162;
+                }
+            `;
+
+            shaders = {
+                img:             createProgram(gl, vs_img            , fs_img            ),
+                fullscreen_blur: createProgram(gl, vs_fullscreen_blur, fs_fullscreen_blur),
+            };
+        }
+
+        let prebaked;
+        {
+          /* some suggestions on AA/multisampling https://stackoverflow.com/a/55976760 */
+          const canvas_width  = texture_width  + texture_pad*2;
+          const canvas_height = texture_height + texture_pad*2;
+
+          gl.viewport(
+              0,
+              0,
+              canvas_width,
+              canvas_height
+          );
+
+          /* this way we can just draw the image from (0, 0)..(width,height)
+           * and it will have even padding on all sides */
+          const pMatrix = mat4_ortho(
+              mat4_create(),
+              -texture_pad,
+              texture_width +texture_pad,
+              -texture_pad,
+              texture_height+texture_pad,
+              1,
+              -1
+          );
+
+          const render_targets = [
+            { tex: gl.createTexture(), fb: gl.createFramebuffer() },
+            { tex: gl.createTexture(), fb: gl.createFramebuffer() },
+          ];
+         
+          for (const rt of render_targets) {
+              gl.bindTexture(gl.TEXTURE_2D, rt.tex);
+
+              // Upload the image into the texture.
+              gl.texImage2D(
+                  /* target         */ gl.TEXTURE_2D,
+                  /* level          */ 0,
+                  /* internalformat */ gl.RGBA,
+                  /* width          */ canvas_width ,
+                  /* height         */ canvas_height,
+                  /* border,        */ 0,
+                  /* format,        */ gl.RGBA,
+                  /* type,          */ gl.UNSIGNED_BYTE,
+                  /* data           */ null
+              );
+              gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+              gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+              gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+
+              gl.bindFramebuffer(gl.FRAMEBUFFER, rt.fb);
+              gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, rt.tex, 0);
+          }
+
+          /* prebaked rt is bound */
+          
+          const img_vbuf_pos = gl.createBuffer();
+          const img_vbuf_uv  = gl.createBuffer();
+          const img_ibuf     = gl.createBuffer();
+
+          {
+            const img_idx = [];
+            const img_pos = [];
+            const img_uv  = [];
+
+            {
+                const min_x = 0;
+                const min_y = 0;
+                const max_x = texture_width;
+                const max_y = texture_height;
+
+                img_uv.push(
+                    1, 0,
+                    0, 0,
+                    0, 1,
+                    1, 1
+                );
+
+                const vbuf_i = img_pos.length / 3;
+                img_pos.push(max_x, min_y, 0.1);
+                img_pos.push(min_x, min_y, 0.1);
+                img_pos.push(min_x, max_y, 0.1);
+                img_pos.push(max_x, max_y, 0.1);
+
+                img_idx.push(vbuf_i + 0, vbuf_i + 1, vbuf_i + 2, vbuf_i + 2, vbuf_i + 3, vbuf_i + 0);
+            }
+
+            /* set up premultiplied alpha */
+            gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
+            gl.enable(gl.BLEND);
+
+            gl.enable(gl.DEPTH_TEST);
+            gl.depthFunc(gl.LEQUAL);
+
+            /* clear all */
+            gl.clearColor(0, 0, 0, 0);
+            gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+
+            /* shadow img pass (see color mask) */
+            function imgPass(u_mask_r, u_mask_g, u_mask_b, u_alpha_mask) {
+                gl.useProgram(shaders.img.program);
+                gl.enableVertexAttribArray(shaders.img.a_pos);
+                gl.enableVertexAttribArray(shaders.img.a_uv);
+
+                /* upload/bind atlas */
+                {
+                    gl.activeTexture(gl.TEXTURE0);
+                    gl.bindTexture(gl.TEXTURE_2D, texture);
+                    gl.uniform1i(shaders.img.u_texture, 0);
+                }
+
+                gl.uniformMatrix4fv(shaders.img.u_matrix, false, pMatrix);
+                gl.uniform4f(shaders.img.u_mask, u_mask_r, u_mask_g, u_mask_b, u_alpha_mask);
+
+                /* upload/bind geometry */
+
+                {
+                    gl.bindBuffer(gl.ARRAY_BUFFER, img_vbuf_pos);
+                    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(img_pos), gl.STATIC_DRAW);
+                    gl.vertexAttribPointer(shaders.img.a_pos, 3, gl.FLOAT, false, 0, 0);
+
+                    gl.bindBuffer(gl.ARRAY_BUFFER, img_vbuf_uv);
+                    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(img_uv), gl.STATIC_DRAW);
+                    gl.vertexAttribPointer(shaders.img.a_uv, 2, gl.FLOAT, true, 0, 0);
+
+                    gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, img_ibuf);
+                    gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, new Uint16Array(img_idx), gl.STATIC_DRAW);
+                }
+
+                gl.drawElements(gl.TRIANGLES, img_idx.length, gl.UNSIGNED_SHORT, 0);
+            }
+
+            gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
+            gl.enable(gl.BLEND);
+
+            imgPass(0.20, 0.20, 0.20, 0.20);
+
+            /* blur time */
+            {
+                const passes = [
+                    // [render_targets[1].fb, render_targets[0].tex, [ 0, 10]],
+                    // [render_targets[0].fb, render_targets[1].tex, [ 9,  0]],
+                    // [render_targets[1].fb, render_targets[0].tex, [ 0,  8]],
+                    // [render_targets[0].fb, render_targets[1].tex, [ 7,  0]],
+                    [render_targets[1].fb, render_targets[0].tex, [ 0,  6]],
+                    [render_targets[0].fb, render_targets[1].tex, [ 5,  0]],
+                    [render_targets[1].fb, render_targets[0].tex, [ 0,  4]],
+                    [render_targets[0].fb, render_targets[1].tex, [ 3,  0]],
+                    [render_targets[1].fb, render_targets[0].tex, [ 0,  2]],
+                    [render_targets[0].fb, render_targets[1].tex, [ 1,  0]]
+                ];
+                for (const [dst_fb, src_tex, dir] of passes) {
+                    gl.bindFramebuffer(gl.FRAMEBUFFER, dst_fb);
+
+                    gl.useProgram(shaders.fullscreen_blur.program);
+
+                    gl.uniform2fv(shaders.fullscreen_blur.u_direction, [dir[0]*2, dir[1]*2]);
+
+                    /* bind tex */
+                    {
+                        gl.activeTexture(gl.TEXTURE0);
+                        gl.bindTexture(gl.TEXTURE_2D, src_tex);
+                        gl.uniform1i(shaders.fullscreen_blur.u_texture, 0);
+                    }
+
+                    gl.drawArrays(gl.TRIANGLE_FAN, 0, 3);
+                }
+            }
+
+            gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
+            gl.enable(gl.BLEND);
+            imgPass(1, 1, 1, 1);
+          }
+
+          gl.deleteBuffer(img_vbuf_pos);
+          gl.deleteBuffer(img_vbuf_uv );
+          gl.deleteBuffer(img_ibuf    );
+
+          gl.deleteProgram(shaders.img.program);
+          gl.deleteShader(shaders.img.vs);
+          gl.deleteShader(shaders.img.fs);
+
+          gl.deleteProgram(shaders.fullscreen_blur.program);
+          gl.deleteShader(shaders.fullscreen_blur.vs);
+          gl.deleteShader(shaders.fullscreen_blur.fs);
+
+          gl.deleteFramebuffer(render_targets[0].fb);
+          gl.deleteFramebuffer(render_targets[1].fb);
+          gl.deleteTexture(render_targets[1].tex);
+          prebaked = render_targets[0].tex;
+
+          gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+        }
+
+        return prebaked;
+    }
+}
+
+let tex_skydome = gl.createTexture();
 (async () => {
     const img = new Image();
     img.src = 'tiber_1.jpg';
@@ -350,7 +830,7 @@ let atlas = gl.createTexture();
     canvas.height = img.height;
     canvas.getContext("2d").drawImage(img, 0, 0);
 
-    gl.bindTexture(gl.TEXTURE_2D, atlas);
+    gl.bindTexture(gl.TEXTURE_2D, tex_skydome);
     gl.texImage2D(
         /* target         */ gl.TEXTURE_2D,
         /* level          */ 0,
@@ -376,6 +856,100 @@ requestAnimationFrame(function frame(now) {
     const deltaTime = now - then;
     then = now;
 
+    const ORTHO = false;
+    const u_vp         = mat4_create();
+    const u_vp_skydome = mat4_create(); /* used for skydome */
+    const u_vp_inv     = mat4_create();
+    const scratch = mat4_create();
+    let eye;
+    {
+        if (ORTHO) {
+            const ar = window.innerWidth / window.innerHeight;
+            mat4_ortho(u_vp, -ar, ar, -1, 1, -2, 2);
+        } else {
+            const FIELD_OF_VIEW = 70 / 180 * Math.PI;
+            const ar = window.innerWidth / window.innerHeight;
+            const projection = mat4_perspective(mat4_create(), FIELD_OF_VIEW, ar, 0.01, 1000.0);
+
+            const view_skydome = mat4_create();
+            {
+                const view = view_skydome;
+
+                const eye = [30, 0, 0, 1];
+                {
+                    mat4_from_z_rotation(scratch, input.pitch);
+                    mat4_mul(view, view, scratch);
+
+                    mat4_from_y_rotation(scratch, input.yaw);
+                    mat4_mul(view, view, scratch);
+
+                    mat4_transform_vec4(eye, eye, view);
+                }
+
+                mat4_target_to(view, eye, [0, 0, 1], [0, 0, 1]);
+                mat4_invert(view, view);
+            }
+
+            const view = mat4_create();
+            {
+                eye = [input.zoom, 0, 0, 1];
+                {
+                    mat4_from_z_rotation(scratch, input.pitch);
+                    mat4_mul(view, view, scratch);
+
+                    mat4_from_y_rotation(scratch, input.yaw);
+                    mat4_mul(view, view, scratch);
+
+                    mat4_transform_vec4(eye, eye, view);
+                }
+
+                eye[0] += input.cam_pivot_x;
+                eye[1] += input.cam_pivot_y;
+                eye[2] += input.cam_pivot_z;
+                mat4_target_to(
+                    view,
+                    eye,
+                    [input.cam_pivot_x, input.cam_pivot_y, input.cam_pivot_z],
+                    [                0,                 0,                 1]
+                );
+                mat4_invert(view, view);
+            }
+
+            mat4_mul(u_vp_skydome, projection, view_skydome);
+            mat4_mul(u_vp        , projection, view        );
+            mat4_invert(u_vp_inv, u_vp);
+        }
+    }
+
+    /* determine if the mouse is over the geometry */
+    let pen_pos = [0, 0, 0, 1];
+    {
+        const vec = pen_pos;
+        vec[0] = -1 + (input.mouse_x / gl.canvas.width )*2;
+        vec[1] = +1 - (input.mouse_y / gl.canvas.height)*2;
+        vec[2] = 1;
+        vec[3] = 1;
+
+        mat4_transform_vec4(vec, vec, u_vp_inv);
+        vec[0] /= vec[3];
+        vec[1] /= vec[3];
+        vec[2] /= vec[3];
+        vec[3] = 1;
+
+        ray_hit_plane(
+            vec,
+                     eye[0],          eye[1],          eye[2], /* ray origin */
+            vec[0] - eye[0], vec[1] - eye[1], vec[2] - eye[2], /* ray vector */
+
+            0, 0, 0, /* plane origin */
+            0, 0, 1, /* plane vector */
+        );
+
+        input.hovering_terrain = true;
+        input.hovering_terrain &&= Math.abs(pen_pos[0]) < TERRAIN_RADIUS;
+        input.hovering_terrain &&= Math.abs(pen_pos[1]) < TERRAIN_RADIUS;
+    }
+
     /* we could apply these changes directly in the event handlers, but the result feels "low fps"
      * because we don't get input events at 60fps. so instead, we apply the changes every frame
      * and simply "damp them" so that they get weaker every frame.
@@ -387,12 +961,12 @@ requestAnimationFrame(function frame(now) {
          * you're doing finer-detailed work and want more precise movements. */
         const zoom_fudge = Math.sqrt(input.zoom/10.0)*2.0;
 
-        if (ev.button == 0) {
+        if (ev.intent == INTENT_PIVOT) {
             input.pitch -= ev.movementX * 0.0005 * zoom_fudge;
             input.yaw   -= ev.movementY * 0.0005 * zoom_fudge;
             input.yaw = Math.max(-Math.PI*0.5 + 0.01, Math.min(Math.PI*0.5 - 0.01, input.yaw));
         }
-        if (ev.button == 2) {
+        if (ev.intent == INTENT_PAN) {
             const unit = [0, -ev.movementX*0.00075*zoom_fudge, ev.movementY*0.00075*zoom_fudge, 1];
             {
                 const view    = mat4_create();
@@ -424,79 +998,135 @@ requestAnimationFrame(function frame(now) {
         input.scroll *= Math.pow(1 - 0.5, 60*deltaTime);
     }
 
-    const ORTHO = false;
-    const u_vp         = mat4_create();
-    const u_vp_skydome = mat4_create(); /* used for skydome */
-    const scratch = mat4_create();
+    /* generate emoji geometry */
+    const emoji_idx = [];
+    const emoji_pos = [];
+    const emoji_uv  = [];
     {
-        if (ORTHO) {
-            const ar = window.innerWidth / window.innerHeight;
-            mat4_ortho(u_vp, -ar, ar, -1, 1, -2, 2);
-        } else {
-            const FIELD_OF_VIEW = 70 / 180 * Math.PI;
-            const ar = window.innerWidth / window.innerHeight;
-            const projection = mat4_perspective(mat4_create(), FIELD_OF_VIEW, ar, 0.01, 1000.0);
+        function moji(x, y, size, atlas_index) {
 
-            const view_skydome = mat4_create();
+            /* generate UVs from atlas_index */
             {
-                const view = view_skydome;
+                const u = (           atlas_index % ATLAS_SIZE );
+                const v = (Math.floor(atlas_index / ATLAS_SIZE));
 
-                const eye = [30, 0, 0, 1];
-                {
-                    mat4_from_z_rotation(scratch, input.pitch);
-                    mat4_mul(view, view, scratch);
-
-                    mat4_from_y_rotation(scratch, input.yaw);
-                    mat4_mul(view, view, scratch);
-
-                    mat4_transform_vec4(eye, eye, view);
-                }
-
-                mat4_target_to(view, eye, [0, 0, 1], [0, 0, 1]);
-                mat4_invert(view, view);
-            }
-
-            const view = mat4_create();
-            {
-                const eye = [input.zoom, 0, 0, 1];
-                {
-                    mat4_from_z_rotation(scratch, input.pitch);
-                    mat4_mul(view, view, scratch);
-
-                    mat4_from_y_rotation(scratch, input.yaw);
-                    mat4_mul(view, view, scratch);
-
-                    mat4_transform_vec4(eye, eye, view);
-                }
-
-                eye[0] += input.cam_pivot_x;
-                eye[1] += input.cam_pivot_y;
-                eye[2] += input.cam_pivot_z;
-                mat4_target_to(
-                    view,
-                    eye,
-                    [input.cam_pivot_x, input.cam_pivot_y, input.cam_pivot_z],
-                    [                0,                 0,                 1]
+                emoji_uv.push(
+                    (u+1)/ATLAS_SIZE, (v+1)/ATLAS_SIZE,
+                    (u+0)/ATLAS_SIZE, (v+1)/ATLAS_SIZE,
+                    (u+0)/ATLAS_SIZE, (v+0)/ATLAS_SIZE,
+                    (u+1)/ATLAS_SIZE, (v+0)/ATLAS_SIZE,
                 );
-                mat4_invert(view, view);
             }
 
-            mat4_mul(u_vp_skydome, projection, view_skydome);
-            mat4_mul(u_vp        , projection, view        );
+            /* generate position + index */
+            {
+                const vbuf_i = emoji_pos.length / 3;
+                const ar = window.innerHeight / window.innerWidth;
+                emoji_pos.push(x+size*ar, y-size, 0.1);
+                emoji_pos.push(x-size*ar, y-size, 0.1);
+                emoji_pos.push(x-size*ar, y+size, 0.1);
+                emoji_pos.push(x+size*ar, y+size, 0.1);
+
+                emoji_idx.push(
+                    vbuf_i + 0,
+                    vbuf_i + 1,
+                    vbuf_i + 2,
+                    vbuf_i + 2,
+                    vbuf_i + 3,
+                    vbuf_i + 0
+                );
+            }
+        }
+
+        if (0) {
+            const p = [...pen_pos];
+            mat4_transform_vec4(p, p, u_vp);
+            p[0] /= p[3];
+            p[1] /= p[3];
+            moji(p[0], p[1], 0.1, 0);
         }
     }
 
     {
-        /* set up premultiplied alpha */
-        gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
-        gl.enable(gl.BLEND);
+        /* paint pass */
+        {
+            /* bind to paint fb */
+            {
+                gl.bindFramebuffer(gl.FRAMEBUFFER, paint_atlas_fb);
+                gl.viewport(
+                    0,
+                    0,
+                    PAINT_ATLAS_RESOLUTION,
+                    PAINT_ATLAS_RESOLUTION,
+                );
 
-        gl.enable(gl.DEPTH_TEST);
-        gl.depthFunc(gl.LEQUAL);
+                /* backface culling */
+                // gl.cullFace(gl.BACK);
+                // gl.enable(gl.CULL_FACE);
 
-        /* clear all */
-        gl.clearColor(0, 0, 0, 1);
-        gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+                /* set up premultiplied alpha */
+                gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
+                gl.enable(gl.BLEND);
+            }
+
+            gl.useProgram(shaders.paint.program);
+            gl.enableVertexAttribArray(shaders.paint.a_pos);
+            gl.enableVertexAttribArray(shaders.paint.a_uv);
+
+            gl.uniformMatrix4fv(shaders.paint.u_matrix, false, u_vp);
+            {
+                let color = [0, 0, 0, 0];
+                if (input.lmb_down && input.dampedEvent.intent == INTENT_DRAW) {
+                    color = [0.0, 0.0, 0.0, 0.02];
+                }
+                gl.uniform4fv(shaders.paint.u_color, color);
+            }
+            gl.uniform2f(
+                shaders.paint.u_brush,
+                -1 + (input.mouse_x / gl.canvas.width )*2,
+                +1 - (input.mouse_y / gl.canvas.height)*2
+            );
+            gl.uniform2f(
+                shaders.paint.u_aspect_ratio,
+                (window.innerWidth  / window.innerWidth),
+                (window.innerHeight / window.innerWidth)
+            );
+
+            /* bind geometry */
+            {
+                gl.bindBuffer(gl.ARRAY_BUFFER, buf.grid_v_pos);
+                gl.vertexAttribPointer(shaders.grid.a_pos, 3, gl.FLOAT, false, 0, 0);
+
+                gl.bindBuffer(gl.ARRAY_BUFFER, buf.grid_v_uv);
+                gl.vertexAttribPointer(shaders.grid.a_uv, 2, gl.UNSIGNED_BYTE, true, 0, 0);
+
+                gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, buf.grid_i);
+            }
+
+            gl.drawElements(gl.TRIANGLES, buf.grid_i_count, gl.UNSIGNED_SHORT, 0);
+        }
+
+        /* bind to screen and clear */
+        {
+            gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+            gl.viewport(
+                0,
+                0,
+                canvas.width,
+                canvas.height
+            );
+
+            /* set up premultiplied alpha */
+            gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
+            gl.enable(gl.BLEND);
+
+            gl.enable(gl.DEPTH_TEST);
+            gl.depthFunc(gl.LEQUAL);
+
+            /* clear all */
+            gl.clearColor(0, 0, 0, 1);
+            gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+        }
 
         /* skydome pass */
         {
@@ -506,14 +1136,14 @@ requestAnimationFrame(function frame(now) {
 
             gl.uniformMatrix4fv(shaders.geo.u_matrix, false, u_vp_skydome);
 
-            /* upload/bind atlas */
+            /* bind tex_skydome */
             {
                 gl.activeTexture(gl.TEXTURE0);
-                gl.bindTexture(gl.TEXTURE_2D, atlas);
+                gl.bindTexture(gl.TEXTURE_2D, tex_skydome);
                 gl.uniform1i(shaders.geo.u_texture, 0);
             }
 
-            /* upload/bind geometry */
+            /* bind geometry */
             {
                 gl.bindBuffer(gl.ARRAY_BUFFER, buf.skydome_v_pos);
                 gl.vertexAttribPointer(shaders.geo.a_pos, 3, gl.FLOAT, false, 0, 0);
@@ -535,18 +1165,59 @@ requestAnimationFrame(function frame(now) {
 
             gl.uniformMatrix4fv(shaders.grid.u_matrix, false, u_vp);
 
-            /* upload/bind geometry */
+            /* bind tex */
+            {
+                gl.activeTexture(gl.TEXTURE0);
+                gl.bindTexture(gl.TEXTURE_2D, paint_atlas_color);
+                gl.uniform1i(shaders.grid.u_texture, 0);
+            }
+
+            /* bind geometry */
             {
                 gl.bindBuffer(gl.ARRAY_BUFFER, buf.grid_v_pos);
                 gl.vertexAttribPointer(shaders.grid.a_pos, 3, gl.FLOAT, false, 0, 0);
 
-                // gl.bindBuffer(gl.ARRAY_BUFFER, buf.grid_v_uv);
-                // gl.vertexAttribPointer(shaders.grid.a_uv, 2, gl.UNSIGNED_BYTE, true, 0, 0);
+                gl.bindBuffer(gl.ARRAY_BUFFER, buf.grid_v_uv);
+                gl.vertexAttribPointer(shaders.grid.a_uv, 2, gl.UNSIGNED_BYTE, true, 0, 0);
 
                 gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, buf.grid_i);
             }
 
             gl.drawElements(gl.TRIANGLES, buf.grid_i_count, gl.UNSIGNED_SHORT, 0);
+        }
+
+        /* emoji pass */
+        {
+            gl.disable(gl.DEPTH_TEST);
+
+            gl.useProgram(shaders.geo.program);
+            gl.enableVertexAttribArray(shaders.geo.a_pos);
+            gl.enableVertexAttribArray(shaders.geo.a_uv);
+
+            gl.uniformMatrix4fv(shaders.geo.u_matrix, false, mat4_create());
+
+            /* upload/bind atlas */
+            {
+                gl.activeTexture(gl.TEXTURE0);
+                gl.bindTexture(gl.TEXTURE_2D, tex_emoji_atlas);
+                gl.uniform1i(shaders.geo.u_texture, 0);
+            }
+
+            /* upload/bind geometry */
+            {
+                gl.bindBuffer(gl.ARRAY_BUFFER, buf.emoji_v_pos);
+                gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(emoji_pos), gl.STATIC_DRAW);
+                gl.vertexAttribPointer(shaders.geo.a_pos, 3, gl.FLOAT, false, 0, 0);
+
+                gl.bindBuffer(gl.ARRAY_BUFFER, buf.emoji_v_uv);
+                gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(emoji_uv), gl.STATIC_DRAW);
+                gl.vertexAttribPointer(shaders.geo.a_uv, 2, gl.FLOAT, false, 0, 0);
+
+                gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, buf.emoji_i);
+                gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, new Uint16Array(emoji_idx), gl.STATIC_DRAW);
+            }
+
+            gl.drawElements(gl.TRIANGLES, emoji_idx.length, gl.UNSIGNED_SHORT, 0);
         }
     }
 })
@@ -848,6 +1519,35 @@ function mat4_target_to(out, eye, target, up=VEC3_UP) {
     out[13] = eyey;
     out[14] = eyez;
     out[15] = 1;
+    return out;
+}
+
+function ray_hit_plane(
+    out,
+
+    ray_origin_x, ray_origin_y, ray_origin_z,
+    ray_vector_x, ray_vector_y, ray_vector_z,
+
+    plane_origin_x, plane_origin_y, plane_origin_z,
+    plane_vector_x, plane_vector_y, plane_vector_z
+) {
+    const delta_x = plane_origin_x - ray_origin_x;
+    const delta_y = plane_origin_y - ray_origin_y;
+    const delta_z = plane_origin_z - ray_origin_z;
+
+    const ldot = delta_x*plane_vector_x +
+                 delta_y*plane_vector_y +
+                 delta_z*plane_vector_z ;
+
+    const rdot = ray_vector_x*plane_vector_x +
+                 ray_vector_y*plane_vector_y +
+                 ray_vector_z*plane_vector_z ;
+
+    const d = ldot / rdot;
+    out[0] = ray_origin_x + ray_vector_x * d;
+    out[1] = ray_origin_y + ray_vector_y * d;
+    out[2] = ray_origin_z + ray_vector_z * d;
+
     return out;
 }
 
