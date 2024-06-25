@@ -213,7 +213,8 @@ let shaders;
             frag_color *= smoothstep(0.0, 0.8, 1.0 - length(v_uv)/9.5);
         }`;
 
-    var depth_vs =
+
+    const depth_vs =
         'precision mediump float;' +
 
         'uniform mat4 u_matrix;' +
@@ -226,7 +227,7 @@ let shaders;
         '  gl_Position = v_pos = u_matrix * a_pos;' +
         '}';
 
-    var depth_fs =
+    const depth_fs =
         'precision mediump float;' +
 
         'varying vec4 v_pos;' +
@@ -1985,7 +1986,7 @@ requestAnimationFrame(function frame(now) {
             gl.drawElements(gl.TRIANGLES, buf.grid_i_count, gl.UNSIGNED_SHORT, 0);
         }
 
-        /* geo pass */
+        /* emoji pass */
         {
             gl.disable(gl.DEPTH_TEST);
 

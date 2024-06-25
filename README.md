@@ -144,6 +144,8 @@ There are some places where things aren't especially "linear" or flat. I do have
 
 In several .htmls (cube family in particular) `input.released` is commented "true for a frame after up," when it is actually "true for a frame after down." Not as simple as just updating the comment, because `_released` shouldn't be the field name.
 
+Pretty much all of the files have a `let shaders; { }` block, but they switch between `vs_shader`/`fs_shader` vs. `shader_fs`/`shader_vs`, and this should be homogenized.
+
 # errata - optimization
 Plenty of matrices are allocated that don't need to be.
 
