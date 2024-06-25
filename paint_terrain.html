@@ -18,6 +18,8 @@ if (!gl) { alert('Failed to initialize WebGL'); }
 
 /* square tile's "radius" is just its size (width/length) */
 const TERRAIN_RADIUS = 7;
+const TERRAIN_SEGMENTS = 1 << 6;
+const PAINT_ATLAS_RESOLUTION = 1 << 10;
 
 (window.onresize = () => {
     canvas.width = window.innerWidth;
@@ -76,6 +78,14 @@ function createProgram(gl, vertexSource, fragmentSource) {
 let shaders;
 /* compile shaders */
 {
+    const fn_sampled_pos =
+        'uniform sampler2D u_tex_height;' +
+
+        'vec3 sampled_pos(vec2 uv) {' +
+            'float z = 1.0 + (1.0 - texture(u_tex_height, uv).r) * 5.0;' +
+            `return vec3(2.0*(0.5 - uv)*${TERRAIN_RADIUS.toFixed(1)}, z);` +
+        '}';
+
     const vs_geo = 
         'attribute vec3 a_pos;' +
         'attribute vec2 a_uv;' +
@@ -106,78 +116,83 @@ let shaders;
         'in vec2 a_uv;' +
 
         'uniform mat4 u_matrix;' +
-
-        'uniform sampler2D u_texture;' +
+        fn_sampled_pos +
 
         'out vec2 v_uv;' +
 
         'void main() {' +
-            'v_uv = a_uv;' +
-            'float z = 1.0 + (1.0 - texture(u_texture, v_uv).r) * 5.0;' +
-            'gl_Position = u_matrix * vec4(a_pos.xy, z, 1);' +
+            'v_uv = a_pos.xy;' +
+            'gl_Position = u_matrix * vec4(sampled_pos(v_uv), 1);' +
         '}';
 
     const fs_grid = '#version 300 es\n' +
         'precision mediump float;' +
 
-        'uniform sampler2D u_texture;' +
+        'uniform sampler2D u_tex_height;' +
 
         'in  vec2 v_uv;' +
         'out vec4 frag_color;' +
 
         'void main() {' +
-            'frag_color = texture(u_texture, v_uv);' +
+            'frag_color = texture(u_tex_height, v_uv);' +
             'frag_color.xyz = 1.0 - frag_color.xyz;' +
         '}';
 
-    const vs_paint = 
-        'attribute vec3 a_pos;' +
-        'attribute vec2 a_uv;' +
 
-        'varying vec3 v_pos;' +
+    const vs_paint = '#version 300 es\n' +
+
+        'in vec3 a_pos;' +
+        'in vec2 a_uv;' +
+
+        'out vec2 v_pos;' +
 
         'void main() {' +
-        '    v_pos = a_pos;' +
+        '    v_pos = a_pos.xy;' +
         '    gl_Position = vec4(a_uv*2.0 - 1.0, 0.0, 1.0);' +
         '}';
 
-    const fs_paint = 
+    const fs_paint = '#version 300 es\n' +
+
         'precision mediump float;' +
 
         'uniform mat4 u_matrix;' +
-        'varying vec3 v_pos;' +
+        fn_sampled_pos +
 
         'uniform vec4 u_color;' +
         'uniform vec2 u_brush;' +
         'uniform vec2 u_aspect_ratio;' +
 
+        'in vec2 v_pos;' +
+        'out vec4 frag_color;' +
+
         'void main() {' +
-        '    vec4 world_pos = u_matrix * vec4(v_pos, 1.0);' +
+        '    vec4 world_pos = u_matrix * vec4(sampled_pos(v_pos), 1.0);' +
         '    world_pos.xy = world_pos.xy / world_pos.w;' +
         
         '    vec2 delta = (world_pos.xy - u_brush)*u_aspect_ratio;' +
         '    const float scale = 2.0;' +
-        '    gl_FragColor = smoothstep(0.023*scale, 0.01*scale, length(delta)) * u_color;' +
+        '    frag_color = vec4(1.0, 1.0, 1.0, 1.0);' + // texture(u_tex_height, v_pos);' +
+        // '    frag_color += u_color;' + // smoothstep(0.023*scale, 0.01*scale, length(delta)) * 
         '}';
 
 
-    const vs_depth =
+    const vs_depth ='#version 300 es\n' +
+
         'precision mediump float;' +
 
         'uniform mat4 u_matrix;' +
+        fn_sampled_pos +
 
-        'attribute vec4 a_pos;' +
+        'in vec3 a_pos;' +
 
-        'varying vec4 v_pos;' +
+        'out vec4 v_pos;' +
 
         'void main() {' +
-        '  gl_Position = v_pos = u_matrix * a_pos;' +
+        '  gl_Position = v_pos = u_matrix * vec4(sampled_pos(a_pos.xy), 1.0);' +
         '}';
 
-    const fs_depth =
+    const fs_depth = '#version 300 es\n' +
         'precision mediump float;' +
-
-        'varying vec4 v_pos;' +
 
         'vec4 encode_float_rgba(float v) {' +
         '  vec4 enc = vec4(1.0, 255.0, 65025.0, 16581375.0) * v;' +
@@ -186,9 +201,12 @@ let shaders;
         '  return enc;' +
         '}' +
 
+        'in vec4 v_pos;' +
+        'out vec4 frag_color;' +
+
         'void main() {' +
         '  float depth = v_pos.z / v_pos.w;' +
-        '  gl_FragColor = encode_float_rgba(depth * 0.5 + 0.5);' +
+        '  frag_color = encode_float_rgba(depth * 0.5 + 0.5);' +
         '}';
 
 
@@ -272,12 +290,16 @@ const DEPTH_TEX_RESOLUTION = 1 << 9;
     }
 }
 
-const TERRAIN_SEGMENTS = 1 << 6;
-const PAINT_ATLAS_RESOLUTION = 1 << 10;
-const paint_atlas_color = gl.createTexture();
-const paint_atlas_fb = gl.createFramebuffer();
-{
-    gl.bindTexture(gl.TEXTURE_2D, paint_atlas_color);
+/* two are necessary to prevent "feedback," e.g. reading and writing
+ * to the same texture at the same time. */
+const paint_atlas_fb0 = gl.createFramebuffer();
+const paint_atlas_color0 = gl.createTexture();
+const paint_atlas_fb1 = gl.createFramebuffer();
+const paint_atlas_color1 = gl.createTexture();
+paint_atlas_create(paint_atlas_fb0, paint_atlas_color0);
+paint_atlas_create(paint_atlas_fb1, paint_atlas_color1);
+function paint_atlas_create(fb, color) {
+    gl.bindTexture(gl.TEXTURE_2D, color);
     gl.texImage2D(
         /* target         */ gl.TEXTURE_2D,
         /* level          */ 0,
@@ -294,8 +316,8 @@ const paint_atlas_fb = gl.createFramebuffer();
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
 
-    gl.bindFramebuffer(gl.FRAMEBUFFER, paint_atlas_fb);
-    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, paint_atlas_color, 0);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, fb);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, color, 0);
 
     /* clear the fb to white*/
     {
@@ -379,8 +401,6 @@ const paint_atlas_fb = gl.createFramebuffer();
     const grid_uv  = [];
 
     {
-        const RADIUS = TERRAIN_RADIUS;
-
         const grid = [];
         let index = 0;
         for (let iy = 0; iy <= TERRAIN_SEGMENTS; iy++) {
@@ -390,7 +410,7 @@ const paint_atlas_fb = gl.createFramebuffer();
                 const u = ix / TERRAIN_SEGMENTS;
 
                 grid_uv.push(255*u, 255*(1 - v));
-                grid_pos.push((u - 0.5) * 2 * TERRAIN_RADIUS, (v - 0.5) * 2 * TERRAIN_RADIUS, 0);
+                grid_pos.push(u, v, 0);
                 grid.push(index++);
             }
         }
@@ -434,6 +454,9 @@ let input = {
     hovering_terrain: false,
 
     dampedEvent: { intent: INTENT_NONE, movementX: 0, movementY: 0 },
+
+    mouse_x: 0,
+    mouse_y: 0,
 
     cam_pivot_x: 0,
     cam_pivot_y: 0,
@@ -904,32 +927,41 @@ let tex_skydome = gl.createTexture();
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
 })();
 
-let then = 0;
-let read_pixel_sync, read_pixel_buf = gl.createBuffer(), read_pixel_arr = new Uint8Array(4);
+/* you want to have multiple "readPixel" requests in flight at once */
+const read_pixel_arr = new Uint8Array(4);
+const read_pixels = []; /* buf, sync, timestamp */
+
+let then = 0, odd_frame = 0;
 requestAnimationFrame(function frame(now) {
     requestAnimationFrame(frame);
+
+    odd_frame ^= 1;
 
     now *= 0.001;
     const deltaTime = now - then;
     then = now;
 
-    if (read_pixel_sync) do {
-        const res = gl.clientWaitSync(read_pixel_sync, 0, 0);
+    if (read_pixels.length) do {
+        const pixel = read_pixels[read_pixels.length - 1];
+
+        const res = gl.clientWaitSync(pixel.sync, 0, 0);
         if (res == gl.WAIT_FAILED    ) { console.warn("readPixels wait failed"    ); continue; }
         if (res == gl.TIMEOUT_EXPIRED) { console.warn("readPixels timeout expired"); continue; }
 
-        gl.deleteSync(read_pixel_sync);
-        delete read_pixel_sync;
+        gl.deleteSync(pixel.sync);
+        read_pixels.pop();
 
-        gl.bindBuffer(gl.PIXEL_PACK_BUFFER, read_pixel_buf);
+        gl.bindBuffer(gl.PIXEL_PACK_BUFFER, pixel.buf);
         gl.getBufferSubData(gl.PIXEL_PACK_BUFFER, 0, read_pixel_arr);
+        gl.deleteBuffer(pixel.buf);
 
         const depth = (read_pixel_arr[0]/255.0                 ) +
                       (read_pixel_arr[1]/255.0 * 1.0/255.0     ) +
                       (read_pixel_arr[2]/255.0 * 1.0/65025.0   ) +
                       (read_pixel_arr[3]/255.0 * 1.0/16581375.0);
 
-        console.log(depth > 1e-7);
+        input.hovering_terrain = depth > 1e-7;
+        document.title = "hovering: " + input.hovering_terrain + ' ' + read_pixels.length;
 
     } while (false);
 
@@ -996,35 +1028,6 @@ requestAnimationFrame(function frame(now) {
             mat4_mul(u_vp        , projection, view        );
             mat4_invert(u_vp_inv, u_vp);
         }
-    }
-
-    /* determine if the mouse is over the geometry */
-    let pen_pos = [0, 0, 0, 1];
-    if (0) {
-        const vec = pen_pos;
-        vec[0] = -1 + (input.mouse_x / gl.canvas.width )*2;
-        vec[1] = +1 - (input.mouse_y / gl.canvas.height)*2;
-        vec[2] = 1;
-        vec[3] = 1;
-
-        mat4_transform_vec4(vec, vec, u_vp_inv);
-        vec[0] /= vec[3];
-        vec[1] /= vec[3];
-        vec[2] /= vec[3];
-        vec[3] = 1;
-
-        ray_hit_plane(
-            vec,
-                     eye[0],          eye[1],          eye[2], /* ray origin */
-            vec[0] - eye[0], vec[1] - eye[1], vec[2] - eye[2], /* ray vector */
-
-            0, 0, 0, /* plane origin */
-            0, 0, 1, /* plane vector */
-        );
-
-        input.hovering_terrain = true;
-        input.hovering_terrain &&= Math.abs(pen_pos[0]) < TERRAIN_RADIUS;
-        input.hovering_terrain &&= Math.abs(pen_pos[1]) < TERRAIN_RADIUS;
     }
 
     /* we could apply these changes directly in the event handlers, but the result feels "low fps"
@@ -1114,17 +1117,14 @@ requestAnimationFrame(function frame(now) {
                 );
             }
         }
-
-        if (0) {
-            const p = [...pen_pos];
-            mat4_transform_vec4(p, p, u_vp);
-            p[0] /= p[3];
-            p[1] /= p[3];
-            moji(p[0], p[1], 0.1, 0);
-        }
     }
 
     do {
+        const last_paint_atlas_fb    = !odd_frame ?    paint_atlas_fb0 :    paint_atlas_fb1;
+        const last_paint_atlas_color = !odd_frame ? paint_atlas_color0 : paint_atlas_color1;
+        const paint_atlas_fb         =  odd_frame ?    paint_atlas_fb0 :    paint_atlas_fb1;
+        const paint_atlas_color      =  odd_frame ? paint_atlas_color0 : paint_atlas_color1;
+
         /* depth_pass */
         {
             /* bind depth and clear */
@@ -1135,8 +1135,8 @@ requestAnimationFrame(function frame(now) {
                     DEPTH_TEX_RESOLUTION,
                     DEPTH_TEX_RESOLUTION
                 );
-                // gl.bindFramebuffer(gl.FRAMEBUFFER, depth_fb);
-                gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+                gl.bindFramebuffer(gl.FRAMEBUFFER, depth_fb);
+                // gl.bindFramebuffer(gl.FRAMEBUFFER, null);
 
                 /* enable depth */
                 gl.enable(gl.DEPTH_TEST);
@@ -1155,8 +1155,14 @@ requestAnimationFrame(function frame(now) {
 
             gl.uniformMatrix4fv(shaders.depth.u_matrix, false, u_vp);
 
+            /* bind tex */
+            {
+                gl.activeTexture(gl.TEXTURE0);
+                gl.bindTexture(gl.TEXTURE_2D, paint_atlas_color);
+                gl.uniform1i(shaders.depth.u_tex_height, 0);
+            }
+
             /* upload/bind geometry */
-            /* bind geometry */
             {
                 gl.bindBuffer(gl.ARRAY_BUFFER, buf.grid_v_pos);
                 gl.vertexAttribPointer(shaders.grid.a_pos, 3, gl.FLOAT, false, 0, 0);
@@ -1166,8 +1172,6 @@ requestAnimationFrame(function frame(now) {
 
             gl.drawElements(gl.TRIANGLES, buf.grid_i_count, gl.UNSIGNED_SHORT, 0);
         }
-
-        continue;
 
         /* paint pass */
         {
@@ -1186,8 +1190,8 @@ requestAnimationFrame(function frame(now) {
                 // gl.enable(gl.CULL_FACE);
 
                 /* set up premultiplied alpha */
-                gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
-                gl.enable(gl.BLEND);
+                // gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
+                gl.disable(gl.BLEND);
             }
 
             gl.useProgram(shaders.paint.program);
@@ -1212,14 +1216,21 @@ requestAnimationFrame(function frame(now) {
                 (window.innerWidth  / window.innerWidth),
                 (window.innerHeight / window.innerWidth)
             );
+            
+            /* bind tex */
+            {
+                gl.activeTexture(gl.TEXTURE0);
+                gl.bindTexture(gl.TEXTURE_2D, last_paint_atlas_color);
+                gl.uniform1i(shaders.paint.u_tex_height, 0);
+            }
 
             /* bind geometry */
             {
                 gl.bindBuffer(gl.ARRAY_BUFFER, buf.grid_v_pos);
-                gl.vertexAttribPointer(shaders.grid.a_pos, 3, gl.FLOAT, false, 0, 0);
+                gl.vertexAttribPointer(shaders.paint.a_pos, 3, gl.FLOAT, false, 0, 0);
 
                 gl.bindBuffer(gl.ARRAY_BUFFER, buf.grid_v_uv);
-                gl.vertexAttribPointer(shaders.grid.a_uv, 2, gl.UNSIGNED_BYTE, true, 0, 0);
+                gl.vertexAttribPointer(shaders.paint.a_uv, 2, gl.UNSIGNED_BYTE, true, 0, 0);
 
                 gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, buf.grid_i);
             }
@@ -1290,7 +1301,7 @@ requestAnimationFrame(function frame(now) {
             {
                 gl.activeTexture(gl.TEXTURE0);
                 gl.bindTexture(gl.TEXTURE_2D, paint_atlas_color);
-                gl.uniform1i(shaders.grid.u_texture, 0);
+                gl.uniform1i(shaders.grid.u_tex_height, 0);
             }
 
             /* bind geometry */
@@ -1344,21 +1355,34 @@ requestAnimationFrame(function frame(now) {
 
     /* read pixel at mouse to determine if hovering terrain */
     {
-        gl.bindBuffer(gl.PIXEL_PACK_BUFFER, read_pixel_buf);
-        gl.bufferData(gl.PIXEL_PACK_BUFFER, read_pixel_arr.byteLength, gl.STREAM_READ);
-        gl.readPixels(
-            // /* x      */ Math.floor(input.mouse_x / gl.canvas.width  * DEPTH_TEX_RESOLUTION),
-            // /* y      */ Math.floor(input.mouse_y / gl.canvas.height * DEPTH_TEX_RESOLUTION),
-            /* x      */ Math.floor(                      input.mouse_x),
-            /* y      */ Math.floor(window.innerHeight  - input.mouse_y),
-            /* w      */ 1,
-            /* h      */ 1,
-            /* format */ gl.RGBA,
-            /* type,  */ gl.UNSIGNED_BYTE,
-            /* offset */ 0
+        gl.bindFramebuffer(gl.FRAMEBUFFER, depth_fb);
+        /* it's weird that this matters, but it does seem to matter */
+        gl.viewport(
+            0,
+            0,
+            DEPTH_TEX_RESOLUTION,
+            DEPTH_TEX_RESOLUTION
         );
-        read_pixel_sync = gl.fenceSync(gl.SYNC_GPU_COMMANDS_COMPLETE, 0);
-        gl.flush();
+
+        let sync, buf = gl.createBuffer();
+        {
+            gl.bindBuffer(gl.PIXEL_PACK_BUFFER, buf);
+            gl.bufferData(gl.PIXEL_PACK_BUFFER, read_pixel_arr.byteLength, gl.STREAM_READ);
+            gl.readPixels(
+                // /* x      */ Math.floor(                      input.mouse_x),
+                // /* y      */ Math.floor(window.innerHeight  - input.mouse_y),
+                /* x      */ Math.floor(Math.floor((    input.mouse_x / gl.canvas.width ) * DEPTH_TEX_RESOLUTION)),
+                /* y      */ Math.floor(Math.floor((1 - input.mouse_y / gl.canvas.height) * DEPTH_TEX_RESOLUTION)),
+                /* w      */ 1,
+                /* h      */ 1,
+                /* format */ gl.RGBA,
+                /* type,  */ gl.UNSIGNED_BYTE,
+                /* offset */ 0
+            );
+            sync = gl.fenceSync(gl.SYNC_GPU_COMMANDS_COMPLETE, 0);
+            gl.flush();
+        }
+        read_pixels.unshift({ buf, sync });
     }
 })
 
