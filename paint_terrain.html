@@ -924,10 +924,13 @@ requestAnimationFrame(function frame(now) {
         gl.bindBuffer(gl.PIXEL_PACK_BUFFER, read_pixel_buf);
         gl.getBufferSubData(gl.PIXEL_PACK_BUFFER, 0, read_pixel_arr);
 
-        console.log(read_pixel_arr[0],
-                    read_pixel_arr[1],
-                    read_pixel_arr[2],
-                    read_pixel_arr[3]);
+        const depth = (read_pixel_arr[0]/255.0                 ) +
+                      (read_pixel_arr[1]/255.0 * 1.0/255.0     ) +
+                      (read_pixel_arr[2]/255.0 * 1.0/65025.0   ) +
+                      (read_pixel_arr[3]/255.0 * 1.0/16581375.0);
+
+        console.log(depth > 1e-7);
+
     } while (false);
 
     const ORTHO = false;
@@ -997,7 +1000,7 @@ requestAnimationFrame(function frame(now) {
 
     /* determine if the mouse is over the geometry */
     let pen_pos = [0, 0, 0, 1];
-    {
+    if (0) {
         const vec = pen_pos;
         vec[0] = -1 + (input.mouse_x / gl.canvas.width )*2;
         vec[1] = +1 - (input.mouse_y / gl.canvas.height)*2;
@@ -1121,7 +1124,7 @@ requestAnimationFrame(function frame(now) {
         }
     }
 
-    {
+    do {
         /* depth_pass */
         {
             /* bind depth and clear */
@@ -1143,7 +1146,7 @@ requestAnimationFrame(function frame(now) {
                 gl.disable(gl.BLEND);
 
                 /* clear all */
-                gl.clearColor(1, 0, 0, 1);
+                gl.clearColor(0, 0, 0, 1);
                 gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
             }
 
@@ -1164,25 +1167,7 @@ requestAnimationFrame(function frame(now) {
             gl.drawElements(gl.TRIANGLES, buf.grid_i_count, gl.UNSIGNED_SHORT, 0);
         }
 
-        {
-            gl.bindBuffer(gl.PIXEL_PACK_BUFFER, read_pixel_buf);
-            gl.bufferData(gl.PIXEL_PACK_BUFFER, read_pixel_arr.byteLength, gl.STREAM_READ);
-            gl.readPixels(
-                // /* x      */ Math.floor(input.mouse_x / gl.canvas.width  * DEPTH_TEX_RESOLUTION),
-                // /* y      */ Math.floor(input.mouse_y / gl.canvas.height * DEPTH_TEX_RESOLUTION),
-                /* x      */ Math.floor(                      input.mouse_x),
-                /* y      */ Math.floor(window.innerHeight  - input.mouse_y),
-                /* w      */ 1,
-                /* h      */ 1,
-                /* format */ gl.RGBA,
-                /* type,  */ gl.UNSIGNED_BYTE,
-                /* offset */ 0
-            );
-            read_pixel_sync = gl.fenceSync(gl.SYNC_GPU_COMMANDS_COMPLETE, 0);
-            gl.flush();
-        }
-
-        return;
+        continue;
 
         /* paint pass */
         {
@@ -1355,6 +1340,25 @@ requestAnimationFrame(function frame(now) {
 
             gl.drawElements(gl.TRIANGLES, emoji_idx.length, gl.UNSIGNED_SHORT, 0);
         }
+    } while (false);
+
+    /* read pixel at mouse to determine if hovering terrain */
+    {
+        gl.bindBuffer(gl.PIXEL_PACK_BUFFER, read_pixel_buf);
+        gl.bufferData(gl.PIXEL_PACK_BUFFER, read_pixel_arr.byteLength, gl.STREAM_READ);
+        gl.readPixels(
+            // /* x      */ Math.floor(input.mouse_x / gl.canvas.width  * DEPTH_TEX_RESOLUTION),
+            // /* y      */ Math.floor(input.mouse_y / gl.canvas.height * DEPTH_TEX_RESOLUTION),
+            /* x      */ Math.floor(                      input.mouse_x),
+            /* y      */ Math.floor(window.innerHeight  - input.mouse_y),
+            /* w      */ 1,
+            /* h      */ 1,
+            /* format */ gl.RGBA,
+            /* type,  */ gl.UNSIGNED_BYTE,
+            /* offset */ 0
+        );
+        read_pixel_sync = gl.fenceSync(gl.SYNC_GPU_COMMANDS_COMPLETE, 0);
+        gl.flush();
     }
 })
 
