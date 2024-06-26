@@ -17,9 +17,10 @@ const gl = canvas.getContext('webgl2', {antialias: true});
 if (!gl) { alert('Failed to initialize WebGL'); }
 
 /* square tile's "radius" is just its size (width/length) */
-const TERRAIN_RADIUS = 7;
-const TERRAIN_SEGMENTS = 1 << 6;
-const PAINT_ATLAS_RESOLUTION = 1 << 10;
+const MAX_HEIGHT             = 10;
+const TERRAIN_RADIUS         = 10;
+const TERRAIN_SEGMENTS       = (1 << 8) - 2;
+const PAINT_ATLAS_RESOLUTION = (1 << 8) - 2;
 
 (window.onresize = () => {
     canvas.width = window.innerWidth;
@@ -82,7 +83,7 @@ let shaders;
         'uniform sampler2D u_tex_height;' +
 
         'vec3 sampled_pos(vec2 uv) {' +
-            'float z = 1.0 + (1.0 - texture(u_tex_height, uv).r) * 5.0;' +
+            `float z = texture(u_tex_height, uv).r * ${MAX_HEIGHT.toFixed(1)};` +
             `return vec3(2.0*(0.5 - uv)*${TERRAIN_RADIUS.toFixed(1)}, z);` +
         '}';
 
@@ -113,7 +114,6 @@ let shaders;
 
     const vs_grid = '#version 300 es\n' +
         'in vec3 a_pos;' +
-        'in vec2 a_uv;' +
 
         'uniform mat4 u_matrix;' +
         fn_sampled_pos +
@@ -122,7 +122,7 @@ let shaders;
 
         'void main() {' +
             'v_uv = a_pos.xy;' +
-            'gl_Position = u_matrix * vec4(sampled_pos(v_uv), 1);' +
+            'gl_Position = u_matrix * vec4(sampled_pos(a_pos.xy), 1);' +
         '}';
 
     const fs_grid = '#version 300 es\n' +
@@ -135,20 +135,19 @@ let shaders;
 
         'void main() {' +
             'frag_color = texture(u_tex_height, v_uv);' +
-            'frag_color.xyz = 1.0 - frag_color.xyz;' +
+            'frag_color.xyz = frag_color.xyz * 2.0;' +
         '}';
 
 
     const vs_paint = '#version 300 es\n' +
 
         'in vec3 a_pos;' +
-        'in vec2 a_uv;' +
 
         'out vec2 v_pos;' +
 
         'void main() {' +
         '    v_pos = a_pos.xy;' +
-        '    gl_Position = vec4(a_uv*2.0 - 1.0, 0.0, 1.0);' +
+        '    gl_Position = vec4(a_pos.xy*2.0 - 1.0, 0.0, 1.0);' +
         '}';
 
     const fs_paint = '#version 300 es\n' +
@@ -171,8 +170,13 @@ let shaders;
         
         '    vec2 delta = (world_pos.xy - u_brush)*u_aspect_ratio;' +
         '    const float scale = 2.0;' +
-        '    frag_color = vec4(1.0, 1.0, 1.0, 1.0);' + // texture(u_tex_height, v_pos);' +
-        // '    frag_color += u_color;' + // smoothstep(0.023*scale, 0.01*scale, length(delta)) * 
+        '    float paint = smoothstep(0.05*scale, 0.01*scale, length(delta));' +
+
+        '    vec4 dst = texture(u_tex_height, v_pos);' +
+        '    vec4 src = u_color * vec4(1.0, 1.0, 1.0, paint);' +
+        // gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
+        '    frag_color = src.a*src + dst*(1.0 - src.a);' +
+        '    frag_color.a = 1.0;' +
         '}';
 
 
@@ -311,15 +315,15 @@ function paint_atlas_create(fb, color) {
         /* type,          */ gl.UNSIGNED_BYTE,
         /* data           */ null
     );
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
 
     gl.bindFramebuffer(gl.FRAMEBUFFER, fb);
     gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, color, 0);
 
-    /* clear the fb to white*/
+    /* prefill the fb */
     {
         gl.viewport(
             0,
@@ -327,7 +331,7 @@ function paint_atlas_create(fb, color) {
             PAINT_ATLAS_RESOLUTION,
             PAINT_ATLAS_RESOLUTION,
         );
-        gl.clearColor(1, 1, 1, 1);
+        gl.clearColor(0.0, 0.0, 0.0, 1.0);
         gl.clear(gl.COLOR_BUFFER_BIT);
     }
 }
@@ -398,7 +402,6 @@ function paint_atlas_create(fb, color) {
 {
     const grid_idx = [];
     const grid_pos = [];
-    const grid_uv  = [];
 
     {
         const grid = [];
@@ -409,7 +412,6 @@ function paint_atlas_create(fb, color) {
             for (let ix = 0; ix <= TERRAIN_SEGMENTS; ix++) {
                 const u = ix / TERRAIN_SEGMENTS;
 
-                grid_uv.push(255*u, 255*(1 - v));
                 grid_pos.push(u, v, 0);
                 grid.push(index++);
             }
@@ -431,9 +433,6 @@ function paint_atlas_create(fb, color) {
     {
         gl.bindBuffer(gl.ARRAY_BUFFER, buf.grid_v_pos);
         gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(grid_pos), gl.STATIC_DRAW);
-
-        gl.bindBuffer(gl.ARRAY_BUFFER, buf.grid_v_uv);
-        gl.bufferData(gl.ARRAY_BUFFER, new Uint8Array(grid_uv), gl.STATIC_DRAW);
 
         gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, buf.grid_i);
         gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, new Uint16Array(grid_idx), gl.STATIC_DRAW);
@@ -1125,7 +1124,7 @@ requestAnimationFrame(function frame(now) {
         const paint_atlas_fb         =  odd_frame ?    paint_atlas_fb0 :    paint_atlas_fb1;
         const paint_atlas_color      =  odd_frame ? paint_atlas_color0 : paint_atlas_color1;
 
-        /* depth_pass */
+        /* depth pass */
         {
             /* bind depth and clear */
             {
@@ -1196,13 +1195,12 @@ requestAnimationFrame(function frame(now) {
 
             gl.useProgram(shaders.paint.program);
             gl.enableVertexAttribArray(shaders.paint.a_pos);
-            gl.enableVertexAttribArray(shaders.paint.a_uv);
 
             gl.uniformMatrix4fv(shaders.paint.u_matrix, false, u_vp);
             {
                 let color = [0, 0, 0, 0];
                 if (input.lmb_down && input.dampedEvent.intent == INTENT_DRAW) {
-                    color = [0.0, 0.0, 0.0, 0.02];
+                    color = [1.0, 1.0, 1.0, 0.01];
                 }
                 gl.uniform4fv(shaders.paint.u_color, color);
             }
@@ -1228,9 +1226,6 @@ requestAnimationFrame(function frame(now) {
             {
                 gl.bindBuffer(gl.ARRAY_BUFFER, buf.grid_v_pos);
                 gl.vertexAttribPointer(shaders.paint.a_pos, 3, gl.FLOAT, false, 0, 0);
-
-                gl.bindBuffer(gl.ARRAY_BUFFER, buf.grid_v_uv);
-                gl.vertexAttribPointer(shaders.paint.a_uv, 2, gl.UNSIGNED_BYTE, true, 0, 0);
 
                 gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, buf.grid_i);
             }
@@ -1293,7 +1288,6 @@ requestAnimationFrame(function frame(now) {
         {
             gl.useProgram(shaders.grid.program);
             gl.enableVertexAttribArray(shaders.grid.a_pos);
-            gl.enableVertexAttribArray(shaders.grid.a_uv);
 
             gl.uniformMatrix4fv(shaders.grid.u_matrix, false, u_vp);
 
@@ -1308,9 +1302,6 @@ requestAnimationFrame(function frame(now) {
             {
                 gl.bindBuffer(gl.ARRAY_BUFFER, buf.grid_v_pos);
                 gl.vertexAttribPointer(shaders.grid.a_pos, 3, gl.FLOAT, false, 0, 0);
-
-                gl.bindBuffer(gl.ARRAY_BUFFER, buf.grid_v_uv);
-                gl.vertexAttribPointer(shaders.grid.a_uv, 2, gl.UNSIGNED_BYTE, true, 0, 0);
 
                 gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, buf.grid_i);
             }
