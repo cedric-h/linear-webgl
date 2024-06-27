@@ -401,6 +401,7 @@ function paint_atlas_create(fb, color) {
     const grid_pos = [];
 
     {
+        const grid = [];
         let index = 0;
         for (let iy = 0; iy <= TERRAIN_SEGMENTS; iy++) {
             const v = iy / TERRAIN_SEGMENTS;
@@ -408,28 +409,21 @@ function paint_atlas_create(fb, color) {
             for (let ix = 0; ix <= TERRAIN_SEGMENTS; ix++) {
                 const u = ix / TERRAIN_SEGMENTS;
 
-                const w = 1 / TERRAIN_SEGMENTS;
-                grid_pos.push(u+0, v+0, 0);
-                grid_pos.push(u+w, v+0, 0);
-                grid_pos.push(u+0, v+w, 0);
-                
-                grid_pos.push(u+w, v+0, 0);
-                grid_pos.push(u+w, v+w, 0);
-                grid_pos.push(u+0, v+w, 0);
+                grid.push([u, v, 0]);
             }
         }
 
-        /* for (let iy = 0; iy < TERRAIN_SEGMENTS; iy++) {
+        for (let iy = 0; iy < TERRAIN_SEGMENTS; iy++) {
             for (let ix = 0; ix < TERRAIN_SEGMENTS; ix++) {
                 const a = grid[(iy    )*(TERRAIN_SEGMENTS + 1) + ix + 1];
                 const b = grid[(iy    )*(TERRAIN_SEGMENTS + 1) + ix    ];
                 const c = grid[(iy + 1)*(TERRAIN_SEGMENTS + 1) + ix    ];
                 const d = grid[(iy + 1)*(TERRAIN_SEGMENTS + 1) + ix + 1];
 
-                grid_idx.push(a, b, d);
-                grid_idx.push(b, c, d);
+                grid_pos.push(...a, ...b, ...d);
+                grid_pos.push(...b, ...c, ...d);
             }
-        } */
+        }
     }
 
     gl.bindBuffer(gl.ARRAY_BUFFER, buf.grid_v_pos);
