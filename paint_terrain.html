@@ -233,9 +233,7 @@ const buf = {
     emoji_i:     gl.createBuffer(),
 
     grid_v_pos:  gl.createBuffer(),
-    grid_v_uv:   gl.createBuffer(),
-    grid_i:      gl.createBuffer(),
-    grid_i_count: 0,
+    grid_v_count: 0,
 };
 
 /* we need a depth texture so we can sample it when painting,
@@ -400,11 +398,9 @@ function paint_atlas_create(fb, color) {
 
 /* generate grid geometry */
 {
-    const grid_idx = [];
     const grid_pos = [];
 
     {
-        const grid = [];
         let index = 0;
         for (let iy = 0; iy <= TERRAIN_SEGMENTS; iy++) {
             const v = iy / TERRAIN_SEGMENTS;
@@ -412,12 +408,18 @@ function paint_atlas_create(fb, color) {
             for (let ix = 0; ix <= TERRAIN_SEGMENTS; ix++) {
                 const u = ix / TERRAIN_SEGMENTS;
 
-                grid_pos.push(u, v, 0);
-                grid.push(index++);
+                const w = 1 / TERRAIN_SEGMENTS;
+                grid_pos.push(u+0, v+0, 0);
+                grid_pos.push(u+w, v+0, 0);
+                grid_pos.push(u+0, v+w, 0);
+                
+                grid_pos.push(u+w, v+0, 0);
+                grid_pos.push(u+w, v+w, 0);
+                grid_pos.push(u+0, v+w, 0);
             }
         }
 
-        for (let iy = 0; iy < TERRAIN_SEGMENTS; iy++) {
+        /* for (let iy = 0; iy < TERRAIN_SEGMENTS; iy++) {
             for (let ix = 0; ix < TERRAIN_SEGMENTS; ix++) {
                 const a = grid[(iy    )*(TERRAIN_SEGMENTS + 1) + ix + 1];
                 const b = grid[(iy    )*(TERRAIN_SEGMENTS + 1) + ix    ];
@@ -427,18 +429,12 @@ function paint_atlas_create(fb, color) {
                 grid_idx.push(a, b, d);
                 grid_idx.push(b, c, d);
             }
-        }
+        } */
     }
 
-    {
-        gl.bindBuffer(gl.ARRAY_BUFFER, buf.grid_v_pos);
-        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(grid_pos), gl.STATIC_DRAW);
-
-        gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, buf.grid_i);
-        gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, new Uint16Array(grid_idx), gl.STATIC_DRAW);
-    }
-
-    buf.grid_i_count = grid_idx.length;
+    gl.bindBuffer(gl.ARRAY_BUFFER, buf.grid_v_pos);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(grid_pos), gl.STATIC_DRAW);
+    buf.grid_v_count = grid_pos.length / 3;
 }
 
 
@@ -1165,11 +1161,9 @@ requestAnimationFrame(function frame(now) {
             {
                 gl.bindBuffer(gl.ARRAY_BUFFER, buf.grid_v_pos);
                 gl.vertexAttribPointer(shaders.grid.a_pos, 3, gl.FLOAT, false, 0, 0);
-
-                gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, buf.grid_i);
             }
 
-            gl.drawElements(gl.TRIANGLES, buf.grid_i_count, gl.UNSIGNED_SHORT, 0);
+            gl.drawArrays(gl.TRIANGLES, 0, buf.grid_v_count);
         }
 
         /* paint pass */
@@ -1226,11 +1220,9 @@ requestAnimationFrame(function frame(now) {
             {
                 gl.bindBuffer(gl.ARRAY_BUFFER, buf.grid_v_pos);
                 gl.vertexAttribPointer(shaders.paint.a_pos, 3, gl.FLOAT, false, 0, 0);
-
-                gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, buf.grid_i);
             }
 
-            gl.drawElements(gl.TRIANGLES, buf.grid_i_count, gl.UNSIGNED_SHORT, 0);
+            gl.drawArrays(gl.TRIANGLES, 0, buf.grid_v_count);
         }
 
         /* bind to screen and clear */
@@ -1302,11 +1294,9 @@ requestAnimationFrame(function frame(now) {
             {
                 gl.bindBuffer(gl.ARRAY_BUFFER, buf.grid_v_pos);
                 gl.vertexAttribPointer(shaders.grid.a_pos, 3, gl.FLOAT, false, 0, 0);
-
-                gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, buf.grid_i);
             }
 
-            gl.drawElements(gl.TRIANGLES, buf.grid_i_count, gl.UNSIGNED_SHORT, 0);
+            gl.drawArrays(gl.TRIANGLES, 0, buf.grid_v_count);
         }
 
         /* emoji pass */
