@@ -133,9 +133,13 @@ let shaders;
         'in  vec2 v_uv;' +
         'out vec4 frag_color;' +
 
+        'float decode_float_rgba(vec4 rgba) {' +
+        '  return dot(rgba, vec4(1.0, 1.0/255.0, 1.0/65025.0, 1.0/16581375.0));' +
+        '}' +
+
         'void main() {' +
-            'frag_color = texture(u_tex_height, v_uv);' +
-            'frag_color.xyz = frag_color.xyz * 2.0;' +
+            'float height = decode_float_rgba(texture(u_tex_height, v_uv));' +
+            'frag_color = vec4(vec3(height), 1.0);' +
         '}';
 
 
@@ -157,7 +161,7 @@ let shaders;
         'uniform mat4 u_matrix;' +
         fn_sampled_pos +
 
-        'uniform vec4 u_color;' +
+        'uniform float u_color;' +
         'uniform vec2 u_brush;' +
         'uniform vec2 u_aspect_ratio;' +
 
@@ -194,13 +198,15 @@ let shaders;
         '        vec2 ar = u_aspect_ratio;' +
         '        float dist = sd_segment(ar*u_brush, ar*world_pos_a.xy, ar*world_pos_b.xy);' +
         '        const float scale = 2.0;' +
-        '        strength = max(0.0, 1.0 - dist / 0.15);' +
+        // '        strength = max(0.0, 1.0 - dist / 0.15);' +
+        '        strength = smoothstep(0.15, 0.10, dist);' +
         '    }' +
 
         '    float dst = decode_float_rgba(texture(u_tex_height, v_pos));' +
-        '    float src = 0.1;' +
+        '    float src = min(1.0, u_color + dst);' +
+        '    float src_a = strength * u_color;' +
         /* blend is disabled; this is the blend. */
-        '    frag_color = encode_float_rgba(strength*src + dst*(1.0 - strength));' +
+        '    frag_color = encode_float_rgba(src_a*src + dst*(1.0 - src_a));' +
         '}';
 
 
@@ -1210,11 +1216,11 @@ requestAnimationFrame(function frame(now) {
 
             gl.uniformMatrix4fv(shaders.paint.u_matrix, false, u_vp);
             {
-                let color = [0, 0, 0, 0];
+                let color = 0;
                 if (input.lmb_down && input.dampedEvent.intent == INTENT_DRAW) {
-                    color = [1.0, 1.0, 1.0, 0.01];
+                    color = 0.08;
                 }
-                gl.uniform4fv(shaders.paint.u_color, color);
+                gl.uniform1f(shaders.paint.u_color, color);
             }
             gl.uniform2f(
                 shaders.paint.u_brush,
