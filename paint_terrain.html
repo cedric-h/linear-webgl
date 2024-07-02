@@ -19,8 +19,8 @@ if (!gl) { alert('Failed to initialize WebGL'); }
 /* square tile's "radius" is just its size (width/length) */
 const MAX_HEIGHT             = 10;
 const TERRAIN_RADIUS         = 10;
-const TERRAIN_SEGMENTS       = (1 << 8) - 2;
-const PAINT_ATLAS_RESOLUTION = (1 << 8) - 2;
+const TERRAIN_SEGMENTS       = (1 << 9);
+const PAINT_ATLAS_RESOLUTION = (1 << 9);
 
 (window.onresize = () => {
     canvas.width = window.innerWidth;
@@ -161,22 +161,46 @@ let shaders;
         'uniform vec2 u_brush;' +
         'uniform vec2 u_aspect_ratio;' +
 
+        /* thanks iq! https://iquilezles.org/articles/distfunctions2d/ */
+        'float sd_segment( in vec2 p, in vec2 a, in vec2 b ) {' +
+        '    vec2 pa = p-a, ba = b-a;' +
+        '    float h = clamp( dot(pa,ba)/dot(ba,ba), 0.0, 1.0 );' +
+        '    return length( pa - ba*h );' +
+        '}' +
+
+        'float decode_float_rgba(vec4 rgba) {' +
+        '  return dot(rgba, vec4(1.0, 1.0/255.0, 1.0/65025.0, 1.0/16581375.0));' +
+        '}' +
+
+        'vec4 encode_float_rgba(float v) {' +
+        '  vec4 enc = vec4(1.0, 255.0, 65025.0, 16581375.0) * v;' +
+        '  enc = fract(enc);' +
+        '  enc -= enc.yzww * vec4(1.0/255.0,1.0/255.0,1.0/255.0,0.0);' +
+        '  return enc;' +
+        '}' +
+
         'in vec2 v_pos;' +
         'out vec4 frag_color;' +
 
         'void main() {' +
-        '    vec4 world_pos = u_matrix * vec4(sampled_pos(v_pos), 1.0);' +
-        '    world_pos.xy = world_pos.xy / world_pos.w;' +
-        
-        '    vec2 delta = (world_pos.xy - u_brush)*u_aspect_ratio;' +
-        '    const float scale = 2.0;' +
-        '    float paint = smoothstep(0.05*scale, 0.01*scale, length(delta));' +
+        '    vec3 sampled = sampled_pos(v_pos);' +
+        '    vec4 world_pos_a = u_matrix * vec4(sampled, 1.0);' +
+        '    world_pos_a.xy = world_pos_a.xy / world_pos_a.w;' +
+        '    vec4 world_pos_b = u_matrix * vec4(sampled.xy, 0.0, 1.0);' +
+        '    world_pos_b.xy = world_pos_b.xy / world_pos_b.w;' +
 
-        '    vec4 dst = texture(u_tex_height, v_pos);' +
-        '    vec4 src = u_color * vec4(1.0, 1.0, 1.0, paint);' +
-        // gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
-        '    frag_color = src.a*src + dst*(1.0 - src.a);' +
-        '    frag_color.a = 1.0;' +
+        '    float strength;' +
+        '    {' +
+        '        vec2 ar = u_aspect_ratio;' +
+        '        float dist = sd_segment(ar*u_brush, ar*world_pos_a.xy, ar*world_pos_b.xy);' +
+        '        const float scale = 2.0;' +
+        '        strength = max(0.0, 1.0 - dist / 0.15);' +
+        '    }' +
+
+        '    float dst = decode_float_rgba(texture(u_tex_height, v_pos));' +
+        '    float src = 0.1;' +
+        /* blend is disabled; this is the blend. */
+        '    frag_color = encode_float_rgba(strength*src + dst*(1.0 - strength));' +
         '}';
 
 
