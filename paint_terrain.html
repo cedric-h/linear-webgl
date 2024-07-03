@@ -128,7 +128,8 @@ let shaders;
     const fs_grid = '#version 300 es\n' +
         'precision mediump float;' +
 
-        'uniform sampler2D u_tex_height;' +
+        'uniform sampler2D u_tex_albedo;' +
+        fn_sampled_pos +
 
         'in  vec2 v_uv;' +
         'out vec4 frag_color;' +
@@ -142,7 +143,7 @@ let shaders;
         '}' +
 
         // https://iquilezles.org/articles/normalsSDF/
-        'vec3 normal( const vec2 p ) {' +
+        'vec3 sampled_normal( const vec2 p ) {' +
             'const float eps = 0.0001;' +
             'const vec2 h = vec2(eps,0);' +
             'return normalize( vec3( g(p-h.xy) - g(p+h.xy),' +
@@ -151,8 +152,26 @@ let shaders;
         '}' +
 
         'void main() {' +
-            'vec3 color = normal(v_uv);' +
-            'frag_color = vec4(color, 1.0);' +
+            'vec3 world_pos = sampled_pos(v_uv);' +
+            'vec3 normal = sampled_normal(v_uv);' +
+
+            'vec2 y_uv = world_pos.xz / 8.0;' + /* texture scale */
+            'vec2 x_uv = world_pos.zy / 8.0;' + /* texture scale */
+            'vec2 z_uv = world_pos.xy / 8.0;' + /* texture scale */
+
+			'vec3 y_albedo = texture(u_tex_albedo, y_uv).xyz;' +
+			'vec3 x_albedo = texture(u_tex_albedo, x_uv).xyz;' +
+			'vec3 z_albedo = texture(u_tex_albedo, z_uv).xyz;' +
+
+			'vec3 blend_weights = pow(abs(normal), vec3(1.6));' + // pow(abs(normal), 1.0);' + /* sharpness */
+            'blend_weights /= dot(blend_weights, vec3(1.0));' +
+
+            'frag_color = vec4(vec3(0.0), 1.0);' +
+            'frag_color.xyz += x_albedo * blend_weights.x;' +
+            'frag_color.xyz += y_albedo * blend_weights.z;' +
+            'frag_color.xyz += z_albedo * blend_weights.y;' +
+            'frag_color.xyz *= 0.5 + 0.08*world_pos.z;' +
+            // 'frag_color.xyz = frag_color.xyz * 0.5 + abs(normal)*0.5;' + /* normal debug */
         '}';
 
 
@@ -959,6 +978,35 @@ let tex_skydome = gl.createTexture();
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
 })();
 
+let tex_terrain = gl.createTexture();
+(async () => {
+    const img = new Image();
+    img.src = 'seamless.jpg';
+    await new Promise(res => img.onload = res);
+
+    const canvas = document.createElement("canvas");
+    canvas.width  = img.width;
+    canvas.height = img.height;
+    canvas.getContext("2d").drawImage(img, 0, 0);
+
+    gl.bindTexture(gl.TEXTURE_2D, tex_terrain);
+    gl.texImage2D(
+        /* target         */ gl.TEXTURE_2D,
+        /* level          */ 0,
+        /* internalformat */ gl.RGBA,
+        /* width          */ canvas.width,
+        /* height         */ canvas.height,
+        /* border,        */ 0,
+        /* format,        */ gl.RGBA,
+        /* type,          */ gl.UNSIGNED_BYTE,
+        /* data           */ canvas
+    );
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.REPEAT);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.REPEAT);
+})();
+
 /* you want to have multiple "readPixel" requests in flight at once */
 const read_pixel_arr = new Uint8Array(4);
 const read_pixels = []; /* buf, sync, timestamp */
@@ -993,8 +1041,6 @@ requestAnimationFrame(function frame(now) {
                       (read_pixel_arr[3]/255.0 * 1.0/16581375.0);
 
         input.hovering_terrain = depth > 1e-7;
-        document.title = "hovering: " + input.hovering_terrain + ' ' + read_pixels.length;
-
     } while (false);
 
     const ORTHO = false;
@@ -1325,6 +1371,10 @@ requestAnimationFrame(function frame(now) {
                 gl.activeTexture(gl.TEXTURE0);
                 gl.bindTexture(gl.TEXTURE_2D, paint_atlas_color);
                 gl.uniform1i(shaders.grid.u_tex_height, 0);
+
+                gl.activeTexture(gl.TEXTURE1);
+                gl.bindTexture(gl.TEXTURE_2D, tex_terrain);
+                gl.uniform1i(shaders.grid.u_tex_albedo, 1);
             }
 
             /* bind geometry */
