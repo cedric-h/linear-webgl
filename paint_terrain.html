@@ -19,8 +19,8 @@ if (!gl) { alert('Failed to initialize WebGL'); }
 /* square tile's "radius" is just its size (width/length) */
 const MAX_HEIGHT             = 10;
 const TERRAIN_RADIUS         = 10;
-const TERRAIN_SEGMENTS       = (1 << 9);
-const PAINT_ATLAS_RESOLUTION = (1 << 9);
+const TERRAIN_SEGMENTS       = (1 << 8);
+const PAINT_ATLAS_RESOLUTION = (1 << 8);
 
 (window.onresize = () => {
     canvas.width = window.innerWidth;
@@ -137,9 +137,22 @@ let shaders;
         '  return dot(rgba, vec4(1.0, 1.0/255.0, 1.0/65025.0, 1.0/16581375.0));' +
         '}' +
 
+        'float g(vec2 uv) {' +
+            'return decode_float_rgba(texture(u_tex_height, uv));' +
+        '}' +
+
+        // https://iquilezles.org/articles/normalsSDF/
+        'vec3 normal( const vec2 p ) {' +
+            'const float eps = 0.0001;' +
+            'const vec2 h = vec2(eps,0);' +
+            'return normalize( vec3( g(p-h.xy) - g(p+h.xy),' +
+                              '     2.0*h.x,' +
+                              '     g(p-h.yx) - g(p+h.yx) ) );' +
+        '}' +
+
         'void main() {' +
-            'float height = decode_float_rgba(texture(u_tex_height, v_uv));' +
-            'frag_color = vec4(vec3(height), 1.0);' +
+            'vec3 color = normal(v_uv);' +
+            'frag_color = vec4(color, 1.0);' +
         '}';
 
 
@@ -199,7 +212,7 @@ let shaders;
         '        float dist = sd_segment(ar*u_brush, ar*world_pos_a.xy, ar*world_pos_b.xy);' +
         '        const float scale = 2.0;' +
         // '        strength = max(0.0, 1.0 - dist / 0.15);' +
-        '        strength = smoothstep(0.15, 0.10, dist);' +
+        '        strength = smoothstep(0.07, 0.03, dist);' +
         '    }' +
 
         '    float dst = decode_float_rgba(texture(u_tex_height, v_pos));' +
