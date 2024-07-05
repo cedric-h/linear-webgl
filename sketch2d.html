@@ -440,6 +440,33 @@ let input = {
     }, opts);
 }
 
+/* touch */
+{
+    const opts = { passive: false };
+
+    let touch_x = 0;
+    let touch_y = 0;
+    window.addEventListener("touchstart", ev => {
+        ev.preventDefault();
+
+        input.lmb_down = true;
+    }, opts);
+
+    window.addEventListener("touchmove", ev => {
+        ev.preventDefault();
+        input.dampedEvent.button = 0;
+
+        input.dampedEvent.movementX += ev.changedTouches[0].clientX - touch_x;
+        input.dampedEvent.movementY += ev.changedTouches[0].clientY - touch_y;
+    }, opts);
+
+    window.addEventListener("touchend", ev => {
+        ev.preventDefault();
+
+        input.lmb_down = false;
+    }, opts);
+}
+
 const canvas = document.getElementById("glcanvas");
 const ctx = canvas.getContext('2d');
 (window.onresize = () => {
