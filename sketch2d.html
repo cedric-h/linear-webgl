@@ -1,0 +1,449 @@
+<!-- vim: sw=2 ts=2 expandtab smartindent ft=javascript
+-->
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>WebGL Demo</title>
+    <style> document, body { margin: 0px; padding: 0px; overflow: hidden; } </style>
+  </head>
+
+  <body>
+    <canvas id="glcanvas"></canvas>
+    <script>"use strict";
+
+/* hmm ... */
+const data = ({
+  "data": {
+    "buildings": [
+      {
+        "floors": [
+          {
+            "properties": [
+              {
+                "name": "elevation",
+                "currentValue": 3.3500000000000005
+              }
+            ],
+            "zones": []
+          },
+          {
+            "properties": [],
+            "zones": [
+              {
+                "surfaces": []
+              }
+            ]
+          },
+          {
+            "properties": [
+              {
+                "name": "level",
+                "currentValue": 0
+              },
+              {
+                "name": "elevation",
+                "currentValue": 0.2
+              }
+            ],
+            "zones": [
+              {
+                "surfaces": [
+                  {
+                    "shapes": [
+                      {
+                        "vertices": [
+                          {
+                            "x": -12.780168388795403,
+                            "y": -6.539407355163124
+                          },
+                          {
+                            "x": -10.132827695249453,
+                            "y": -6.539407355163124
+                          },
+                          {
+                            "x": -10.132827695249453,
+                            "y": -5.43003471321051
+                          },
+                          {
+                            "x": -12.780168388795403,
+                            "y": -5.43003471321051
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "surfaces": [
+                  {
+                    "shapes": [
+                      {
+                        "vertices": [
+                          {
+                            "x": -17.638818637928146,
+                            "y": 0.06337344227294801
+                          },
+                          {
+                            "x": -17.638819068916835,
+                            "y": -5.43003417725016
+                          },
+                          {
+                            "x": -2.626835978033626,
+                            "y": -5.430035355024561
+                          },
+                          {
+                            "x": -2.6268356439850127,
+                            "y": -1.172231677434357
+                          },
+                          {
+                            "x": 1.230801299281198,
+                            "y": -1.1722319800876448
+                          },
+                          {
+                            "x": 1.230801396221269,
+                            "y": 0.06337196184526163
+                          },
+                          {
+                            "x": -0.49775605006144874,
+                            "y": 0.06337209746030491
+                          },
+                          {
+                            "x": -0.4977559410772011,
+                            "y": 1.452491837767456
+                          },
+                          {
+                            "x": -2.5469155137341217,
+                            "y": 1.4524919985355367
+                          },
+                          {
+                            "x": -2.5469156227183607,
+                            "y": 0.06337225822838795
+                          },
+                          {
+                            "x": -12.780168606993668,
+                            "y": 0.06337306108460682
+                          },
+                          {
+                            "x": -12.780168438037014,
+                            "y": 2.216904559013114
+                          },
+                          {
+                            "x": -16.050413778959797,
+                            "y": 1.709264433672245
+                          },
+                          {
+                            "x": -16.050413908089187,
+                            "y": 0.06337331765367456
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "surfaces": [
+                  {
+                    "shapes": [
+                      {
+                        "vertices": [
+                          {
+                            "x": -2.6268356439850127,
+                            "y": -6.539407517133058
+                          },
+                          {
+                            "x": -0.49775677638767196,
+                            "y": -6.539407517133058
+                          },
+                          {
+                            "x": -0.49775677638767196,
+                            "y": -5.430035427303043
+                          },
+                          {
+                            "x": -2.6268356439850127,
+                            "y": -5.430035427303043
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "surfaces": [
+                  {
+                    "shapes": [
+                      {
+                        "vertices": [
+                          {
+                            "x": -2.5469156146359,
+                            "y": 3.7385063905727502
+                          },
+                          {
+                            "x": -2.5469156384773997,
+                            "y": 6.049351552935114
+                          },
+                          {
+                            "x": -5.647919360455556,
+                            "y": 6.827981372090198
+                          },
+                          {
+                            "x": -5.64791952361278,
+                            "y": 3.2713281222539354
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "surfaces": [
+                  {
+                    "shapes": [
+                      {
+                        "vertices": [
+                          {
+                            "x": -2.5469153942047624,
+                            "y": 0.0633736748658841
+                          },
+                          {
+                            "x": -2.5469156146359,
+                            "y": 3.7385063905727502
+                          },
+                          {
+                            "x": -11.058287069972524,
+                            "y": 2.4729343755914712
+                          },
+                          {
+                            "x": -11.05828687069302,
+                            "y": 0.06337316436151684
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "surfaces": [
+                  {
+                    "shapes": [
+                      {
+                        "vertices": [
+                          {
+                            "x": -0.49775652651448604,
+                            "y": 4.0375429891818975
+                          },
+                          {
+                            "x": -0.4977566446034872,
+                            "y": 0.0322281016309284
+                          },
+                          {
+                            "x": 3.379101974322438,
+                            "y": 0.03222805831270525
+                          },
+                          {
+                            "x": 3.379102025478727,
+                            "y": 4.610571356693302
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "surfaces": [
+                  {
+                    "shapes": [
+                      {
+                        "vertices": [
+                          {
+                            "x": -2.5469153875852535,
+                            "y": 1.4524918251183103
+                          },
+                          {
+                            "x": -0.49775629178839675,
+                            "y": 1.4524920111846997
+                          },
+                          {
+                            "x": -0.49775652651448604,
+                            "y": 4.0375429891818975
+                          },
+                          {
+                            "x": -2.5469156146359,
+                            "y": 3.7385063905727502
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "surfaces": [
+                  {
+                    "shapes": [
+                      {
+                        "vertices": [
+                          {
+                            "x": -2.6268356439850127,
+                            "y": -5.430035427303043
+                          },
+                          {
+                            "x": 1.2308012350549649,
+                            "y": -5.430035427303043
+                          },
+                          {
+                            "x": 1.2308012350549649,
+                            "y": -1.172231677434357
+                          },
+                          {
+                            "x": -2.6268356439850127,
+                            "y": -1.172231677434357
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "surfaces": [
+                  {
+                    "shapes": [
+                      {
+                        "vertices": [
+                          {
+                            "x": 1.2308015603606057,
+                            "y": -5.430035115453304
+                          },
+                          {
+                            "x": 4.8631940768045325,
+                            "y": -5.430035115453304
+                          },
+                          {
+                            "x": 4.8631940768045325,
+                            "y": 0.06337206860599433
+                          },
+                          {
+                            "x": 1.2308015603606057,
+                            "y": 0.06337206860599433
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "properties": [],
+            "zones": [
+              {
+                "surfaces": []
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}).data.buildings[0];
+
+const ACTIVE_FLOOR = data.floors.findIndex(x => x.properties.some(p => p.name == "level" && p.currentValue == 0));
+
+/* graphql expr does this now */
+// for (const floor of data.floors) {
+//   for (const zone of data.floors[ACTIVE_FLOOR].zones) {
+//     zone.surfaces.sort((a, b) => Date.parse(a.lastModified) - Date.parse(b.lastModified));
+// 
+//     for (const surface of zone.surfaces) {
+//       for (const shape of surface.shapes) {
+//         shape.vertices.sort((a, b) => a.index - b.index);
+//       }
+//     }
+//   }
+// }
+
+let input_zoom = 1;
+window.onwheel = e => input_zoom += e.deltaY * 0.001;
+let camera_x = 0;
+let camera_y = 0;
+let camera_panning = false;
+window.onmousedown = () => camera_panning = true;
+window.onmouseup   = () => camera_panning = false;
+window.onmousemove = ev => {
+  if (!camera_panning) return;
+  camera_x -= ev.movementX;
+  camera_y -= ev.movementY;
+}
+
+const canvas = document.getElementById("glcanvas");
+const ctx = canvas.getContext('2d');
+(window.onresize = () => {
+   canvas.width = window.innerWidth*window.devicePixelRatio,
+   canvas.height = window.innerHeight*window.devicePixelRatio
+   canvas.style.width = window.innerWidth + 'px';
+   canvas.style.height = window.innerHeight + 'px';
+ })();
+
+requestAnimationFrame(function render(now) {
+  requestAnimationFrame(render);
+
+  ctx.fillStyle = "white";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  ctx.save();
+  (() => {
+    ctx.translate(canvas.width/2 - camera_x, canvas.height/2 - camera_y);
+
+    ctx.scale(40*input_zoom, -40*input_zoom);
+
+    let state = 13378484;
+    function xorshift32() {
+        let x = state;
+        x ^= x << 13;
+        x ^= x >> 17;
+        x ^= x << 5;
+        state = x;
+        return Math.abs(x / ~(1 << 31));
+    }
+
+    for (const zone of data.floors[ACTIVE_FLOOR].zones) {
+      for (const surface of zone.surfaces) {
+        for (const shape of surface.shapes) {
+          if (shape.vertices.length == 0) continue;
+
+          ctx.beginPath();
+          let i = 0;
+
+          for (const vtx of shape.vertices) {
+            if (i++ == 0) ctx.moveTo(vtx.x, vtx.y);
+            else          ctx.lineTo(vtx.x, vtx.y);
+          }
+
+          ctx.lineTo(shape.vertices[0].x, shape.vertices[0].y);
+          ctx.lineWidth = 0.15;
+          ctx.globalAlpha = 0.3;
+          ctx.strokeStyle = `rgb(${~~(xorshift32()*255)}, ${~~(xorshift32()*255)}, ${~~(xorshift32()*255)})`;
+          ctx.stroke();
+          ctx.globalAlpha = 1.0;
+          ctx.closePath();
+        }
+      }
+    }
+
+  })();
+  ctx.restore();
+})
+
+function lerp(v0, v1, t) { return (1 - t) * v0 + t * v1; }
+function inv_lerp(min, max, p) { return (p - min) / (max - min); }
+    </script>
+  </body>
+</html>
