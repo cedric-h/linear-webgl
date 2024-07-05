@@ -449,6 +449,9 @@ let input = {
     window.addEventListener("touchstart", ev => {
         ev.preventDefault();
 
+        touch_x = ev.changedTouches[0].clientX;
+        touch_y = ev.changedTouches[0].clientY;
+
         input.lmb_down = true;
     }, opts);
 
@@ -458,6 +461,9 @@ let input = {
 
         input.dampedEvent.movementX += ev.changedTouches[0].clientX - touch_x;
         input.dampedEvent.movementY += ev.changedTouches[0].clientY - touch_y;
+
+        touch_x = ev.changedTouches[0].clientX;
+        touch_y = ev.changedTouches[0].clientY;
     }, opts);
 
     window.addEventListener("touchend", ev => {
