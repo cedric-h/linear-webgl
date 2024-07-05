@@ -395,7 +395,7 @@ const ctx = canvas.getContext('2d');
 requestAnimationFrame(function render(now) {
   requestAnimationFrame(render);
 
-  ctx.fillStyle = "white";
+  ctx.fillStyle = "black";
   ctx.fillRect(0, 0, canvas.width, canvas.height);
 
   ctx.save();
@@ -403,16 +403,6 @@ requestAnimationFrame(function render(now) {
     ctx.translate(canvas.width/2 - camera_x, canvas.height/2 - camera_y);
 
     ctx.scale(40*input_zoom, -40*input_zoom);
-
-    let state = 13378484;
-    function xorshift32() {
-        let x = state;
-        x ^= x << 13;
-        x ^= x >> 17;
-        x ^= x << 5;
-        state = x;
-        return Math.abs(x / ~(1 << 31));
-    }
 
     for (const zone of data.floors[ACTIVE_FLOOR].zones) {
       for (const surface of zone.surfaces) {
@@ -429,8 +419,8 @@ requestAnimationFrame(function render(now) {
 
           ctx.lineTo(shape.vertices[0].x, shape.vertices[0].y);
           ctx.lineWidth = 0.15;
-          ctx.globalAlpha = 0.3;
-          ctx.strokeStyle = `rgb(${~~(xorshift32()*255)}, ${~~(xorshift32()*255)}, ${~~(xorshift32()*255)})`;
+          ctx.globalAlpha = 0.5;
+          ctx.strokeStyle = 'orange';
           ctx.stroke();
           ctx.globalAlpha = 1.0;
           ctx.closePath();
