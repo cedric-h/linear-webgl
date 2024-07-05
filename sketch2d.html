@@ -357,30 +357,87 @@ const data = ({
 
 const ACTIVE_FLOOR = data.floors.findIndex(x => x.properties.some(p => p.name == "level" && p.currentValue == 0));
 
-/* graphql expr does this now */
-// for (const floor of data.floors) {
-//   for (const zone of data.floors[ACTIVE_FLOOR].zones) {
-//     zone.surfaces.sort((a, b) => Date.parse(a.lastModified) - Date.parse(b.lastModified));
-// 
-//     for (const surface of zone.surfaces) {
-//       for (const shape of surface.shapes) {
-//         shape.vertices.sort((a, b) => a.index - b.index);
-//       }
-//     }
-//   }
-// }
+/* getting the bounds lets us center the camera on the building, no matter where it is. */
+const bounds = {
+  x: { min: Infinity, max: -Infinity },
+  y: { min: Infinity, max: -Infinity },
+};
+for (const floor of data.floors) {
+  for (const zone of data.floors[ACTIVE_FLOOR].zones) {
+    zone.surfaces.sort((a, b) => Date.parse(a.lastModified) - Date.parse(b.lastModified));
 
-let input_zoom = 1;
-window.onwheel = e => input_zoom += e.deltaY * 0.001;
-let camera_x = 0;
-let camera_y = 0;
-let camera_panning = false;
-window.onmousedown = () => camera_panning = true;
-window.onmouseup   = () => camera_panning = false;
-window.onmousemove = ev => {
-  if (!camera_panning) return;
-  camera_x -= ev.movementX;
-  camera_y -= ev.movementY;
+    for (const surface of zone.surfaces) {
+      for (const shape of surface.shapes) {
+        for (const vtx of shape.vertices) {
+          bounds.x.min = Math.min(bounds.x.min, vtx.x);
+          bounds.x.max = Math.max(bounds.x.max, vtx.x);
+
+          bounds.y.min = Math.min(bounds.y.min, vtx.y);
+          bounds.y.max = Math.max(bounds.y.max, vtx.y);
+        }
+      }
+    }
+  }
+}
+
+let input = {
+  zoom:   Math.sqrt((bounds.x.min - bounds.x.max)*(bounds.x.min - bounds.x.max) +
+                    (bounds.y.min - bounds.y.max)*(bounds.y.min - bounds.y.max)),
+  scroll: 0,
+
+  pitch:  Math.PI*0.25,
+  yaw:   -Math.PI*0.25,
+  eye: [0, 0, 0, 1],
+
+  cam_pivot_x: (bounds.x.min + bounds.x.max) * 0.5,
+  cam_pivot_y: (bounds.y.min + bounds.y.max) * 0.5,
+  cam_pivot_z: 0,
+
+  dampedEvent: { button: 0, movementX: 0, movementY: 0 },
+
+  lmb_down: false,
+  rmb_down: false,
+  mouse_x:  0,
+  mouse_y:  0,
+}
+
+{
+    const opts = { passive: false };
+
+    window.addEventListener('wheel', e => {
+        e.preventDefault();
+
+        if (input.mouse_down) return;
+        input.scroll += e.deltaY;
+    }, opts);
+    window.addEventListener('mousedown', ev => {
+        ev.preventDefault();
+
+        input.dampedEvent.button = ev.button ? 2 : 0;
+
+        if (ev.button == 0) input.lmb_down = true;
+        if (ev.button == 2) input.rmb_down = true;
+    }, opts);
+    window.addEventListener('mousemove', ev => {
+        ev.preventDefault();
+
+        if (input.lmb_down || input.rmb_down) {
+            input.dampedEvent.movementX += ev.movementX;
+            input.dampedEvent.movementY += ev.movementY;
+        }
+
+        input.mouse_x = ev.offsetX*window.devicePixelRatio;
+        input.mouse_y = ev.offsetY*window.devicePixelRatio;
+    }, opts);
+    window.addEventListener("contextmenu", ev => {
+        ev.preventDefault();
+    }, opts);
+    window.addEventListener('mouseup', ev => {
+        ev.preventDefault();
+
+        if (ev.button == 0) input.lmb_down = false;
+        if (ev.button == 2) input.rmb_down = false;
+    }, opts);
 }
 
 const canvas = document.getElementById("glcanvas");
@@ -392,51 +449,198 @@ const ctx = canvas.getContext('2d');
    canvas.style.height = window.innerHeight + 'px';
  })();
 
+let then = 0;
 requestAnimationFrame(function render(now) {
   requestAnimationFrame(render);
 
-  ctx.fillStyle = "black";
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  now *= 0.001;
+  const deltaTime = now - then;
+  then = now;
 
-  ctx.save();
-  (() => {
+  {
+    const ev = input.dampedEvent;
 
-    const m = mat4_create();
-    mat4_mul(m, m, mat4_from_translation(mat4_create(), [-camera_x, -camera_y, 0]));
-    mat4_mul(m, m, mat4_from_scaling(mat4_create(), 40*input_zoom, -40*input_zoom, 40*input_zoom));
+    /* based on the assumption that if you're zoomed in more,
+     * you're doing finer-detailed work and want more precise movements. */
+    const zoom_fudge = Math.sqrt(input.zoom/10.0)*2.0;
 
-    const p = [0, 0, 0, 1];
-    const transform_p = (x, y) => {
-      p[0] = x;
-      p[1] = y;
-      p[2] = 0;
-      p[3] = 1;
-      mat4_transform_vec4(p, p, m);
+    if (ev.button == 0) {
+      input.pitch -= ev.movementX * 0.0005 * zoom_fudge;
+      input.yaw   -= ev.movementY * 0.0005 * zoom_fudge;
+      input.yaw = Math.max(-Math.PI*0.5 + 0.01, Math.min(Math.PI*0.5 - 0.01, input.yaw));
+    }
+    if (ev.button == 2) {
+      const unit = [0, -ev.movementX*0.00075*zoom_fudge, ev.movementY*0.00075*zoom_fudge, 1];
+      {
+        const view    = mat4_create();
+        const scratch = mat4_create();
+
+        mat4_from_z_rotation(scratch, input.pitch);
+        mat4_mul(view, view, scratch);
+
+        mat4_from_y_rotation(scratch, input.yaw);
+        mat4_mul(view, view, scratch);
+
+        mat4_transform_vec4(unit, unit, view);
+      }
+
+      input.cam_pivot_x += unit[0];
+      input.cam_pivot_y += unit[1];
+      input.cam_pivot_z += unit[2];
     }
 
-    // ctx.scale(40*input_zoom, -40*input_zoom);
+    ev.movementX *= Math.pow(1 - 0.17, 60*deltaTime);
+    ev.movementY *= Math.pow(1 - 0.17, 60*deltaTime);
 
-    for (const zone of data.floors[ACTIVE_FLOOR].zones) {
-      for (const surface of zone.surfaces) {
-        for (const shape of surface.shapes) {
-          if (shape.vertices.length == 0) continue;
+    {
+      const t = Math.cbrt(Math.abs(input.scroll)) * Math.sign(input.scroll);
 
+      input.zoom += 0.005*t*input.zoom;
+      input.scroll *= Math.pow(1 - 0.5, 60*deltaTime);
+      input.zoom = Math.min(20, input.zoom);
+    }
+  }
+
+  const ORTHO = false;
+  const mvp = mat4_create();
+  const scratch = mat4_create();
+  {
+    const model = mat4_create();
+    {
+      // mat4_from_z_rotation(model, input.pitch);
+
+      // mat4_from_y_rotation(scratch, input.yaw);
+      // mat4_mul(model, scratch, model);
+
+      mat4_from_scaling(scratch, 0.5)
+      mat4_mul(model, scratch, model);
+    }
+
+    {
+      const FIELD_OF_VIEW = 50 / 180 * Math.PI;
+      const ar = window.innerWidth / window.innerHeight;
+      const projection = mat4_perspective(mat4_create(), FIELD_OF_VIEW, ar, 0.01, 100.0);
+
+      const view = mat4_create();
+      {
+        const eye = input.eye = [input.zoom, 0, 0, 1];
+        {
+          mat4_from_z_rotation(scratch, input.pitch);
+          mat4_mul(view, view, scratch);
+
+          mat4_from_y_rotation(scratch, input.yaw);
+          mat4_mul(view, view, scratch);
+
+          mat4_transform_vec4(eye, eye, view);
+        }
+
+        eye[0] += input.cam_pivot_x * 0.5;
+        eye[1] += input.cam_pivot_y * 0.5;
+        eye[2] += input.cam_pivot_z * 0.5;
+        mat4_target_to(
+          view,
+          eye,
+          [input.cam_pivot_x * 0.5, input.cam_pivot_y * 0.5, input.cam_pivot_z * 0.5],
+          [                0 * 0.5,                 0 * 0.5,                 1 * 0.5]
+        );
+        mat4_invert(view, view);
+      }
+
+      mat4_mul(mvp, projection, view);
+      mat4_mul(mvp, mvp, model);
+    }
+  }
+
+  ctx.globalAlpha = 1.0;
+  ctx.fillStyle = "black";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.globalAlpha = 1.0;
+
+  const p = [0, 0, 0, 1];
+  const transform_p = (x, y, height) => {
+    p[0] = x;
+    p[1] = y;
+    p[2] = height;
+    p[3] = 1;
+    mat4_transform_vec4(p, p, mvp);
+    const w = p[3];
+    p[0] = (0 + (p[0]/w*0.5 + 0.5))*canvas.width;
+    p[1] = (1 - (p[1]/w*0.5 + 0.5))*canvas.height;
+  }
+
+  {
+    ctx.beginPath();
+
+    transform_p(bounds.x.min, bounds.y.min, 0); ctx.moveTo(p[0], p[1]);
+    transform_p(bounds.x.max, bounds.y.min, 0); ctx.lineTo(p[0], p[1]);
+    transform_p(bounds.x.max, bounds.y.max, 0); ctx.lineTo(p[0], p[1]);
+    transform_p(bounds.x.min, bounds.y.max, 0); ctx.lineTo(p[0], p[1]);
+    transform_p(bounds.x.min, bounds.y.min, 0); ctx.lineTo(p[0], p[1]);
+
+    {
+      ctx.globalAlpha = 0.5;
+      {
+        ctx.lineWidth = 0.15 * 40;
+        ctx.strokeStyle = 'teal';
+        ctx.stroke();
+        ctx.closePath();
+      }
+      ctx.globalAlpha = 1.0;
+    }
+
+    ctx.fillStyle = "chartreuse";
+    transform_p(input.cam_pivot_x, input.cam_pivot_y, 0);
+    ctx.fillRect(p[0] - 10, p[1] - 10, 20, 20);
+
+    ctx.fillStyle = "teal";
+    transform_p(0, 0, 0);
+    ctx.fillRect(p[0] - 10, p[1] - 10, 20, 20);
+  }
+
+  for (const zone of data.floors[ACTIVE_FLOOR].zones) {
+    for (const surface of zone.surfaces) {
+      for (const shape of surface.shapes) {
+        if (shape.vertices.length == 0) continue;
+        const HEIGHT = 4;
+
+        for (const height of [0, HEIGHT]) {
           ctx.beginPath();
           let i = 0;
 
           for (const vtx of shape.vertices) {
-            transform_p(vtx.x, vtx.y);
+            transform_p(vtx.x, vtx.y, height);
             if (i++ == 0) ctx.moveTo(p[0], p[1]);
             else          ctx.lineTo(p[0], p[1]);
           }
 
-          transform_p(shape.vertices[0].x, shape.vertices[0].y);
+          transform_p(shape.vertices[0].x, shape.vertices[0].y, height);
           ctx.lineTo(p[0], p[1]);
 
           {
             ctx.globalAlpha = 0.5;
             {
-              ctx.lineWidth = 0.15 * 40 * input_zoom;
+              ctx.lineWidth = 0.15 * 40;
+              ctx.strokeStyle = 'orange';
+              ctx.stroke();
+              ctx.closePath();
+            }
+            ctx.globalAlpha = 1.0;
+          }
+
+        }
+
+        for (const vtx of shape.vertices) {
+          ctx.beginPath();
+
+          transform_p(vtx.x, vtx.y, 0);
+          ctx.moveTo(p[0], p[1]);
+          transform_p(vtx.x, vtx.y, HEIGHT);
+          ctx.lineTo(p[0], p[1]);
+
+          {
+            ctx.globalAlpha = 0.5;
+            {
+              ctx.lineWidth = 0.15 * 40;
               ctx.strokeStyle = 'orange';
               ctx.stroke();
               ctx.closePath();
@@ -446,9 +650,7 @@ requestAnimationFrame(function render(now) {
         }
       }
     }
-
-  })();
-  ctx.restore();
+  }
 })
 
 function mat4_create() {
@@ -544,6 +746,187 @@ function mat4_mul(out, a, b) {
     out[13] = b0 * a01 + b1 * a11 + b2 * a21 + b3 * a31;
     out[14] = b0 * a02 + b1 * a12 + b2 * a22 + b3 * a32;
     out[15] = b0 * a03 + b1 * a13 + b2 * a23 + b3 * a33;
+    return out;
+}
+
+function mat4_target_to(out, eye, target, up=VEC3_UP) {
+    let eyex = eye[0], eyey = eye[1], eyez = eye[2],
+         upx =  up[0],  upy =  up[1],  upz =  up[2];
+    let z0 = eyex - target[0],
+        z1 = eyey - target[1],
+        z2 = eyez - target[2];
+    let len = z0 * z0 + z1 * z1 + z2 * z2;
+    if (len > 0) {
+        len = 1 / Math.sqrt(len);
+        z0 *= len;
+        z1 *= len;
+        z2 *= len;
+    }
+    let x0 = upy * z2 - upz * z1,
+        x1 = upz * z0 - upx * z2,
+        x2 = upx * z1 - upy * z0;
+    len = x0 * x0 + x1 * x1 + x2 * x2;
+    if (len > 0) {
+        len = 1 / Math.sqrt(len);
+        x0 *= len;
+        x1 *= len;
+        x2 *= len;
+    }
+    out[0] = x0;
+    out[1] = x1;
+    out[2] = x2;
+    out[3] = 0;
+    out[4] = z1 * x2 - z2 * x1;
+    out[5] = z2 * x0 - z0 * x2;
+    out[6] = z0 * x1 - z1 * x0;
+    out[7] = 0;
+    out[8] = z0;
+    out[9] = z1;
+    out[10] = z2;
+    out[11] = 0;
+    out[12] = eyex;
+    out[13] = eyey;
+    out[14] = eyez;
+    out[15] = 1;
+    return out;
+}
+
+function mat4_perspective(out, fovy, aspect, near, far) {
+    let f = 1.0 / Math.tan(fovy / 2),
+        nf;
+    out[0] = f / aspect;
+    out[1] = 0;
+    out[2] = 0;
+    out[3] = 0;
+    out[4] = 0;
+    out[5] = f;
+    out[6] = 0;
+    out[7] = 0;
+    out[8] = 0;
+    out[9] = 0;
+    out[11] = -1;
+    out[12] = 0;
+    out[13] = 0;
+    out[15] = 0;
+    if (far != null && far !== Infinity) {
+        nf = 1 / (near - far);
+        out[10] = (far + near) * nf;
+        out[14] = 2 * far * near * nf;
+    } else {
+        out[10] = -1;
+        out[14] = -2 * near;
+    }
+    return out;
+}
+
+function mat4_from_x_rotation(out, rad) {
+    let s = Math.sin(rad);
+    let c = Math.cos(rad);
+    /* Perform axis-specific matrix multiplication */
+    out[0] = 1;
+    out[1] = 0;
+    out[2] = 0;
+    out[3] = 0;
+    out[4] = 0;
+    out[5] = c;
+    out[6] = s;
+    out[7] = 0;
+    out[8] = 0;
+    out[9] = -s;
+    out[10] = c;
+    out[11] = 0;
+    out[12] = 0;
+    out[13] = 0;
+    out[14] = 0;
+    out[15] = 1;
+    return out;
+}
+
+function mat4_from_y_rotation(out, rad) {
+    let s = Math.sin(rad);
+    let c = Math.cos(rad);
+    /* Perform axis-specific matrix multiplication */
+    out[0] = c;
+    out[1] = 0;
+    out[2] = -s;
+    out[3] = 0;
+    out[4] = 0;
+    out[5] = 1;
+    out[6] = 0;
+    out[7] = 0;
+    out[8] = s;
+    out[9] = 0;
+    out[10] = c;
+    out[11] = 0;
+    out[12] = 0;
+    out[13] = 0;
+    out[14] = 0;
+    out[15] = 1;
+    return out;
+}
+
+function mat4_from_z_rotation(out, rad) {
+    let s = Math.sin(rad);
+    let c = Math.cos(rad);
+    /* Perform axis-specific matrix multiplication */
+    out[0] = c;
+    out[1] = s;
+    out[2] = 0;
+    out[3] = 0;
+    out[4] = -s;
+    out[5] = c;
+    out[6] = 0;
+    out[7] = 0;
+    out[8] = 0;
+    out[9] = 0;
+    out[10] = 1;
+    out[11] = 0;
+    out[12] = 0;
+    out[13] = 0;
+    out[14] = 0;
+    out[15] = 1;
+    return out;
+}
+
+function mat4_invert(out, a) {
+    let a00 = a[0], a01 = a[1], a02 = a[2], a03 = a[3];
+    let a10 = a[4], a11 = a[5], a12 = a[6], a13 = a[7];
+    let a20 = a[8], a21 = a[9], a22 = a[10], a23 = a[11];
+    let a30 = a[12], a31 = a[13], a32 = a[14], a33 = a[15];
+    let b00 = a00 * a11 - a01 * a10;
+    let b01 = a00 * a12 - a02 * a10;
+    let b02 = a00 * a13 - a03 * a10;
+    let b03 = a01 * a12 - a02 * a11;
+    let b04 = a01 * a13 - a03 * a11;
+    let b05 = a02 * a13 - a03 * a12;
+    let b06 = a20 * a31 - a21 * a30;
+    let b07 = a20 * a32 - a22 * a30;
+    let b08 = a20 * a33 - a23 * a30;
+    let b09 = a21 * a32 - a22 * a31;
+    let b10 = a21 * a33 - a23 * a31;
+    let b11 = a22 * a33 - a23 * a32;
+    /* Calculate the determinant */
+    let det = b00 * b11 - b01 * b10 + b02 * b09 + b03 * b08 - b04 * b07 + b05 * b06;
+    if (!det) {
+        return null;
+    }
+    det = 1.0 / det;
+    out[0] = (a11 * b11 - a12 * b10 + a13 * b09) * det;
+    out[1] = (a02 * b10 - a01 * b11 - a03 * b09) * det;
+    out[2] = (a31 * b05 - a32 * b04 + a33 * b03) * det;
+    out[3] = (a22 * b04 - a21 * b05 - a23 * b03) * det;
+    out[4] = (a12 * b08 - a10 * b11 - a13 * b07) * det;
+    out[5] = (a00 * b11 - a02 * b08 + a03 * b07) * det;
+    out[6] = (a32 * b02 - a30 * b05 - a33 * b01) * det;
+    out[7] = (a20 * b05 - a22 * b02 + a23 * b01) * det;
+    out[8] = (a10 * b10 - a11 * b08 + a13 * b06) * det;
+    out[9] = (a01 * b08 - a00 * b10 - a03 * b06) * det;
+    out[10] = (a30 * b04 - a31 * b02 + a33 * b00) * det;
+    out[11] = (a21 * b02 - a20 * b04 - a23 * b00) * det;
+    out[12] = (a11 * b07 - a10 * b09 - a12 * b06) * det;
+    out[13] = (a00 * b09 - a01 * b07 + a02 * b06) * det;
+    out[14] = (a31 * b01 - a30 * b03 - a32 * b00) * det;
+    out[15] = (a20 * b03 - a21 * b01 + a22 * b00) * det;
     return out;
 }
 
