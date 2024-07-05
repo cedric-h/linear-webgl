@@ -1,4 +1,4 @@
-<!-- vim: sw=4 ts=4 expandtab smartindent ft=javascript
+<!-- vim: sw=2 ts=2 expandtab smartindent ft=javascript
 -->
 <!DOCTYPE html>
 <html lang="en">
@@ -10,1654 +10,548 @@
 
   <body>
     <canvas id="glcanvas"></canvas>
-    <script>
-const canvas = document.getElementById('glcanvas');
-const gl = canvas.getContext('webgl2', {antialias: true});
-gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, true);
-if (!gl) { alert('Failed to initialize WebGL'); }
+    <script>"use strict";
 
-(window.onresize = () => {
-    canvas.width = window.innerWidth;
-    canvas.height = window.innerHeight;
-
-    /* account for e.g. high-retina macbook screens */
-    if (window.devicePixelRatio > 1) {
-        canvas.style.width = `${canvas.width}px`;
-        canvas.style.height = `${canvas.height}px`;
-        canvas.width *= window.devicePixelRatio;
-        canvas.height *= window.devicePixelRatio;
-    }
-
-    gl.viewport(
-        0,
-        0,
-        canvas.width,
-        canvas.height
-    );
-})();
-
-function createProgram(gl, vertexSource, fragmentSource) {
-    function createShader(gl, type, source) {
-        const shader = gl.createShader(type);
-        gl.shaderSource(shader, source);
-        gl.compileShader(shader);
-        if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
-            throw new Error(gl.getShaderInfoLog(shader));
-        }
-        return shader;
-    }
-
-    const program = gl.createProgram();
-
-    const vertexShader = createShader(gl, gl.VERTEX_SHADER, vertexSource);
-    const fragmentShader = createShader(gl, gl.FRAGMENT_SHADER, fragmentSource);
-
-    gl.attachShader(program, vertexShader);
-    gl.attachShader(program, fragmentShader);
-
-    gl.linkProgram(program);
-    if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
-        throw new Error(gl.getProgramInfoLog(program));
-    }
-
-    const wrapper = {program};
-
-    const numAttributes = gl.getProgramParameter(program, gl.ACTIVE_ATTRIBUTES);
-    for (let i = 0; i < numAttributes; i++) {
-        const attribute = gl.getActiveAttrib(program, i);
-        wrapper[attribute.name] = gl.getAttribLocation(program, attribute.name);
-    }
-    const numUniforms = gl.getProgramParameter(program, gl.ACTIVE_UNIFORMS);
-    for (let i = 0; i < numUniforms; i++) {
-        const uniform = gl.getActiveUniform(program, i);
-        wrapper[uniform.name] = gl.getUniformLocation(program, uniform.name);
-    }
-
-    return wrapper;
-}
-
-/* if you're going to use this multiple times in a single program,
- * consider modifying it to not immediately delete all the shaders.
- *
- * or just take the shader compilation hit -- i don't care what you do.
- *
- * note, if you don't care about supporting Safari, you can generate shadows entirely in canvas
- * https://developer.mozilla.org/en-US/docs/Web/API/CanvasRenderingContext2D/filter
- *
- */
-function shadowForTexture(texture, texture_width, texture_height, texture_pad) {
-    /* compile shaders */
-    let shaders;
-    {
-        const vs_img = `
-            attribute vec3 a_pos;
-            attribute vec2 a_uv;
-
-            uniform mat4 u_matrix;
-
-            varying vec2 v_uv;
-
-            void main() {
-                gl_Position = u_matrix * vec4(a_pos.xyz, 1);
-                v_uv = a_uv;
-            }`;
-
-        const fs_img = `
-            precision mediump float;
-
-            varying vec2 v_uv;
-
-            uniform sampler2D u_texture;
-            uniform vec4 u_mask;
-
-            void main() {
-                gl_FragColor = texture2D(u_texture, v_uv);
-
-                /* somehow alpha got overmultiplied, freaky af */
-                // gl_FragColor.xyz /= gl_FragColor.w;
-
-                gl_FragColor.rgb *= u_mask.rgb;
-                gl_FragColor     *= u_mask.a;
-            }`;
-
-
-        const vs_fullscreen_blur = `#version 300 es
-            precision mediump float;
-
-            out vec2 v_texcoord;
-
-            void main(void) {
-                float x = float((gl_VertexID & 1) << 2);
-                float y = float((gl_VertexID & 2) << 1);
-                v_texcoord.x = x * 0.5;
-                v_texcoord.y = y * 0.5;
-                gl_Position = vec4(x - 1.0, y - 1.0, 0, 1);
-            }
-        `;
-
-        const fs_fullscreen_blur = `#version 300 es
-            precision mediump float;
-
-            uniform sampler2D u_texture;
-            uniform vec2 u_direction;
-
-            in vec2 v_texcoord;
-
-            out vec4 frag_color;
-
-            void main(void) {
-                vec2 one_pixel = u_direction*(vec2(1) / vec2(textureSize(u_texture, 0)));
-
-                frag_color = texture(u_texture, v_texcoord) * 0.2270270270;
-
-                frag_color += texture(u_texture, v_texcoord + one_pixel    ) * 0.1945945946;
-                frag_color += texture(u_texture, v_texcoord - one_pixel    ) * 0.1945945946;
-
-                frag_color += texture(u_texture, v_texcoord + one_pixel*2.0) * 0.1216216216;
-                frag_color += texture(u_texture, v_texcoord - one_pixel*2.0) * 0.1216216216;
-
-                frag_color += texture(u_texture, v_texcoord + one_pixel*3.0) * 0.0540540541;
-                frag_color += texture(u_texture, v_texcoord - one_pixel*3.0) * 0.0540540541;
-
-                frag_color += texture(u_texture, v_texcoord + one_pixel*4.0) * 0.0162162162;
-                frag_color += texture(u_texture, v_texcoord - one_pixel*4.0) * 0.0162162162;
-            }
-        `;
-
-        shaders = {
-            img:             createProgram(gl, vs_img            , fs_img            ),
-            fullscreen_blur: createProgram(gl, vs_fullscreen_blur, fs_fullscreen_blur),
-        };
-    }
-
-    let prebaked;
-    {
-      /* some suggestions on AA/multisampling https://stackoverflow.com/a/55976760 */
-      const canvas_width  = texture_width  + texture_pad*2;
-      const canvas_height = texture_height + texture_pad*2;
-
-      gl.viewport(
-          0,
-          0,
-          canvas_width,
-          canvas_height
-      );
-
-      /* this way we can just draw the image from (0, 0)..(width,height)
-       * and it will have even padding on all sides */
-      const pMatrix = mat4_ortho(
-          mat4_create(),
-          -texture_pad,
-          texture_width +texture_pad,
-          -texture_pad,
-          texture_height+texture_pad,
-          1,
-          -1
-      );
-
-      const render_targets = [
-        { tex: gl.createTexture(), fb: gl.createFramebuffer() },
-        { tex: gl.createTexture(), fb: gl.createFramebuffer() },
-      ];
-     
-      for (const rt of render_targets) {
-          gl.bindTexture(gl.TEXTURE_2D, rt.tex);
-
-          // Upload the image into the texture.
-          gl.texImage2D(
-              /* target         */ gl.TEXTURE_2D,
-              /* level          */ 0,
-              /* internalformat */ gl.RGBA,
-              /* width          */ canvas_width ,
-              /* height         */ canvas_height,
-              /* border,        */ 0,
-              /* format,        */ gl.RGBA,
-              /* type,          */ gl.UNSIGNED_BYTE,
-              /* data           */ null
-          );
-          gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-          gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-          gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-
-          gl.bindFramebuffer(gl.FRAMEBUFFER, rt.fb);
-          gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, rt.tex, 0);
-      }
-
-      /* prebaked rt is bound */
-      
-      const img_vbuf_pos = gl.createBuffer();
-      const img_vbuf_uv  = gl.createBuffer();
-      const img_ibuf     = gl.createBuffer();
-
+/* hmm ... */
+const data = ({
+  "data": {
+    "buildings": [
       {
-        const img_idx = [];
-        const img_pos = [];
-        const img_uv  = [];
-
-        {
-            const min_x = 0;
-            const min_y = 0;
-            const max_x = texture_width;
-            const max_y = texture_height;
-
-            img_uv.push(
-                1, 0,
-                0, 0,
-                0, 1,
-                1, 1
-            );
-
-            const vbuf_i = img_pos.length / 3;
-            img_pos.push(max_x, min_y, 0.1);
-            img_pos.push(min_x, min_y, 0.1);
-            img_pos.push(min_x, max_y, 0.1);
-            img_pos.push(max_x, max_y, 0.1);
-
-            img_idx.push(vbuf_i + 0, vbuf_i + 1, vbuf_i + 2, vbuf_i + 2, vbuf_i + 3, vbuf_i + 0);
-        }
-
-        /* set up premultiplied alpha */
-        gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
-        gl.enable(gl.BLEND);
-
-        gl.enable(gl.DEPTH_TEST);
-        gl.depthFunc(gl.LEQUAL);
-
-        /* clear all */
-        gl.clearColor(0, 0, 0, 0);
-        gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
-
-        /* shadow img pass (see color mask) */
-        function imgPass(u_mask_r, u_mask_g, u_mask_b, u_alpha_mask) {
-            gl.useProgram(shaders.img.program);
-            gl.enableVertexAttribArray(shaders.img.a_pos);
-            gl.enableVertexAttribArray(shaders.img.a_uv);
-
-            /* upload/bind atlas */
-            {
-                gl.activeTexture(gl.TEXTURE0);
-                gl.bindTexture(gl.TEXTURE_2D, texture);
-                gl.uniform1i(shaders.img.u_texture, 0);
-            }
-
-            gl.uniformMatrix4fv(shaders.img.u_matrix, false, pMatrix);
-            gl.uniform4f(shaders.img.u_mask, u_mask_r, u_mask_g, u_mask_b, u_alpha_mask);
-
-            /* upload/bind geometry */
-
-            {
-                gl.bindBuffer(gl.ARRAY_BUFFER, img_vbuf_pos);
-                gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(img_pos), gl.STATIC_DRAW);
-                gl.vertexAttribPointer(shaders.img.a_pos, 3, gl.FLOAT, false, 0, 0);
-
-                gl.bindBuffer(gl.ARRAY_BUFFER, img_vbuf_uv);
-                gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(img_uv), gl.STATIC_DRAW);
-                gl.vertexAttribPointer(shaders.img.a_uv, 2, gl.FLOAT, true, 0, 0);
-
-                gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, img_ibuf);
-                gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, new Uint16Array(img_idx), gl.STATIC_DRAW);
-            }
-
-            gl.drawElements(gl.TRIANGLES, img_idx.length, gl.UNSIGNED_SHORT, 0);
-        }
-
-        gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
-        gl.enable(gl.BLEND);
-
-        //imgPass(0.08, 0.2);
-        imgPass(1, 0, 0, 0.02);
-
-        /* blur time */
-        {
-            const passes = [
-                [render_targets[1].fb, render_targets[0].tex, [ 0, 10]],
-                [render_targets[0].fb, render_targets[1].tex, [ 9,  0]],
-                [render_targets[1].fb, render_targets[0].tex, [ 0,  8]],
-                [render_targets[0].fb, render_targets[1].tex, [ 7,  0]],
-                [render_targets[1].fb, render_targets[0].tex, [ 0,  6]],
-                [render_targets[0].fb, render_targets[1].tex, [ 5,  0]],
-                [render_targets[1].fb, render_targets[0].tex, [ 0,  4]],
-                [render_targets[0].fb, render_targets[1].tex, [ 3,  0]],
-                [render_targets[1].fb, render_targets[0].tex, [ 0,  2]],
-                [render_targets[0].fb, render_targets[1].tex, [ 1,  0]]
-            ];
-            for (const [dst_fb, src_tex, dir] of passes) {
-                gl.bindFramebuffer(gl.FRAMEBUFFER, dst_fb);
-
-                gl.useProgram(shaders.fullscreen_blur.program);
-
-                gl.uniform2fv(shaders.fullscreen_blur.u_direction, [dir[0]*2, dir[1]*2]);
-
-                /* bind tex */
-                {
-                    gl.activeTexture(gl.TEXTURE0);
-                    gl.bindTexture(gl.TEXTURE_2D, src_tex);
-                    gl.uniform1i(shaders.fullscreen_blur.u_texture, 0);
-                }
-
-                gl.drawArrays(gl.TRIANGLE_FAN, 0, 3);
-            }
-        }
-
-        gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
-        gl.enable(gl.BLEND);
-        imgPass(0, 1, 1, 1);
+        "floors": [
+          {
+            "properties": [
+              {
+                "name": "elevation",
+                "currentValue": 3.3500000000000005
+              }
+            ],
+            "zones": []
+          },
+          {
+            "properties": [],
+            "zones": [
+              {
+                "surfaces": []
+              }
+            ]
+          },
+          {
+            "properties": [
+              {
+                "name": "level",
+                "currentValue": 0
+              },
+              {
+                "name": "elevation",
+                "currentValue": 0.2
+              }
+            ],
+            "zones": [
+              {
+                "surfaces": [
+                  {
+                    "shapes": [
+                      {
+                        "vertices": [
+                          {
+                            "x": -12.780168388795403,
+                            "y": -6.539407355163124
+                          },
+                          {
+                            "x": -10.132827695249453,
+                            "y": -6.539407355163124
+                          },
+                          {
+                            "x": -10.132827695249453,
+                            "y": -5.43003471321051
+                          },
+                          {
+                            "x": -12.780168388795403,
+                            "y": -5.43003471321051
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "surfaces": [
+                  {
+                    "shapes": [
+                      {
+                        "vertices": [
+                          {
+                            "x": -17.638818637928146,
+                            "y": 0.06337344227294801
+                          },
+                          {
+                            "x": -17.638819068916835,
+                            "y": -5.43003417725016
+                          },
+                          {
+                            "x": -2.626835978033626,
+                            "y": -5.430035355024561
+                          },
+                          {
+                            "x": -2.6268356439850127,
+                            "y": -1.172231677434357
+                          },
+                          {
+                            "x": 1.230801299281198,
+                            "y": -1.1722319800876448
+                          },
+                          {
+                            "x": 1.230801396221269,
+                            "y": 0.06337196184526163
+                          },
+                          {
+                            "x": -0.49775605006144874,
+                            "y": 0.06337209746030491
+                          },
+                          {
+                            "x": -0.4977559410772011,
+                            "y": 1.452491837767456
+                          },
+                          {
+                            "x": -2.5469155137341217,
+                            "y": 1.4524919985355367
+                          },
+                          {
+                            "x": -2.5469156227183607,
+                            "y": 0.06337225822838795
+                          },
+                          {
+                            "x": -12.780168606993668,
+                            "y": 0.06337306108460682
+                          },
+                          {
+                            "x": -12.780168438037014,
+                            "y": 2.216904559013114
+                          },
+                          {
+                            "x": -16.050413778959797,
+                            "y": 1.709264433672245
+                          },
+                          {
+                            "x": -16.050413908089187,
+                            "y": 0.06337331765367456
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "surfaces": [
+                  {
+                    "shapes": [
+                      {
+                        "vertices": [
+                          {
+                            "x": -2.6268356439850127,
+                            "y": -6.539407517133058
+                          },
+                          {
+                            "x": -0.49775677638767196,
+                            "y": -6.539407517133058
+                          },
+                          {
+                            "x": -0.49775677638767196,
+                            "y": -5.430035427303043
+                          },
+                          {
+                            "x": -2.6268356439850127,
+                            "y": -5.430035427303043
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "surfaces": [
+                  {
+                    "shapes": [
+                      {
+                        "vertices": [
+                          {
+                            "x": -2.5469156146359,
+                            "y": 3.7385063905727502
+                          },
+                          {
+                            "x": -2.5469156384773997,
+                            "y": 6.049351552935114
+                          },
+                          {
+                            "x": -5.647919360455556,
+                            "y": 6.827981372090198
+                          },
+                          {
+                            "x": -5.64791952361278,
+                            "y": 3.2713281222539354
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "surfaces": [
+                  {
+                    "shapes": [
+                      {
+                        "vertices": [
+                          {
+                            "x": -2.5469153942047624,
+                            "y": 0.0633736748658841
+                          },
+                          {
+                            "x": -2.5469156146359,
+                            "y": 3.7385063905727502
+                          },
+                          {
+                            "x": -11.058287069972524,
+                            "y": 2.4729343755914712
+                          },
+                          {
+                            "x": -11.05828687069302,
+                            "y": 0.06337316436151684
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "surfaces": [
+                  {
+                    "shapes": [
+                      {
+                        "vertices": [
+                          {
+                            "x": -0.49775652651448604,
+                            "y": 4.0375429891818975
+                          },
+                          {
+                            "x": -0.4977566446034872,
+                            "y": 0.0322281016309284
+                          },
+                          {
+                            "x": 3.379101974322438,
+                            "y": 0.03222805831270525
+                          },
+                          {
+                            "x": 3.379102025478727,
+                            "y": 4.610571356693302
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "surfaces": [
+                  {
+                    "shapes": [
+                      {
+                        "vertices": [
+                          {
+                            "x": -2.5469153875852535,
+                            "y": 1.4524918251183103
+                          },
+                          {
+                            "x": -0.49775629178839675,
+                            "y": 1.4524920111846997
+                          },
+                          {
+                            "x": -0.49775652651448604,
+                            "y": 4.0375429891818975
+                          },
+                          {
+                            "x": -2.5469156146359,
+                            "y": 3.7385063905727502
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "surfaces": [
+                  {
+                    "shapes": [
+                      {
+                        "vertices": [
+                          {
+                            "x": -2.6268356439850127,
+                            "y": -5.430035427303043
+                          },
+                          {
+                            "x": 1.2308012350549649,
+                            "y": -5.430035427303043
+                          },
+                          {
+                            "x": 1.2308012350549649,
+                            "y": -1.172231677434357
+                          },
+                          {
+                            "x": -2.6268356439850127,
+                            "y": -1.172231677434357
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "surfaces": [
+                  {
+                    "shapes": [
+                      {
+                        "vertices": [
+                          {
+                            "x": 1.2308015603606057,
+                            "y": -5.430035115453304
+                          },
+                          {
+                            "x": 4.8631940768045325,
+                            "y": -5.430035115453304
+                          },
+                          {
+                            "x": 4.8631940768045325,
+                            "y": 0.06337206860599433
+                          },
+                          {
+                            "x": 1.2308015603606057,
+                            "y": 0.06337206860599433
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "properties": [],
+            "zones": [
+              {
+                "surfaces": []
+              }
+            ]
+          }
+        ]
       }
+    ]
+  }
+}).data.buildings[0];
 
-      gl.deleteBuffer(img_vbuf_pos);
-      gl.deleteBuffer(img_vbuf_uv );
-      gl.deleteBuffer(img_ibuf    );
+const ACTIVE_FLOOR = data.floors.findIndex(x => x.properties.some(p => p.name == "level" && p.currentValue == 0));
 
-      gl.deleteProgram(shaders.img.program);
-      gl.deleteShader(shaders.img.vs);
-      gl.deleteShader(shaders.img.fs);
-
-      gl.deleteProgram(shaders.fullscreen_blur.program);
-      gl.deleteShader(shaders.fullscreen_blur.vs);
-      gl.deleteShader(shaders.fullscreen_blur.fs);
-
-      gl.deleteFramebuffer(render_targets[0].fb);
-      gl.deleteFramebuffer(render_targets[1].fb);
-      gl.deleteTexture(render_targets[1].tex);
-      prebaked = render_targets[0].tex;
-
-      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-    }
-
-    return prebaked;
-}
-
-let shaders;
-/* compile shaders */
-{
-    const vs_geo = `
-        attribute vec3 a_pos;
-        attribute vec4 a_color;
-
-        uniform mat4 u_matrix;
-
-        varying vec4 v_color;
-
-        void main() {
-            gl_Position = u_matrix * vec4(a_pos.xyz, 1);
-            v_color = a_color;
-        }`;
-
-    const fs_geo = `
-        precision mediump float;
-
-        varying vec4 v_color;
-
-        void main() {
-            gl_FragColor = vec4(1.0 - v_color.xyz*0.35, 1.0);
-        }`;
-
-
-
-    const vs_grid = `#version 300 es
-        in vec3 a_pos;
-        in vec2 a_uv;
-
-        uniform mat4 u_matrix;
-
-        out vec2 v_uv;
-
-        void main() {
-            gl_Position = u_matrix * vec4(a_pos.xyz, 1);
-            v_uv = (a_uv - 0.5)*abs(a_pos.xy);
-        }`;
-
-    const fs_grid = `#version 300 es
-        precision mediump float;
-
-        in vec2 v_uv;
-
-        /* https://iquilezles.org/articles/filterableprocedurals/ */
-
-        const float N = 50.0; // grid ratio
-        float gridTextureGradBox(in vec2 p, in vec2 ddx, in vec2 ddy) {
-            // filter kernel
-            vec2 w = max(abs(ddx), abs(ddy)) + 0.01;
-
-            // analytic (box) filtering
-            vec2 a = p + 0.5*w;                        
-            vec2 b = p - 0.5*w;           
-            vec2 i = (floor(a)+min(fract(a)*N,1.0)-
-                      floor(b)-min(fract(b)*N,1.0))/(N*w);
-            //pattern
-            return (1.0-i.x)*(1.0-i.y);
-        }
-
-        out vec4 frag_color;
-
-        void main() {
-            // vec2 d = 1.0 - step(0.01, fract(v_uv*10.0));
-            // gl_FragColor = vec4(max(d.x, d.y));
-
-            float spotlight = 0.3 + 0.6*smoothstep(0.0, 0.1, 1.0 - length(v_uv)/5.5);
-
-            vec2 uv = (v_uv - 0.5) + 0.5/N;
-            float grid = gridTextureGradBox(uv, dFdx(uv), dFdy(uv));
-            frag_color = vec4(vec3(1.0 - 0.25*(1.0 - grid)), 1);
-        }`;
-
-
-
-    shaders = {
-        geo:  createProgram(gl, vs_geo , fs_geo ),
-        grid: createProgram(gl, vs_grid, fs_grid),
-    }
-}
-
-const buf = {
-    geo_v_pos:   gl.createBuffer(),
-    geo_v_color: gl.createBuffer(),
-    geo_i:       gl.createBuffer(),
-
-    grid_v_pos:  gl.createBuffer(),
-    grid_v_uv:   gl.createBuffer(),
-    grid_i:      gl.createBuffer(),
+/* getting the bounds lets us center the camera on the building, no matter where it is. */
+const bounds = {
+  x: { min: Infinity, max: -Infinity },
+  y: { min: Infinity, max: -Infinity },
 };
+for (const floor of data.floors) {
+  for (const zone of data.floors[ACTIVE_FLOOR].zones) {
+    zone.surfaces.sort((a, b) => Date.parse(a.lastModified) - Date.parse(b.lastModified));
+
+    for (const surface of zone.surfaces) {
+      for (const shape of surface.shapes) {
+        for (const vtx of shape.vertices) {
+          bounds.x.min = Math.min(bounds.x.min, vtx.x);
+          bounds.x.max = Math.max(bounds.x.max, vtx.x);
+
+          bounds.y.min = Math.min(bounds.y.min, vtx.y);
+          bounds.y.max = Math.max(bounds.y.max, vtx.y);
+        }
+      }
+    }
+  }
+}
 
 let input = {
-    pitch:  Math.PI*0.25,
-    yaw:   -Math.PI*0.25,
-    eye: [0, 0, 0, 1],
+  zoom:   Math.sqrt((bounds.x.min - bounds.x.max)*(bounds.x.min - bounds.x.max) +
+                    (bounds.y.min - bounds.y.max)*(bounds.y.min - bounds.y.max)),
 
-    dampedEvent: { button: 0, movementX: 0, movementY: 0 },
+  pitch:  Math.PI*0.25,
+  yaw:   -Math.PI*0.25,
+  eye: [0, 0, 0, 1],
 
-    cam_pivot_x: 0,
-    cam_pivot_y: 0,
-    cam_pivot_z: 0,
-
-    zoom:   10,
-    scroll:  0,
-
-    lmb_down:    false,
-    lmb_clicked: false, /* true for a frame after down */
-    rmb_down:    false,
-    mouse_x: 0,
-    mouse_y: 0,
-}
-{
-    const opts = { passive: false };
-
-    window.addEventListener('wheel', e => {
-        e.preventDefault();
-
-        if (input.mouse_down) return;
-        input.scroll += e.deltaY;
-    }, opts);
-    window.addEventListener('mousedown', ev => {
-        ev.preventDefault();
-
-        input.dampedEvent.button = ev.button ? 2 : 0;
-
-        if (ev.button == 0) input.lmb_down = true;
-        if (ev.button == 2) input.rmb_down = true;
-    }, opts);
-    window.addEventListener('mousemove', ev => {
-        ev.preventDefault();
-
-        if (input.lmb_down || input.rmb_down) {
-            input.dampedEvent.movementX += ev.movementX;
-            input.dampedEvent.movementY += ev.movementY;
-        }
-
-        input.mouse_x = ev.offsetX*window.devicePixelRatio;
-        input.mouse_y = ev.offsetY*window.devicePixelRatio;
-    }, opts);
-    window.addEventListener("contextmenu", ev => {
-        ev.preventDefault();
-    }, opts);
-    window.addEventListener('mouseup', ev => {
-        ev.preventDefault();
-
-        if (ev.button == 0) input.lmb_down = false;
-        if (ev.button == 2) input.rmb_down = false;
-    }, opts);
+  cam_pivot_x: (bounds.x.min + bounds.x.max) * 0.5,
+  cam_pivot_y: (bounds.y.min + bounds.y.max) * 0.5,
+  cam_pivot_z: 0,
 }
 
-
-const ATLAS_RESOLUTION    = 500;
-const ATLAS_SHADOW_PAD    = 100;
-const ATLAS_SCREEN_SIZE_Y = 100;
-const ATLAS_ASPECT_RATIO = 1.85; /* width = ATLAS_ASPECT_RATIO * size_y */
-
-const ALIGN_LEFT = 0;
-const ALIGN_CENTER = 1;
-
-const SUBSHADER_TEXT  = 0;
-const SUBSHADER_IMAGE = 1;
-const SUBSHADER_SOLID = 2;
-
-/* higher number = prettier text using more VRAM */
-const SDF_FONT_SIZE = 48;
-
-class SensorRenderer {
-    constructor(gl) {
-        this.dynamic_scale = 32;
-        this.color0 = [1.00, 0.64, 0.00, 1];
-        this.color1 = [1.00, 1.00, 1.00, 1];
-
-        this.z = -0.2;
-
-        this.text_vbuf_pos = [];
-        this.text_vbuf_uv  = [];
-        this.text_ibuf     = [];
-
-        this.pMatrix = mat4_create();
-
-        /* maps character to location in spritesheet/font_atlas */
-        this.sdfs = {};
-        this.font_atlas = gl.createTexture();
-
-        this.buf = {
-            text_vbuf_pos: gl.createBuffer(),
-            text_vbuf_uv:  gl.createBuffer(),
-            text_ibuf:     gl.createBuffer()
-        };
-
-        /* compile shaders
-         *
-         * the sensor renderer takes an ubershader approach,
-         * because this makes transparency very simple. */
-        {
-            const vs_sensor = `#version 300 es
-
-                in vec3 a_pos;
-                in vec2 a_texcoord;
-
-                uniform mat4 u_matrix;
-                uniform vec2 u_texsize;
-
-                out vec2 v_texcoord;
-                flat out int v_variant;
-
-                void main() {
-                    v_variant = int(a_pos.z);
-
-                    switch (v_variant&3) {
-
-                        case ${SUBSHADER_TEXT}: {
-                            gl_Position = u_matrix * vec4(a_pos.xy, 0, 1);
-                            v_texcoord = a_texcoord / u_texsize;
-                        } break;
-
-                        case ${SUBSHADER_SOLID}:
-                        case ${SUBSHADER_IMAGE}: {
-                            gl_Position = u_matrix * vec4(a_pos.xy, 0.0, 1.0);
-                            v_texcoord = a_texcoord;
-                        } break;
-
-                    }
-                }`;
-
-            const fs_sensor = `#version 300 es
-
-                precision mediump float;
-
-                uniform sampler2D u_tex_font;
-                uniform sampler2D u_tex_atlas;
-                uniform vec4 u_color0;
-                uniform vec4 u_color1;
-                uniform float u_buffer;
-                uniform float u_gamma;
-
-                in vec2 v_texcoord;
-                flat in int v_variant;
-
-                out vec4 frag_color;
-
-                void main() {
-                    bool selected = (v_variant&4) == 4;
-
-                    switch (v_variant&3) {
-
-                        case ${SUBSHADER_TEXT}: {
-                            /* TEXT's colors are flipped vs. IMAGE */
-                            vec4 color = selected ? u_color1 : u_color0;
-
-                            float dist = texture(u_tex_font, v_texcoord).r;
-                            float alpha = smoothstep(u_buffer - u_gamma, u_buffer + u_gamma, dist);
-                            frag_color = color * alpha;
-                        } break;
-
-                        case ${SUBSHADER_IMAGE}: {
-                            vec4 major_color = selected ? u_color0 : u_color1;
-                            vec4 minor_color = selected ? u_color1 : u_color0;
-                            vec4 sampled = texture(u_tex_atlas, v_texcoord);
-                            frag_color = vec4(0.0, 0.0, 0.0, sampled.r);
-                            frag_color += major_color * sampled.g;
-                            frag_color += minor_color * sampled.b;
-                        } break;
-
-                        case ${SUBSHADER_SOLID}: {
-                            frag_color = vec4(0.0, 0.0, 0.0, 0.3);
-                        } break;
-
-                    }
-                }`;
-
-            this.shaders = {
-                sensor: createProgram(gl, vs_sensor, fs_sensor),
-            }
-        }
-
-        this.image_atlas = gl.createTexture();
-        let atlas_size_x, atlas_size_y;
-        {
-            const canvas = document.createElement("canvas");
-            const size_x = ATLAS_RESOLUTION * ATLAS_ASPECT_RATIO;
-            const size_y = ATLAS_RESOLUTION; /* between two textures in atlas */
-            atlas_size_x = canvas.width  = size_x;
-            atlas_size_y = canvas.height = (size_y + ATLAS_SHADOW_PAD)*3.25;
-            const ctx = canvas.getContext("2d");
-
-            const TRI_HEIGHT = 0.22 * ATLAS_RESOLUTION;
-            const TRI_WIDTH  = 0.32 * ATLAS_RESOLUTION;
-            const TRI_RADIUS = 0.05 * ATLAS_RESOLUTION;
-            const TRI_ARC    = 0.5; /* radians */
-
-            const CORNER_RADIUS = (size_y - TRI_HEIGHT)*0.5;
-
-            function bubble(kind) {
-                ctx.fillStyle = "rgb(255, 255, 0)";
-
-                const q = Math.PI*0.5;
-                {
-                    ctx.beginPath();
-                    const x = size_x * 0.5;
-                    const y = size_y * 0.5;
-
-                    const cx = x - CORNER_RADIUS;
-                    const cy = y - CORNER_RADIUS - TRI_HEIGHT;
-                    /* four corners: 
-                     * ctx.arc(x + cx, y + cy, CORNER_RADIUS, 0, q);
-                     * ctx.arc(x - cx, y + cy, CORNER_RADIUS, q, q*2);
-                     * ctx.arc(x - cx, y - cy - TRI_HEIGHT, CORNER_RADIUS, q*2, q*3);
-                     * ctx.arc(x + cx, y - cy - TRI_HEIGHT, CORNER_RADIUS, q*3, q*4);
-                     */
-                    ctx.arc(x - cx, y - TRI_HEIGHT*0.5, CORNER_RADIUS, q*1, q*3);
-                    ctx.arc(x + cx, y - TRI_HEIGHT*0.5, CORNER_RADIUS, q*3, q*1);
-                    ctx.fill();
-                }
-
-                /* tail */
-                if (kind != 1) {
-                    ctx.beginPath();
-                    ctx.moveTo(size_x*0.5 + TRI_WIDTH*0.5, size_y - TRI_HEIGHT);
-                    ctx.   arc(size_x*0.5                , size_y - TRI_RADIUS, TRI_RADIUS,
-                                                                                           -TRI_ARC+q,
-                                                                                            TRI_ARC+q);
-                    ctx.lineTo(size_x*0.5 - TRI_WIDTH*0.5, size_y - TRI_HEIGHT);
-                    ctx.fill();
-                }
-
-                /* right rounded rectangle */
-                if (kind == 2) {
-                    ctx.beginPath();
-                    ctx.arc(650, 200, 100,  q, -q);
-                    ctx.arc(750, 200, 100, -q,  q);
-                    ctx.fillStyle = "rgb(0, 0, 255)";
-                    ctx.fill();
-                }
-
-                /* left circle */
-                {
-                    ctx.beginPath();
-                    ctx.arc(180, 200, 110, 0, Math.PI*2);
-                    ctx.fillStyle = "rgb(0, 0, 255)";
-                    ctx.fill();
-                }
-            }
-            bubble(0);
-            ctx.translate(0, atlas_size_y/3 + ATLAS_SHADOW_PAD*0.68);
-            bubble(1);
-            ctx.translate(0, atlas_size_y/3 + ATLAS_SHADOW_PAD*0.68);
-            bubble(2);
-
-            gl.bindTexture(gl.TEXTURE_2D, this.image_atlas);
-            gl.texImage2D(
-                /* target         */ gl.TEXTURE_2D,
-                /* level          */ 0,
-                /* internalformat */ gl.RGBA,
-                /* width          */ canvas.width,
-                /* height         */ canvas.height,
-                /* border,        */ 0,
-                /* format,        */ gl.RGBA,
-                /* type,          */ gl.UNSIGNED_BYTE,
-                /* data           */ canvas
-            );
-            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-        }
-
-        if (ATLAS_SHADOW_PAD > 0) {
-            const shadowed = shadowForTexture(
-                this.image_atlas,
-                atlas_size_x,
-                atlas_size_y,
-                ATLAS_SHADOW_PAD
-            )
-            gl.deleteTexture(this.image_atlas);
-            this.image_atlas = shadowed;
-
-            gl.viewport(
-                0,
-                0,
-                gl.canvas.width,
-                gl.canvas.height
-            );
-        }
-
-        /* generated by shadowForTexture or not, we want to generate mips now */
-        {
-            gl.bindTexture(gl.TEXTURE_2D, this.image_atlas);
-            /* using mips here is lowkey dumb and we could just keep it fixed size,
-             * but i forgot how bad antialiasing is for stuff you render with canvas ...
-             * might go back to the SDF i had to generate the speech bubble ...*/
-            gl.generateMipmap(gl.TEXTURE_2D);
-            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
-        }
-
-        /* mapbox's TinySDF - https://github.com/mapbox/tiny-sdf */
-        let TinySDF;
-        {
-            const INF = 1e20;
-
-            class _TinySDF {
-                constructor({
-                    fontSize = 24,
-                    buffer = 3,
-                    radius = 8,
-                    cutoff = 0.25,
-                    fontFamily = 'sans-serif',
-                    fontWeight = 'normal',
-                    fontStyle = 'normal'
-                } = {}) {
-                    this.buffer = buffer;
-                    this.cutoff = cutoff;
-                    this.radius = radius;
-
-                    // make the canvas size big enough to both have the specified buffer around the glyph
-                    // for "halo", and account for some glyphs possibly being larger than their font size
-                    const size = this.size = fontSize + buffer * 4;
-
-                    const canvas = this._createCanvas(size);
-                    const ctx = this.ctx = canvas.getContext('2d', {willReadFrequently: true});
-                    ctx.font = `${fontStyle} ${fontWeight} ${fontSize}px ${fontFamily}`;
-
-                    ctx.textBaseline = 'alphabetic';
-                    ctx.textAlign = 'left'; // Necessary so that RTL text doesn't have different alignment
-                    ctx.fillStyle = 'black';
-
-                    // temporary arrays for the distance transform
-                    this.gridOuter = new Float64Array(size * size);
-                    this.gridInner = new Float64Array(size * size);
-                    this.f = new Float64Array(size);
-                    this.z = new Float64Array(size + 1);
-                    this.v = new Uint16Array(size);
-                }
-
-                _createCanvas(size) {
-                    const canvas = document.createElement('canvas');
-                    canvas.width = canvas.height = size;
-                    return canvas;
-                }
-
-                draw(char) {
-                    const {
-                        width: glyphAdvance,
-                        actualBoundingBoxAscent,
-                        actualBoundingBoxDescent,
-                        actualBoundingBoxLeft,
-                        actualBoundingBoxRight
-                    } = this.ctx.measureText(char);
-
-                    // The integer/pixel part of the top alignment is encoded in metrics.glyphTop
-                    // The remainder is implicitly encoded in the rasterization
-                    const glyphTop = Math.ceil(actualBoundingBoxAscent);
-                    const glyphLeft = 0;
-
-                    // If the glyph overflows the canvas size, it will be clipped at the bottom/right
-                    const glyphWidth = Math.max(0, Math.min(this.size - this.buffer, Math.ceil(actualBoundingBoxRight - actualBoundingBoxLeft)));
-                    const glyphHeight = Math.min(this.size - this.buffer, glyphTop + Math.ceil(actualBoundingBoxDescent));
-
-                    const width = glyphWidth + 2 * this.buffer;
-                    const height = glyphHeight + 2 * this.buffer;
-
-                    const len = Math.max(width * height, 0);
-                    const data = new Uint8ClampedArray(len);
-                    const glyph = {data, width, height, glyphWidth, glyphHeight, glyphTop, glyphLeft, glyphAdvance};
-                    if (glyphWidth === 0 || glyphHeight === 0) return glyph;
-
-                    const {ctx, buffer, gridInner, gridOuter} = this;
-                    ctx.clearRect(buffer, buffer, glyphWidth, glyphHeight);
-                    ctx.fillText(char, buffer, buffer + glyphTop);
-                    const imgData = ctx.getImageData(buffer, buffer, glyphWidth, glyphHeight);
-
-                    // Initialize grids outside the glyph range to alpha 0
-                    gridOuter.fill(INF, 0, len);
-                    gridInner.fill(0, 0, len);
-
-                    for (let y = 0; y < glyphHeight; y++) {
-                        for (let x = 0; x < glyphWidth; x++) {
-                            const a = imgData.data[4 * (y * glyphWidth + x) + 3] / 255; // alpha value
-                            if (a === 0) continue; // empty pixels
-
-                            const j = (y + buffer) * width + x + buffer;
-
-                            if (a === 1) { // fully drawn pixels
-                                gridOuter[j] = 0;
-                                gridInner[j] = INF;
-
-                            } else { // aliased pixels
-                                const d = 0.5 - a;
-                                gridOuter[j] = d > 0 ? d * d : 0;
-                                gridInner[j] = d < 0 ? d * d : 0;
-                            }
-                        }
-                    }
-
-                    edt(gridOuter, 0, 0, width, height, width, this.f, this.v, this.z);
-                    edt(gridInner, buffer, buffer, glyphWidth, glyphHeight, width, this.f, this.v, this.z);
-
-                    for (let i = 0; i < len; i++) {
-                        const d = Math.sqrt(gridOuter[i]) - Math.sqrt(gridInner[i]);
-                        data[i] = Math.round(255 - 255 * (d / this.radius + this.cutoff));
-                    }
-
-                    return glyph;
-                }
-            }
-
-            // 2D Euclidean squared distance transform by Felzenszwalb & Huttenlocher https://cs.brown.edu/~pff/papers/dt-final.pdf
-            function edt(data, x0, y0, width, height, gridSize, f, v, z) {
-                for (let x = x0; x < x0 + width; x++) edt1d(data, y0 * gridSize + x, gridSize, height, f, v, z);
-                for (let y = y0; y < y0 + height; y++) edt1d(data, y * gridSize + x0, 1, width, f, v, z);
-            }
-
-            // 1D squared distance transform
-            function edt1d(grid, offset, stride, length, f, v, z) {
-                v[0] = 0;
-                z[0] = -INF;
-                z[1] = INF;
-                f[0] = grid[offset];
-
-                for (let q = 1, k = 0, s = 0; q < length; q++) {
-                    f[q] = grid[offset + q * stride];
-                    const q2 = q * q;
-                    do {
-                        const r = v[k];
-                        s = (f[q] - f[r] + q2 - r * r) / (q - r) / 2;
-                    } while (s <= z[k] && --k > -1);
-
-                    k++;
-                    v[k] = q;
-                    z[k] = s;
-                    z[k + 1] = INF;
-                }
-
-                for (let q = 0, k = 0; q < length; q++) {
-                    while (z[k + 1] < q) k++;
-                    const r = v[k];
-                    const qr = q - r;
-                    grid[offset + q * stride] = f[r] + qr * qr;
-                }
-            }
-
-            TinySDF = _TinySDF;
-        }
-
-        const FONT_SIZE = 40;
-        const FONT_NAME = "GraphLabelFont";
-        const font = new FontFace(
-            FONT_NAME,
-            "url(AvenirNext_Variable.ttf)",
-            { weight: "bold" }
-        );
-
-        /* invoke now-established TinySDF in a for loop to make the font atlas */
-        return font.load().then(() => {
-            document.fonts.add(font);
-
-            /* use tiny sdf + a for loop to get a texture atlas canvas */
-            let sdfImage;
-            {
-                const chars = ' abcdefghijklmnopqrstuvwxyzZABCDEFGHIJKLMNOPQRSTUVWXYZ!@#$%^&*()1234567890<,>./?;:\'"\\|{}[]°+';
-                const fontCanvas = document.createElement('canvas');
-                fontCanvas.width = fontCanvas.height = 1024
-                const ctx = fontCanvas.getContext('2d');
-
-                // Convert alpha-only to RGBA so we can use `putImageData` for building the composite bitmap
-                function makeRGBAImageData(alphaChannel, width, height) {
-                    const imageData = ctx.createImageData(width, height);
-                    for (let i = 0; i < alphaChannel.length; i++) {
-                        imageData.data[4 * i + 0] = alphaChannel[i];
-                        imageData.data[4 * i + 1] = alphaChannel[i];
-                        imageData.data[4 * i + 2] = alphaChannel[i];
-                        imageData.data[4 * i + 3] = 255;
-                    }
-                    return imageData;
-                }
-
-                const charWidths = Array.from({ length: chars.length }, _ => 0);
-
-                ctx.clearRect(0, 0, fontCanvas.width, fontCanvas.height);
-                const fontSize = +SDF_FONT_SIZE;
-                const buffer = Math.ceil(fontSize / 8);
-                const radius = Math.ceil(fontSize / 3);
-                const sdf = new TinySDF({fontSize, buffer, radius, fontFamily: FONT_NAME });
-                const size = fontSize + buffer * 2;
-
-                const now = performance.now();
-                let i = 0;
-                for (let y = 0; y + size <= fontCanvas.height && i < chars.length; y += size) {
-                    for (let x = 0; x + size <= fontCanvas.width && i < chars.length; x += size) {
-                        const glyph = sdf.draw(chars[i]);
-                        const {data, width, height} = glyph;
-                        delete glyph.data;
-                        this.sdfs[chars[i]] = { x, y, glyph };
-                        ctx.putImageData(makeRGBAImageData(data, width, height), x, y);
-                        i++;
-                    }
-                }
-                console.log(`${i} characters (${fontSize}px, with ${buffer}px buffer) rendered in ${Math.round(performance.now() - now)}ms.`)
-
-                sdfImage = ctx.getImageData(0, 0, fontCanvas.width, fontCanvas.height);
-            }
-
-            /* upload that canvas to a texture */
-            {
-                gl.useProgram(this.shaders.sensor.program);
-                gl.enableVertexAttribArray(this.shaders.sensor.a_pos);
-                gl.enableVertexAttribArray(this.shaders.sensor.a_texcoord);
-
-                const sdfBytes = new Uint8Array(sdfImage.data)
-
-                gl.bindTexture(gl.TEXTURE_2D, this.font_atlas);
-                gl.texImage2D(
-                    /* target         */ gl.TEXTURE_2D,
-                    /* level          */ 0,
-                    /* internalformat */ gl.RGBA,
-                    /* width          */ sdfImage.width,
-                    /* height         */ sdfImage.height,
-                    /* border,        */ 0,
-                    /* format,        */ gl.RGBA,
-                    /* type,          */ gl.UNSIGNED_BYTE,
-                    /* data           */ sdfBytes
-                );
-                gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-                gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-                gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-                gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-
-                gl.uniform2f(this.shaders.sensor.u_texsize, sdfImage.width, sdfImage.height);
-            }
-
-            return this;
-        })
+const canvas = document.getElementById("glcanvas");
+const ctx = canvas.getContext('2d');
+(window.onresize = () => {
+   canvas.width = window.innerWidth*window.devicePixelRatio,
+   canvas.height = window.innerHeight*window.devicePixelRatio
+   canvas.style.width = window.innerWidth + 'px';
+   canvas.style.height = window.innerHeight + 'px';
+ })();
+
+const PHASE0_DURATION = 5;
+
+let last_timestamp;
+requestAnimationFrame(function render(timestamp) {
+  requestAnimationFrame(render);
+
+  timestamp *= 0.001;
+  last_timestamp ??= timestamp;
+  const deltaTime = timestamp - last_timestamp;
+  last_timestamp = timestamp;
+
+  const mvp = mat4_create();
+  const scratch = mat4_create();
+  {
+    const FIELD_OF_VIEW = 80 / 180 * Math.PI;
+    const ar = window.innerWidth / window.innerHeight;
+    const projection = mat4_perspective(mat4_create(), FIELD_OF_VIEW, ar, 0.01, 100.0);
+
+    const view = mat4_create();
+    {
+      const eye = input.eye = [input.zoom, 0, 0, 1];
+      {
+        mat4_from_z_rotation(scratch, input.pitch); mat4_mul(view, view, scratch);
+        mat4_from_y_rotation(scratch, input.yaw  ); mat4_mul(view, view, scratch);
+        mat4_transform_vec4(eye, eye, view);
+      }
+
+      eye[0] += input.cam_pivot_x;
+      eye[1] += input.cam_pivot_y;
+      eye[2] += input.cam_pivot_z;
+      mat4_target_to(
+        view,
+        eye,
+        [input.cam_pivot_x, input.cam_pivot_y, input.cam_pivot_z],
+        [                0,                 0,                 1]
+      );
+      mat4_invert(view, view);
     }
 
-    drawText(str, x, y, align, highlight) {
-        const { sdfs } = this;
-
-        const fontsize = SDF_FONT_SIZE;
-        const buf = fontsize / 8;
-        const width = fontsize + buf * 2; // glyph width
-        const height = fontsize + buf * 2; // glyph height
-        const bx = 0; // bearing x
-
-        const scale = this.dynamic_scale / fontsize;
-        const lineWidth = str.length * fontsize * scale;
-
-        const pen = { x, y };
-        if (align == ALIGN_CENTER) {
-            pen.x -= (str.split('').reduce((a, c) => a + sdfs[c].glyph.glyphAdvance, 0) / 2) * scale;
-        }
-        for (let i = 0; i < str.length; i++) {
-            const posX = sdfs[str[i]].x; // pos in sprite x
-            const posY = sdfs[str[i]].y; // pos in sprite y
-            const advance = sdfs[str[i]].glyph.glyphAdvance;
-            const by = sdfs[str[i]].glyph.glyphTop - (fontsize / 2 + buf); // bearing y
-
-            let subshader = SUBSHADER_TEXT;
-            subshader |= (highlight << 2);
-
-            const vbuf_i = this.text_vbuf_pos.length / 3;
-            this.text_vbuf_pos.push(
-                pen.x + ((bx - buf) * scale)        , pen.y - by * scale           , subshader,
-                pen.x + ((bx - buf + width) * scale), pen.y - by * scale           , subshader,
-                pen.x + ((bx - buf) * scale)        , pen.y + (height - by) * scale, subshader,
-                pen.x + ((bx - buf + width) * scale), pen.y + (height - by) * scale, subshader 
-            );
-
-            this.text_vbuf_uv.push(
-                posX        , posY,
-                posX + width, posY,
-                posX        , posY + height,
-                posX + width, posY + height
-            );
-
-            this.text_ibuf.push(vbuf_i+0, vbuf_i+1, vbuf_i+2,
-                                vbuf_i+1, vbuf_i+2, vbuf_i+3);
-
-            pen.x = pen.x + advance * scale;
-        }
-
-    }
-
-    clear() {
-        this.text_vbuf_pos = [];
-        this.text_vbuf_uv  = [];
-        this.text_ibuf     = [];
-    }
-
-    frame(gl, eye, mvp) {
-
-        const p = [0, 0, 0, 1];
-
-        const cluster_indices = sensor_clusters.map((_, i) => i);
-        cluster_indices.sort((a, b) => {
-            const dist = i => {
-                if (i == selected_cluster_idx) return 0;
-
-                const p = sensor_clusters[i].position;
-                return Math.sqrt((p[0] - eye[0])*(p[0] - eye[0]) +
-                                 (p[1] - eye[1])*(p[1] - eye[1]) +
-                                 (p[2] - eye[2])*(p[2] - eye[2]));
-            }
-            return dist(b) - dist(a);
-        });
-
-        /* bubble width, height */
-        const base_size_y = ATLAS_SCREEN_SIZE_Y;
-        const base_size_x = base_size_y * ATLAS_ASPECT_RATIO;
-
-        let next_selected_cluster_idx = selected_cluster_idx;
-        for (const cluster_i of cluster_indices) {
-            const cluster = sensor_clusters[cluster_i];
-            const sensor_pos = cluster.position;
-
-            /* position on screen */
-            mat4_transform_vec4(p, sensor_pos, mvp);
-            const w = p[3];
-            p[0] = (0 + (p[0]/w*0.5 + 0.5))*gl.canvas.width;
-            p[1] = (1 - (p[1]/w*0.5 + 0.5))*gl.canvas.height;
-
-            /* scale up if hovered */
-            let hovered = true;
-            {
-                const hsize_x = base_size_x * 0.5;
-                const hsize_y = base_size_y * 0.5;
-
-                hovered &&= Math.abs(input.mouse_x - p[0]          ) < hsize_x;
-                hovered &&= Math.abs(input.mouse_y - p[1] + hsize_y) < hsize_y;
-
-                if (hovered && input.lmb_down) {
-                    next_selected_cluster_idx = cluster_i;
-                }
-            }
-
-            const selected = selected_cluster_idx == cluster_i;
-
-            /* see atlas for which texture uv_offset points to */
-            let bubble = (selected, scale, uv_offset, pos_x, pos_y, text, small) => {
-                let subshader = SUBSHADER_IMAGE;
-                subshader |= (selected << 2);
-
-                let size_x = base_size_x*scale;
-                let size_y = base_size_y*scale;
-
-                const pad = (ATLAS_SHADOW_PAD / ATLAS_RESOLUTION) * ATLAS_SCREEN_SIZE_Y;
-                const min_x = pos_x + -size_x*0.5 - pad;
-                const min_y = pos_y -  size_y     - pad;
-                const max_x = pos_x +  size_x*0.5 + pad;
-                const max_y = pos_y               + pad;
-
-                const vbuf_i = this.text_vbuf_pos.length / 3;
-                this.text_vbuf_pos.push(max_x, min_y, subshader);
-                this.text_vbuf_pos.push(min_x, min_y, subshader);
-                this.text_vbuf_pos.push(min_x, max_y, subshader);
-                this.text_vbuf_pos.push(max_x, max_y, subshader);
-
-                this.text_vbuf_uv.push(
-                    1, uv_offset + 0.0,
-                    0, uv_offset + 0.0,
-                    0, uv_offset + 1/3,
-                    1, uv_offset + 1/3
-                );
-
-                this.text_ibuf.push(
-                    vbuf_i + 0, vbuf_i + 1,
-                    vbuf_i + 2, vbuf_i + 2,
-                    vbuf_i + 3, vbuf_i + 0
-                );
-
-                /* put it in pMatrix space */
-                if (text) {
-                    const scale_b4 = this.dynamic_scale;
-                    this.dynamic_scale *= scale * (1.0 - small*0.2);
-                    {
-                        pos_x -= size_x * 0.125;
-                        pos_y -= size_y * 0.4 + this.dynamic_scale;
-                        if (small) pos_x += size_x*0.28, pos_y -= size_y*0.04;
-
-                        this.drawText(text, pos_x, pos_y, ALIGN_LEFT, selected ^ small);
-                    }
-                    this.dynamic_scale = scale_b4;
-                }
-            }
-
-            if (selected) for (let sensor_i = 0; sensor_i < cluster.sensors.length; sensor_i++) {
-                const range = (cluster.sensors.length > 2) ? Math.PI : Math.PI/2;
-                let sensor_x, sensor_y;
-                {
-                    const t = (sensor_i/(cluster.sensors.length-1) - 0.5) * range;
-                    sensor_x = p[0] + Math.cos(t) * 300 + 100;
-                    sensor_y = p[1] + Math.sin(t) * 250;
-                }
-
-                let hovered = true;
-                {
-                    const hsize_x = base_size_x * 0.5;
-                    const hsize_y = base_size_y * 0.5;
-
-                    hovered &&= Math.abs(input.mouse_x - sensor_x          ) < hsize_x;
-                    hovered &&= Math.abs(input.mouse_y - sensor_y + hsize_y) < hsize_y;
-
-                    if (hovered && input.lmb_down) {
-                        selected_sensor_idx = sensor_i;
-                    }
-                }
-                const selected = (selected_sensor_idx == sensor_i);
-                const scale = (hovered || selected) ? 1.2 : 1.0;
-
-                /* draw line from parent to child */
-                {
-                    const a_x = p[0];
-                    const a_y = p[1]     - base_size_y*0.6*1.2;
-                    const b_x = sensor_x - base_size_x*0.5*scale;
-                    const b_y = sensor_y - base_size_y*0.6*scale;
-                    const thickness = 3;
-
-                    const dx = b_x - a_x;
-                    const dy = b_y - a_y;
-                    const nx = -dy; /* perp */
-                    const ny =  dx;
-                    const tlen = Math.sqrt(nx*nx + ny*ny) / (thickness * 0.5);
-                    if (tlen <= 0) return;
-                    const tx = nx/tlen;
-                    const ty = ny/tlen;
-
-                    this.text_vbuf_uv.push(
-                        0, 0,
-                        0, 0,
-                        0, 0,
-                        0, 0
-                    );
-
-                    const vbuf_i = this.text_vbuf_pos.length / 3;
-                    this.text_vbuf_pos.push(a_x + tx, a_y + ty, SUBSHADER_SOLID,
-                                            a_x - tx, a_y - ty, SUBSHADER_SOLID,
-                                            b_x + tx, b_y + ty, SUBSHADER_SOLID,
-                                            b_x - tx, b_y - ty, SUBSHADER_SOLID);
-
-                    this.text_ibuf.push(
-                        vbuf_i + 0, vbuf_i + 1, vbuf_i + 2,
-                        vbuf_i + 2, vbuf_i + 1, vbuf_i + 3
-                    );
-                }
-
-                bubble(selected, scale, 1/3, sensor_x, sensor_y, '74.2°F', false);
-            }
-
-            /* draw the primary bubble */
-            {
-                const just_one = cluster.sensors.length == 1;
-                const scale = (selected || hovered) ? 1.2 : 1.0;
-                const uv_offset = just_one ? 0 : 2/3;
-                bubble(
-                    selected, scale,
-                    uv_offset,
-                    p[0], p[1],
-                    just_one ? '74.2°F' : '+' + cluster.sensors.length,
-                    !just_one
-                );
-            }
-        }
-        if (selected_cluster_idx != next_selected_cluster_idx) {
-            selected_cluster_idx = next_selected_cluster_idx;
-            selected_sensor_idx = 0;
-        }
-
-        const pMatrix = mat4_ortho(this.pMatrix, 0, gl.canvas.width, gl.canvas.height, 0, 1, -1);
-        gl.viewport(
-            0,
-            0,
-            gl.canvas.width,
-            gl.canvas.height
-        );
-
-        gl.useProgram(this.shaders.sensor.program);
-
-        /* set up premultiplied alpha */
-        gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
-        gl.enable(gl.BLEND);
-
-        {
-            const gamma = 2;
-            gl.uniformMatrix4fv(this.shaders.sensor.u_matrix, false, pMatrix);
-            gl.uniform4fv(this.shaders.sensor.u_color0, this.color0);
-            gl.uniform4fv(this.shaders.sensor.u_color1, this.color1);
-            gl.uniform1f(this.shaders.sensor.u_buffer, 0.75);
-            gl.uniform1f(this.shaders.sensor.u_gamma, gamma * 1.4142 / this.dynamic_scale);
-
-            /* upload/bind geometry */
-            const vbuf_count = this.text_vbuf_pos.length / 3;
-            {
-                gl.bindBuffer(gl.ARRAY_BUFFER, this.buf.text_vbuf_pos);
-                gl.vertexAttribPointer(this.shaders.sensor.a_pos, 3, gl.FLOAT, false, 0, 0);
-                gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(this.text_vbuf_pos), gl.STATIC_DRAW);
-
-                gl.bindBuffer(gl.ARRAY_BUFFER, this.buf.text_vbuf_uv);
-                gl.vertexAttribPointer(this.shaders.sensor.a_texcoord, 2, gl.FLOAT, false, 0, 0);
-                gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(this.text_vbuf_uv), gl.STATIC_DRAW);
-                
-                gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, this.buf.text_ibuf);
-                gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, new Uint16Array(this.text_ibuf), gl.STATIC_DRAW);
-            }
-
-            /* bind texture */
-            {
-                gl.activeTexture(gl.TEXTURE0);
-                gl.bindTexture(gl.TEXTURE_2D, this.font_atlas);
-                gl.uniform1i(this.shaders.sensor.u_tex_font , 0);
-
-                gl.activeTexture(gl.TEXTURE1);
-                gl.bindTexture(gl.TEXTURE_2D, this.image_atlas);
-                gl.uniform1i(this.shaders.sensor.u_tex_atlas, 1);
-            }
-
-            gl.drawElements(gl.TRIANGLES, this.text_ibuf.length, gl.UNSIGNED_SHORT, 0);
-        }
-
-        this.clear();
-        input.lmb_clicked = false;
-    }
-}
-
-
-let building_rooms, sensor_positions, sensor_clusters,
-    selected_cluster_idx = -1,
-    selected_sensor_idx = -1; /* sensors live in clusters */
-{
-    const e = 0.01;
-    building_rooms = [
-        mat4_mul(
-            mat4_create(),
-            mat4_from_translation(mat4_create(), [0.0, 0.5, 0.0]),
-            mat4_from_scaling(    mat4_create(), 1.0-e, 0.5-e, 0.4)
-        ),
-        mat4_mul(
-            mat4_create(),
-            mat4_from_translation(mat4_create(), [-2.5, 3.25, 0.0]),
-            mat4_from_scaling(    mat4_create(), 0.5-e, 2.0-e, 0.4)
-        ),
-        mat4_mul(
-            mat4_create(),
-            mat4_from_translation(mat4_create(), [-3.2, 2.25, 0.0]),
-            mat4_from_scaling(    mat4_create(), 0.2-e, 0.5-e, 0.4)
-        ),
-        mat4_mul(
-            mat4_create(),
-            mat4_from_translation(mat4_create(), [0.0, 3.5, 0.0]),
-            mat4_from_scaling(    mat4_create(), 2.0-e, 2.5-e, 0.4)
-        ),
-        mat4_mul(
-            mat4_create(),
-            mat4_from_translation(mat4_create(), [0.0, 6.5, 0.0]),
-            mat4_from_scaling(    mat4_create(), 1.0-e, 0.5-e, 0.4)
-        )
-    ];
-
-    sensor_positions = [
-        [ 0.00, 0.00, 0.25, 1],
-        [ 0.00, 5.00, 0.25, 1],
-        [-2.00, 3.00, 0.25, 1],
-        [-3.00, 2.00, 0.25, 1],
-        [ 0.00, 7.00, 0.25, 1],
-    ]
-
-    const size = 0.05;
-    for (const p of sensor_positions) {
-        building_rooms.push(
-            mat4_mul(
-                mat4_create(),
-                mat4_from_translation(mat4_create(), [p[0], p[1], p[2] - size]),
-                mat4_from_scaling(    mat4_create(), size)
-            ),
-        );
-    }
-
-    const CLUSTER_RADIUS = 2.5;
-    const clustered = sensor_positions.map(p => [p]);
-
-    /* weee for naive quadratic algorithm */
-    for (let i = 0; i < sensor_positions.length; i++) {
-        for (let j = i+1; j < sensor_positions.length; j++) {
-            const dx = sensor_positions[i][0] - sensor_positions[j][0];
-            const dy = sensor_positions[i][1] - sensor_positions[j][1];
-            const dz = sensor_positions[i][2] - sensor_positions[j][2];
-            const dist = Math.sqrt(dx*dx + dy*dy + dz*dz);
-
-            if (dist < CLUSTER_RADIUS) {
-                const i_sensor = sensor_positions[i];
-                const j_sensor = sensor_positions[j];
-                const i_cluster_index = clustered.findIndex(cluster => cluster.some(c => c == i_sensor));
-                const j_cluster_index = clustered.findIndex(cluster => cluster.some(c => c == j_sensor));
-
-                /* while we only consider each pairing only once,
-                 * these two could share a third close neighbor,
-                 * and have been grouped together because of that. */
-                if (i_cluster_index == j_cluster_index) continue;
-
-                /* join the clusters */
-                clustered[j_cluster_index].push(...clustered[i_cluster_index]);
-                clustered.splice(i_cluster_index, 1);
-            }
-        }
-    }
-
-    sensor_clusters = [];
-    for (const cluster of clustered) {
-
-        let x, y, z;
-        {
-            x = y = z = 0;
-            for (const p of cluster) 
-                x += p[0],
-                y += p[1],
-                z += p[2];
-            x /= cluster.length;
-            y /= cluster.length;
-            z /= cluster.length;
-        }
-
-        sensor_clusters.push({
-            position: [x, y, z, 1],
-            sensors: cluster
-        });
-    }
-}
-
-/* stupidly verbose way to do this but i do not care right now */
-let sensor_renderer = { clear: () => {}, drawText: () => {}, frame: () => {} };
-new SensorRenderer(gl).then(x => sensor_renderer = x);
-
-let then = 0;
-requestAnimationFrame(function frame(now) {
-    requestAnimationFrame(frame);
-
-    now *= 0.001;
-    const deltaTime = now - then;
-    then = now;
+    mat4_mul(mvp, projection, view);
+  }
+
+  ctx.globalAlpha = 1.0;
+  ctx.fillStyle = "black";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.globalAlpha = 1.0;
+
+  const p = [0, 0, 0, 1];
+  const transform_p = (x, y, height) => {
+    p[0] = x;
+    p[1] = y;
+    p[2] = height;
+    p[3] = 1;
+    mat4_transform_vec4(p, p, mvp);
+    const w = p[3];
+    p[0] = (0 + (p[0]/w*0.5 + 0.5))*canvas.width;
+    p[1] = (1 - (p[1]/w*0.5 + 0.5))*canvas.height;
+  }
+
+  if (0) {
+    ctx.beginPath();
+
+    transform_p(bounds.x.min, bounds.y.min, 0); ctx.moveTo(p[0], p[1]);
+    transform_p(bounds.x.max, bounds.y.min, 0); ctx.lineTo(p[0], p[1]);
+    transform_p(bounds.x.max, bounds.y.max, 0); ctx.lineTo(p[0], p[1]);
+    transform_p(bounds.x.min, bounds.y.max, 0); ctx.lineTo(p[0], p[1]);
+    transform_p(bounds.x.min, bounds.y.min, 0); ctx.lineTo(p[0], p[1]);
 
     {
-        const ev = input.dampedEvent;
-
-        /* based on the assumption that if you're zoomed in more,
-         * you're doing finer-detailed work and want more precise movements. */
-        const zoom_fudge = Math.sqrt(input.zoom/10.0)*2.0;
-
-        if (ev.button == 0) {
-            input.pitch -= ev.movementX * 0.0005 * zoom_fudge;
-            input.yaw   -= ev.movementY * 0.0005 * zoom_fudge;
-            input.yaw = Math.max(-Math.PI*0.5 + 0.01, Math.min(Math.PI*0.5 - 0.01, input.yaw));
-        }
-        if (ev.button == 2) {
-            const unit = [0, -ev.movementX*0.00075*zoom_fudge, ev.movementY*0.00075*zoom_fudge, 1];
-            {
-                const view    = mat4_create();
-                const scratch = mat4_create();
-
-                mat4_from_z_rotation(scratch, input.pitch);
-                mat4_mul(view, view, scratch);
-
-                mat4_from_y_rotation(scratch, input.yaw);
-                mat4_mul(view, view, scratch);
-
-                mat4_transform_vec4(unit, unit, view);
-            }
-
-            input.cam_pivot_x += unit[0];
-            input.cam_pivot_y += unit[1];
-            input.cam_pivot_z += unit[2];
-        }
-
-        ev.movementX *= Math.pow(1 - 0.17, 60*deltaTime);
-        ev.movementY *= Math.pow(1 - 0.17, 60*deltaTime);
+      ctx.globalAlpha = 0.5;
+      {
+        ctx.lineWidth = 0.15 * 40;
+        ctx.strokeStyle = 'teal';
+        ctx.stroke();
+        ctx.closePath();
+      }
+      ctx.globalAlpha = 1.0;
     }
 
-    {
-        const t = Math.cbrt(Math.abs(input.scroll)) * Math.sign(input.scroll);
+    ctx.fillStyle = "chartreuse";
+    transform_p(input.cam_pivot_x, input.cam_pivot_y, 0);
+    ctx.fillRect(p[0] - 10, p[1] - 10, 20, 20);
 
-        input.zoom += 0.005*t*input.zoom;
-        input.scroll *= Math.pow(1 - 0.5, 60*deltaTime);
-        input.zoom = Math.min(20, input.zoom);
+    ctx.fillStyle = "teal";
+    transform_p(0, 0, 0);
+    ctx.fillRect(p[0] - 10, p[1] - 10, 20, 20);
+  }
+
+  function wallPass(wallback) {
+    for (const zone of data.floors[ACTIVE_FLOOR].zones) {
+      for (const surface of zone.surfaces) {
+        for (const shape of surface.shapes) {
+          if (shape.vertices.length == 0) continue;
+
+          for (let i = 0; i < shape.vertices.length; i++) {
+            const from = shape.vertices[(i+0) % shape.vertices.length];
+            const   to = shape.vertices[(i+1) % shape.vertices.length];
+            wallback(from.x, from.y, to.x, to.y);
+          }
+
+        }
+      }
+    }
+  }
+
+  function shapePass(shape_callback) {
+    for (const zone of data.floors[ACTIVE_FLOOR].zones) {
+      for (const surface of zone.surfaces) {
+        for (const shape of surface.shapes) {
+          if (shape.vertices.length == 0) continue;
+
+          shape_callback(shape.vertices);
+        }
+      }
+    }
+  }
+
+  const HEIGHT = 0;
+
+  {
+    ctx.globalAlpha = 0.5;
+    ctx.lineWidth = 0.15 * 40;
+    ctx.strokeStyle = 'orange';
+
+    /* floor and ceiling outlines */
+    for (const height of [0, HEIGHT]) {
+      wallPass((from_x, from_y, to_x, to_y) => {
+        ctx.beginPath();
+
+        transform_p(from_x, from_y, height); ctx.moveTo(p[0], p[1]);
+        transform_p(  to_x,   to_y, height); ctx.lineTo(p[0], p[1]);
+
+        ctx.closePath();
+        ctx.stroke();
+      });
     }
 
-    const ORTHO = false;
-    const mvp = mat4_create();
-    const scratch = mat4_create();
-    {
-        const model = mat4_create();
-        {
-            // mat4_from_z_rotation(model, input.pitch);
+    /* vertical lines between floor and ceiling */
+    shapePass((vertices) => {
+      for (const vtx of vertices) {
+        ctx.beginPath();
+        transform_p(vtx.x, vtx.y,      0); ctx.moveTo(p[0], p[1]);
+        transform_p(vtx.x, vtx.y, HEIGHT); ctx.lineTo(p[0], p[1]);
+        ctx.closePath();
+        ctx.stroke();
+      }
+    });
 
-            // mat4_from_y_rotation(scratch, input.yaw);
-            // mat4_mul(model, scratch, model);
-
-            mat4_from_scaling(scratch, 0.5)
-            mat4_mul(model, scratch, model);
-        }
-
-        if (ORTHO) {
-            const ar = window.innerWidth / window.innerHeight;
-            const projection = mat4_ortho(mat4_create(), -ar, ar, -1, 1, -2, 2);
-
-            mat4_mul(mvp, projection, model);
-        } else {
-            const FIELD_OF_VIEW = 70 / 180 * Math.PI;
-            const ar = window.innerWidth / window.innerHeight;
-            const projection = mat4_perspective(mat4_create(), FIELD_OF_VIEW, ar, 0.01, 100.0);
-
-            const view = mat4_create();
-            {
-                const eye = input.eye = [input.zoom, 0, 0, 1];
-                {
-                    mat4_from_z_rotation(scratch, input.pitch);
-                    mat4_mul(view, view, scratch);
-
-                    mat4_from_y_rotation(scratch, input.yaw);
-                    mat4_mul(view, view, scratch);
-
-                    mat4_transform_vec4(eye, eye, view);
-                }
-
-                eye[0] += input.cam_pivot_x;
-                eye[1] += input.cam_pivot_y;
-                eye[2] += input.cam_pivot_z;
-                mat4_target_to(
-                    view,
-                    eye,
-                    [input.cam_pivot_x, input.cam_pivot_y, input.cam_pivot_z],
-                    [                0,                 0,                 1]
-                );
-                mat4_invert(view, view);
-            }
-
-            mat4_mul(mvp, projection, view);
-            mat4_mul(mvp, mvp, model);
-        }
-    }
-
-    const geo_idx   = [];
-    const geo_pos   = [];
-    const geo_color = [];
-    {
-        const e = 0.8;
-        const corners = [
-            // -1, -1,  1,   1, -1,  1,   1,  1,  1,  -1,  1,  1, /* Top face    */
-            -1, -1, -e,  -1,  1, -e,   1,  1, -1,   1, -1, -e, /* Bottom face */
-
-            -1,  1, -1,  -1,  1,  1,   1,  1,  1,   1,  1, -1, /* Front face  */
-            -1, -1, -1,   1, -1, -1,   1, -1,  1,  -1, -1,  1, /* Back face   */
-
-             1, -1, -1,   1,  1, -1,   1,  1,  1,   1, -1,  1, /* Right face  */
-            -1, -1, -1,  -1, -1,  1,  -1,  1,  1,  -1,  1, -1, /* Left face   */
-        ];
-
-        for (let corner_i = 0; corner_i < corners.length; corner_i += 3)
-            corners[corner_i+2] += 1.0;
-
-        for (let corner_i = 0; corner_i < corners.length; corner_i += 12) {
-            geo_color.push(
-                255,   0,   0, 255,
-                  0, 255,   0, 255,
-                  0,   0, 255, 255,
-                255,   0, 255, 255
-            )
-
-            const vbuf_i = geo_pos.length / 3;
-            geo_pos.push(corners[corner_i +  0], corners[corner_i +  1], corners[corner_i +  2]);
-            geo_pos.push(corners[corner_i +  3], corners[corner_i +  4], corners[corner_i +  5]);
-            geo_pos.push(corners[corner_i +  6], corners[corner_i +  7], corners[corner_i +  8]);
-            geo_pos.push(corners[corner_i +  9], corners[corner_i + 10], corners[corner_i + 11]);
-
-            geo_idx.push(
-              vbuf_i + 0,
-              vbuf_i + 1,
-              vbuf_i + 2,
-              vbuf_i + 2,
-              vbuf_i + 3,
-              vbuf_i + 0
-            );
-        }
-    }
-
-    const grid_idx = [];
-    const grid_pos = [];
-    const grid_uv  = [];
-    {
-        const corners = [
-            -999, -999, -0,  -999,  999, -0,   999,  999, -0,   999, -999, -0, /* Bottom face */
-        ];
-
-        for (let corner_i = 0; corner_i < corners.length; corner_i += 3)
-            corners[corner_i+2] -= 0.025;
-
-        for (let corner_i = 0; corner_i < corners.length; corner_i += 12) {
-            grid_uv.push(
-                255,   0,
-                  0,   0,
-                  0, 255,
-                255, 255,
-            );
-
-            const vbuf_i = grid_pos.length / 3;
-            grid_pos.push(corners[corner_i +  0], corners[corner_i +  1], corners[corner_i +  2]);
-            grid_pos.push(corners[corner_i +  3], corners[corner_i +  4], corners[corner_i +  5]);
-            grid_pos.push(corners[corner_i +  6], corners[corner_i +  7], corners[corner_i +  8]);
-            grid_pos.push(corners[corner_i +  9], corners[corner_i + 10], corners[corner_i + 11]);
-
-            grid_idx.push(
-                vbuf_i + 0,
-                vbuf_i + 1,
-                vbuf_i + 2,
-                vbuf_i + 2,
-                vbuf_i + 3,
-                vbuf_i + 0
-            );
-        }
-    }
-
-    {
-        /* set up premultiplied alpha */
-        gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
-        gl.enable(gl.BLEND);
-
-        gl.enable(gl.DEPTH_TEST);
-        gl.depthFunc(gl.LEQUAL);
-
-        /* clear all */
-        gl.clearColor(1, 1, 1, 1);
-        gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
-
-        /* grid pass */
-        gl.disable(gl.DEPTH_TEST);
-        {
-            gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
-            gl.enable(gl.BLEND);
-
-            gl.useProgram(shaders.grid.program);
-            gl.enableVertexAttribArray(shaders.grid.a_pos);
-            gl.enableVertexAttribArray(shaders.grid.a_color);
-
-            gl.uniformMatrix4fv(shaders.grid.u_matrix, false, mvp);
-
-            /* upload/bind geometry */
-            {
-                gl.bindBuffer(gl.ARRAY_BUFFER, buf.grid_v_pos);
-                gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(grid_pos), gl.STATIC_DRAW);
-                gl.vertexAttribPointer(shaders.grid.a_pos, 3, gl.FLOAT, false, 0, 0);
-
-                gl.bindBuffer(gl.ARRAY_BUFFER, buf.grid_v_uv);
-                gl.bufferData(gl.ARRAY_BUFFER, new Uint8Array(grid_uv), gl.STATIC_DRAW);
-                gl.vertexAttribPointer(shaders.grid.a_uv, 2, gl.UNSIGNED_BYTE, true, 0, 0);
-
-                gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, buf.grid_i);
-                gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, new Uint16Array(grid_idx), gl.STATIC_DRAW);
-            }
-
-            gl.drawElements(gl.TRIANGLES, grid_idx.length, gl.UNSIGNED_SHORT, 0);
-        }
-        gl.enable(gl.DEPTH_TEST);
-
-        /* geo pass */
-        for (const m of building_rooms) {
-            gl.useProgram(shaders.geo.program);
-            gl.enableVertexAttribArray(shaders.geo.a_pos);
-            gl.enableVertexAttribArray(shaders.geo.a_color);
-
-            gl.uniformMatrix4fv(
-                shaders.geo.u_matrix,
-                false,
-                mat4_mul(scratch, mvp, m)
-            );
-
-            /* upload/bind geometry */
-            {
-                gl.bindBuffer(gl.ARRAY_BUFFER, buf.geo_v_pos);
-                gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(geo_pos), gl.STATIC_DRAW);
-                gl.vertexAttribPointer(shaders.geo.a_pos, 3, gl.FLOAT, false, 0, 0);
-
-                gl.bindBuffer(gl.ARRAY_BUFFER, buf.geo_v_color);
-                gl.bufferData(gl.ARRAY_BUFFER, new Uint8Array(geo_color), gl.STATIC_DRAW);
-                gl.vertexAttribPointer(shaders.geo.a_color, 4, gl.UNSIGNED_BYTE, true, 0, 0);
-
-                gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, buf.geo_i);
-                gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, new Uint16Array(geo_idx), gl.STATIC_DRAW);
-            }
-
-            gl.drawElements(gl.TRIANGLES, geo_idx.length, gl.UNSIGNED_SHORT, 0);
-        }
-
-        sensor_renderer.frame(gl, input.eye, mvp);
-    }
+    ctx.globalAlpha = 1.0;
+  }
 })
 
 function mat4_create() {
@@ -1665,168 +559,6 @@ function mat4_create() {
     out[0] = 1;
     out[5] = 1;
     out[10] = 1;
-    out[15] = 1;
-    return out;
-}
-
-function mat4_ortho(out, left, right, bottom, top, near, far) {
-    let lr = 1 / (left - right);
-    let bt = 1 / (bottom - top);
-    let nf = 1 / (near - far);
-    out[0] = -2 * lr;
-    out[1] = 0;
-    out[2] = 0;
-    out[3] = 0;
-    out[4] = 0;
-    out[5] = -2 * bt;
-    out[6] = 0;
-    out[7] = 0;
-    out[8] = 0;
-    out[9] = 0;
-    out[10] = 2 * nf;
-    out[11] = 0;
-    out[12] = (left + right) * lr;
-    out[13] = (top + bottom) * bt;
-    out[14] = (far + near) * nf;
-    out[15] = 1;
-    return out;
-}
-
-function mat4_invert(out, a) {
-    let a00 = a[0], a01 = a[1], a02 = a[2], a03 = a[3];
-    let a10 = a[4], a11 = a[5], a12 = a[6], a13 = a[7];
-    let a20 = a[8], a21 = a[9], a22 = a[10], a23 = a[11];
-    let a30 = a[12], a31 = a[13], a32 = a[14], a33 = a[15];
-    let b00 = a00 * a11 - a01 * a10;
-    let b01 = a00 * a12 - a02 * a10;
-    let b02 = a00 * a13 - a03 * a10;
-    let b03 = a01 * a12 - a02 * a11;
-    let b04 = a01 * a13 - a03 * a11;
-    let b05 = a02 * a13 - a03 * a12;
-    let b06 = a20 * a31 - a21 * a30;
-    let b07 = a20 * a32 - a22 * a30;
-    let b08 = a20 * a33 - a23 * a30;
-    let b09 = a21 * a32 - a22 * a31;
-    let b10 = a21 * a33 - a23 * a31;
-    let b11 = a22 * a33 - a23 * a32;
-    /* Calculate the determinant */
-    let det = b00 * b11 - b01 * b10 + b02 * b09 + b03 * b08 - b04 * b07 + b05 * b06;
-    if (!det) {
-        return null;
-    }
-    det = 1.0 / det;
-    out[0] = (a11 * b11 - a12 * b10 + a13 * b09) * det;
-    out[1] = (a02 * b10 - a01 * b11 - a03 * b09) * det;
-    out[2] = (a31 * b05 - a32 * b04 + a33 * b03) * det;
-    out[3] = (a22 * b04 - a21 * b05 - a23 * b03) * det;
-    out[4] = (a12 * b08 - a10 * b11 - a13 * b07) * det;
-    out[5] = (a00 * b11 - a02 * b08 + a03 * b07) * det;
-    out[6] = (a32 * b02 - a30 * b05 - a33 * b01) * det;
-    out[7] = (a20 * b05 - a22 * b02 + a23 * b01) * det;
-    out[8] = (a10 * b10 - a11 * b08 + a13 * b06) * det;
-    out[9] = (a01 * b08 - a00 * b10 - a03 * b06) * det;
-    out[10] = (a30 * b04 - a31 * b02 + a33 * b00) * det;
-    out[11] = (a21 * b02 - a20 * b04 - a23 * b00) * det;
-    out[12] = (a11 * b07 - a10 * b09 - a12 * b06) * det;
-    out[13] = (a00 * b09 - a01 * b07 + a02 * b06) * det;
-    out[14] = (a31 * b01 - a30 * b03 - a32 * b00) * det;
-    out[15] = (a20 * b03 - a21 * b01 + a22 * b00) * det;
-    return out;
-}
-
-function mat4_perspective(out, fovy, aspect, near, far) {
-    let f = 1.0 / Math.tan(fovy / 2),
-        nf;
-    out[0] = f / aspect;
-    out[1] = 0;
-    out[2] = 0;
-    out[3] = 0;
-    out[4] = 0;
-    out[5] = f;
-    out[6] = 0;
-    out[7] = 0;
-    out[8] = 0;
-    out[9] = 0;
-    out[11] = -1;
-    out[12] = 0;
-    out[13] = 0;
-    out[15] = 0;
-    if (far != null && far !== Infinity) {
-        nf = 1 / (near - far);
-        out[10] = (far + near) * nf;
-        out[14] = 2 * far * near * nf;
-    } else {
-        out[10] = -1;
-        out[14] = -2 * near;
-    }
-    return out;
-}
-
-function mat4_from_x_rotation(out, rad) {
-    let s = Math.sin(rad);
-    let c = Math.cos(rad);
-    /* Perform axis-specific matrix multiplication */
-    out[0] = 1;
-    out[1] = 0;
-    out[2] = 0;
-    out[3] = 0;
-    out[4] = 0;
-    out[5] = c;
-    out[6] = s;
-    out[7] = 0;
-    out[8] = 0;
-    out[9] = -s;
-    out[10] = c;
-    out[11] = 0;
-    out[12] = 0;
-    out[13] = 0;
-    out[14] = 0;
-    out[15] = 1;
-    return out;
-}
-
-function mat4_from_y_rotation(out, rad) {
-    let s = Math.sin(rad);
-    let c = Math.cos(rad);
-    /* Perform axis-specific matrix multiplication */
-    out[0] = c;
-    out[1] = 0;
-    out[2] = -s;
-    out[3] = 0;
-    out[4] = 0;
-    out[5] = 1;
-    out[6] = 0;
-    out[7] = 0;
-    out[8] = s;
-    out[9] = 0;
-    out[10] = c;
-    out[11] = 0;
-    out[12] = 0;
-    out[13] = 0;
-    out[14] = 0;
-    out[15] = 1;
-    return out;
-}
-
-function mat4_from_z_rotation(out, rad) {
-    let s = Math.sin(rad);
-    let c = Math.cos(rad);
-    /* Perform axis-specific matrix multiplication */
-    out[0] = c;
-    out[1] = s;
-    out[2] = 0;
-    out[3] = 0;
-    out[4] = -s;
-    out[5] = c;
-    out[6] = 0;
-    out[7] = 0;
-    out[8] = 0;
-    out[9] = 0;
-    out[10] = 1;
-    out[11] = 0;
-    out[12] = 0;
-    out[13] = 0;
-    out[14] = 0;
     out[15] = 1;
     return out;
 }
@@ -1960,6 +692,147 @@ function mat4_target_to(out, eye, target, up=VEC3_UP) {
     return out;
 }
 
+function mat4_perspective(out, fovy, aspect, near, far) {
+    let f = 1.0 / Math.tan(fovy / 2),
+        nf;
+    out[0] = f / aspect;
+    out[1] = 0;
+    out[2] = 0;
+    out[3] = 0;
+    out[4] = 0;
+    out[5] = f;
+    out[6] = 0;
+    out[7] = 0;
+    out[8] = 0;
+    out[9] = 0;
+    out[11] = -1;
+    out[12] = 0;
+    out[13] = 0;
+    out[15] = 0;
+    if (far != null && far !== Infinity) {
+        nf = 1 / (near - far);
+        out[10] = (far + near) * nf;
+        out[14] = 2 * far * near * nf;
+    } else {
+        out[10] = -1;
+        out[14] = -2 * near;
+    }
+    return out;
+}
+
+function mat4_from_x_rotation(out, rad) {
+    let s = Math.sin(rad);
+    let c = Math.cos(rad);
+    /* Perform axis-specific matrix multiplication */
+    out[0] = 1;
+    out[1] = 0;
+    out[2] = 0;
+    out[3] = 0;
+    out[4] = 0;
+    out[5] = c;
+    out[6] = s;
+    out[7] = 0;
+    out[8] = 0;
+    out[9] = -s;
+    out[10] = c;
+    out[11] = 0;
+    out[12] = 0;
+    out[13] = 0;
+    out[14] = 0;
+    out[15] = 1;
+    return out;
+}
+
+function mat4_from_y_rotation(out, rad) {
+    let s = Math.sin(rad);
+    let c = Math.cos(rad);
+    /* Perform axis-specific matrix multiplication */
+    out[0] = c;
+    out[1] = 0;
+    out[2] = -s;
+    out[3] = 0;
+    out[4] = 0;
+    out[5] = 1;
+    out[6] = 0;
+    out[7] = 0;
+    out[8] = s;
+    out[9] = 0;
+    out[10] = c;
+    out[11] = 0;
+    out[12] = 0;
+    out[13] = 0;
+    out[14] = 0;
+    out[15] = 1;
+    return out;
+}
+
+function mat4_from_z_rotation(out, rad) {
+    let s = Math.sin(rad);
+    let c = Math.cos(rad);
+    /* Perform axis-specific matrix multiplication */
+    out[0] = c;
+    out[1] = s;
+    out[2] = 0;
+    out[3] = 0;
+    out[4] = -s;
+    out[5] = c;
+    out[6] = 0;
+    out[7] = 0;
+    out[8] = 0;
+    out[9] = 0;
+    out[10] = 1;
+    out[11] = 0;
+    out[12] = 0;
+    out[13] = 0;
+    out[14] = 0;
+    out[15] = 1;
+    return out;
+}
+
+function mat4_invert(out, a) {
+    let a00 = a[0], a01 = a[1], a02 = a[2], a03 = a[3];
+    let a10 = a[4], a11 = a[5], a12 = a[6], a13 = a[7];
+    let a20 = a[8], a21 = a[9], a22 = a[10], a23 = a[11];
+    let a30 = a[12], a31 = a[13], a32 = a[14], a33 = a[15];
+    let b00 = a00 * a11 - a01 * a10;
+    let b01 = a00 * a12 - a02 * a10;
+    let b02 = a00 * a13 - a03 * a10;
+    let b03 = a01 * a12 - a02 * a11;
+    let b04 = a01 * a13 - a03 * a11;
+    let b05 = a02 * a13 - a03 * a12;
+    let b06 = a20 * a31 - a21 * a30;
+    let b07 = a20 * a32 - a22 * a30;
+    let b08 = a20 * a33 - a23 * a30;
+    let b09 = a21 * a32 - a22 * a31;
+    let b10 = a21 * a33 - a23 * a31;
+    let b11 = a22 * a33 - a23 * a32;
+    /* Calculate the determinant */
+    let det = b00 * b11 - b01 * b10 + b02 * b09 + b03 * b08 - b04 * b07 + b05 * b06;
+    if (!det) {
+        return null;
+    }
+    det = 1.0 / det;
+    out[0] = (a11 * b11 - a12 * b10 + a13 * b09) * det;
+    out[1] = (a02 * b10 - a01 * b11 - a03 * b09) * det;
+    out[2] = (a31 * b05 - a32 * b04 + a33 * b03) * det;
+    out[3] = (a22 * b04 - a21 * b05 - a23 * b03) * det;
+    out[4] = (a12 * b08 - a10 * b11 - a13 * b07) * det;
+    out[5] = (a00 * b11 - a02 * b08 + a03 * b07) * det;
+    out[6] = (a32 * b02 - a30 * b05 - a33 * b01) * det;
+    out[7] = (a20 * b05 - a22 * b02 + a23 * b01) * det;
+    out[8] = (a10 * b10 - a11 * b08 + a13 * b06) * det;
+    out[9] = (a01 * b08 - a00 * b10 - a03 * b06) * det;
+    out[10] = (a30 * b04 - a31 * b02 + a33 * b00) * det;
+    out[11] = (a21 * b02 - a20 * b04 - a23 * b00) * det;
+    out[12] = (a11 * b07 - a10 * b09 - a12 * b06) * det;
+    out[13] = (a00 * b09 - a01 * b07 + a02 * b06) * det;
+    out[14] = (a31 * b01 - a30 * b03 - a32 * b00) * det;
+    out[15] = (a20 * b03 - a21 * b01 + a22 * b00) * det;
+    return out;
+}
+
+function lerp(v0, v1, t) { return (1 - t) * v0 + t * v1; }
+function inv_lerp(min, max, p) { return (p - min) / (max - min); }
     </script>
   </body>
 </html>

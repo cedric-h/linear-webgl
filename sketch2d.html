@@ -382,11 +382,11 @@ for (const floor of data.floors) {
 
 let input = {
   zoom:   Math.sqrt((bounds.x.min - bounds.x.max)*(bounds.x.min - bounds.x.max) +
-                    (bounds.y.min - bounds.y.max)*(bounds.y.min - bounds.y.max)),
+                    (bounds.y.min - bounds.y.max)*(bounds.y.min - bounds.y.max))*1.2,
   scroll: 0,
 
-  pitch:  Math.PI*0.25,
-  yaw:   -Math.PI*0.25,
+  pitch:  Math.PI*0.70,
+  yaw:   -Math.PI*0.22,
   eye: [0, 0, 0, 1],
 
   cam_pivot_x: (bounds.x.min + bounds.x.max) * 0.5,
@@ -449,13 +449,14 @@ const ctx = canvas.getContext('2d');
    canvas.style.height = window.innerHeight + 'px';
  })();
 
-let then = 0;
-requestAnimationFrame(function render(now) {
+let last_timestamp;
+requestAnimationFrame(function render(timestamp) {
   requestAnimationFrame(render);
 
-  now *= 0.001;
-  const deltaTime = now - then;
-  then = now;
+  timestamp *= 0.001;
+  last_timestamp ??= timestamp;
+  const deltaTime = timestamp - last_timestamp;
+  last_timestamp = timestamp;
 
   {
     const ev = input.dampedEvent;
@@ -497,7 +498,7 @@ requestAnimationFrame(function render(now) {
 
       input.zoom += 0.005*t*input.zoom;
       input.scroll *= Math.pow(1 - 0.5, 60*deltaTime);
-      input.zoom = Math.min(20, input.zoom);
+      input.zoom = Math.min(200, input.zoom);
     }
   }
 
@@ -512,7 +513,6 @@ requestAnimationFrame(function render(now) {
       // mat4_from_y_rotation(scratch, input.yaw);
       // mat4_mul(model, scratch, model);
 
-      mat4_from_scaling(scratch, 0.5)
       mat4_mul(model, scratch, model);
     }
 
@@ -534,14 +534,14 @@ requestAnimationFrame(function render(now) {
           mat4_transform_vec4(eye, eye, view);
         }
 
-        eye[0] += input.cam_pivot_x * 0.5;
-        eye[1] += input.cam_pivot_y * 0.5;
-        eye[2] += input.cam_pivot_z * 0.5;
+        eye[0] += input.cam_pivot_x;
+        eye[1] += input.cam_pivot_y;
+        eye[2] += input.cam_pivot_z;
         mat4_target_to(
           view,
           eye,
-          [input.cam_pivot_x * 0.5, input.cam_pivot_y * 0.5, input.cam_pivot_z * 0.5],
-          [                0 * 0.5,                 0 * 0.5,                 1 * 0.5]
+          [input.cam_pivot_x, input.cam_pivot_y, input.cam_pivot_z],
+          [                0,                 0,                 1]
         );
         mat4_invert(view, view);
       }
@@ -552,7 +552,7 @@ requestAnimationFrame(function render(now) {
   }
 
   ctx.globalAlpha = 1.0;
-  ctx.fillStyle = "black";
+  ctx.fillStyle = "rgb(30 40 50)";
   ctx.fillRect(0, 0, canvas.width, canvas.height);
   ctx.globalAlpha = 1.0;
 
@@ -568,7 +568,7 @@ requestAnimationFrame(function render(now) {
     p[1] = (1 - (p[1]/w*0.5 + 0.5))*canvas.height;
   }
 
-  {
+  if (0) {
     ctx.beginPath();
 
     transform_p(bounds.x.min, bounds.y.min, 0); ctx.moveTo(p[0], p[1]);
@@ -597,60 +597,155 @@ requestAnimationFrame(function render(now) {
     ctx.fillRect(p[0] - 10, p[1] - 10, 20, 20);
   }
 
-  for (const zone of data.floors[ACTIVE_FLOOR].zones) {
-    for (const surface of zone.surfaces) {
-      for (const shape of surface.shapes) {
-        if (shape.vertices.length == 0) continue;
-        const HEIGHT = 4;
+  function wallPass(wallback) {
+    for (const zone of data.floors[ACTIVE_FLOOR].zones) {
+      for (const surface of zone.surfaces) {
+        for (const shape of surface.shapes) {
+          if (shape.vertices.length == 0) continue;
 
-        for (const height of [0, HEIGHT]) {
-          ctx.beginPath();
-          let i = 0;
-
-          for (const vtx of shape.vertices) {
-            transform_p(vtx.x, vtx.y, height);
-            if (i++ == 0) ctx.moveTo(p[0], p[1]);
-            else          ctx.lineTo(p[0], p[1]);
+          for (let i = 0; i < shape.vertices.length; i++) {
+            const from = shape.vertices[(i+0) % shape.vertices.length];
+            const   to = shape.vertices[(i+1) % shape.vertices.length];
+            wallback(from.x, from.y, to.x, to.y);
           }
 
-          transform_p(shape.vertices[0].x, shape.vertices[0].y, height);
-          ctx.lineTo(p[0], p[1]);
-
-          {
-            ctx.globalAlpha = 0.5;
-            {
-              ctx.lineWidth = 0.15 * 40;
-              ctx.strokeStyle = 'orange';
-              ctx.stroke();
-              ctx.closePath();
-            }
-            ctx.globalAlpha = 1.0;
-          }
-
-        }
-
-        for (const vtx of shape.vertices) {
-          ctx.beginPath();
-
-          transform_p(vtx.x, vtx.y, 0);
-          ctx.moveTo(p[0], p[1]);
-          transform_p(vtx.x, vtx.y, HEIGHT);
-          ctx.lineTo(p[0], p[1]);
-
-          {
-            ctx.globalAlpha = 0.5;
-            {
-              ctx.lineWidth = 0.15 * 40;
-              ctx.strokeStyle = 'orange';
-              ctx.stroke();
-              ctx.closePath();
-            }
-            ctx.globalAlpha = 1.0;
-          }
         }
       }
     }
   }
+
+  function shapePass(shape_callback) {
+    for (const zone of data.floors[ACTIVE_FLOOR].zones) {
+      for (const surface of zone.surfaces) {
+        for (const shape of surface.shapes) {
+          if (shape.vertices.length == 0) continue;
+
+          shape_callback(shape.vertices);
+        }
+      }
+    }
+  }
+
+  const HEIGHT = 4;
+
+  {
+
+    ctx.globalAlpha = 1.0;
+    ctx.fillStyle = "rgb(15 20 25)";
+
+    const shadow_p = (x, y) => {
+      let dir_x = -1.0;
+      let dir_y = -1.0 + 0.1*(Math.cos((timestamp * 0.6) % Math.PI*2));
+      let dir_z = -1.2 + 0.4*(Math.cos((timestamp * 0.1) % Math.PI*2));
+      const dir_len = Math.sqrt(dir_x*dir_x + dir_y*dir_y + dir_z*dir_z);
+      dir_x /= dir_len;
+      dir_y /= dir_len;
+      dir_z /= dir_len;
+      ray_hit_plane(
+          p,
+
+          x, y, HEIGHT,
+          -dir_x, -dir_y, -dir_z,
+
+          0, 0, 0,
+          0, 0, 1
+      )
+      transform_p(p[0], p[1], p[2]);
+    }
+
+    /* shadows */
+    wallPass((from_x, from_y, to_x, to_y) => {
+      ctx.beginPath();
+      transform_p(from_x, from_y,      0); ctx.moveTo(p[0], p[1]);
+         shadow_p(from_x, from_y        ); ctx.lineTo(p[0], p[1]);
+         shadow_p(  to_x,   to_y        ); ctx.lineTo(p[0], p[1]);
+      transform_p(  to_x,   to_y,      0); ctx.lineTo(p[0], p[1]);
+      ctx.closePath();
+      ctx.fill();
+    });
+    shapePass((vertices) => {
+      ctx.beginPath();
+
+      for (let i = 0; i < vertices.length; i++) {
+        const vtx = vertices[i];
+        transform_p(vtx.x, vtx.y, 0);
+
+        if (i == 0) ctx.moveTo(p[0], p[1]);
+        else        ctx.lineTo(p[0], p[1]);
+      }
+
+      ctx.closePath();
+      ctx.fillStyle = "black";
+      ctx.fill();
+    });
+
+    ctx.globalAlpha = 0.12;
+    ctx.fillStyle = "orange";
+
+    /* walls */
+    wallPass((from_x, from_y, to_x, to_y) => {
+      ctx.beginPath();
+      transform_p(from_x, from_y,      0); ctx.moveTo(p[0], p[1]);
+      transform_p(from_x, from_y, HEIGHT); ctx.lineTo(p[0], p[1]);
+      transform_p(  to_x,   to_y, HEIGHT); ctx.lineTo(p[0], p[1]);
+      transform_p(  to_x,   to_y,      0); ctx.lineTo(p[0], p[1]);
+      ctx.closePath();
+      ctx.fill();
+    });
+
+    /* floors */
+    shapePass((vertices) => {
+      ctx.beginPath();
+
+      for (let i = 0; i < vertices.length; i++) {
+        const vtx = vertices[i];
+        transform_p(vtx.x, vtx.y, 0);
+
+        if (i == 0) ctx.moveTo(p[0], p[1]);
+        else        ctx.lineTo(p[0], p[1]);
+      }
+
+      ctx.closePath();
+      ctx.fillStyle = "black";
+      ctx.fill();
+      ctx.fillStyle = "orange";
+      ctx.globalAlpha = 0.1;
+      ctx.fill();
+    });
+  }
+
+  {
+    ctx.globalAlpha = 0.5;
+    ctx.lineWidth = 0.15 * 40;
+    ctx.strokeStyle = 'orange';
+
+    /* floor and ceiling outlines */
+    for (const height of [0, HEIGHT]) {
+      wallPass((from_x, from_y, to_x, to_y) => {
+        ctx.beginPath();
+
+        transform_p(from_x, from_y, height); ctx.moveTo(p[0], p[1]);
+        transform_p(  to_x,   to_y, height); ctx.lineTo(p[0], p[1]);
+
+        ctx.closePath();
+        ctx.stroke();
+      });
+    }
+
+    /* vertical lines between floor and ceiling */
+    shapePass((vertices) => {
+      for (const vtx of vertices) {
+        ctx.beginPath();
+        transform_p(vtx.x, vtx.y,      0); ctx.moveTo(p[0], p[1]);
+        transform_p(vtx.x, vtx.y, HEIGHT); ctx.lineTo(p[0], p[1]);
+        ctx.closePath();
+        ctx.stroke();
+      }
+    });
+
+    ctx.globalAlpha = 1.0;
+  }
+
 })
 
 function mat4_create() {
@@ -927,6 +1022,35 @@ function mat4_invert(out, a) {
     out[13] = (a00 * b09 - a01 * b07 + a02 * b06) * det;
     out[14] = (a31 * b01 - a30 * b03 - a32 * b00) * det;
     out[15] = (a20 * b03 - a21 * b01 + a22 * b00) * det;
+    return out;
+}
+
+function ray_hit_plane(
+    out,
+
+    ray_origin_x, ray_origin_y, ray_origin_z,
+    ray_vector_x, ray_vector_y, ray_vector_z,
+
+    plane_origin_x, plane_origin_y, plane_origin_z,
+    plane_vector_x, plane_vector_y, plane_vector_z
+) {
+    const delta_x = plane_origin_x - ray_origin_x;
+    const delta_y = plane_origin_y - ray_origin_y;
+    const delta_z = plane_origin_z - ray_origin_z;
+
+    const ldot = delta_x*plane_vector_x +
+                 delta_y*plane_vector_y +
+                 delta_z*plane_vector_z ;
+
+    const rdot = ray_vector_x*plane_vector_x +
+                 ray_vector_y*plane_vector_y +
+                 ray_vector_z*plane_vector_z ;
+
+    const d = ldot / rdot;
+    out[0] = ray_origin_x + ray_vector_x * d;
+    out[1] = ray_origin_y + ray_vector_y * d;
+    out[2] = ray_origin_z + ray_vector_z * d;
+
     return out;
 }
 
