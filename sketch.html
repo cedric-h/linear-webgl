@@ -12,6 +12,23 @@
     <canvas id="glcanvas"></canvas>
     <script>"use strict";
 
+/*
+ * [ ] blueprint color scheme on the plane
+ *   [ ] grid
+ *   [ ] text/greek (corner)
+ *   [ ] border
+ *   [ ] radially gradient ?
+ *
+ * [ ] inflate lines before perspective flip
+ *
+ * [ ] studs 
+ * [ ] top frame 
+ * [ ] drywall
+ *
+ * [ ] repeat for however many frames
+ *
+ */
+
 /* hmm ... */
 const data = ({
   "data": {
@@ -380,19 +397,6 @@ for (const floor of data.floors) {
   }
 }
 
-let input = {
-  zoom:   Math.sqrt((bounds.x.min - bounds.x.max)*(bounds.x.min - bounds.x.max) +
-                    (bounds.y.min - bounds.y.max)*(bounds.y.min - bounds.y.max)),
-
-  pitch:  Math.PI*0.25,
-  yaw:   -Math.PI*0.25,
-  eye: [0, 0, 0, 1],
-
-  cam_pivot_x: (bounds.x.min + bounds.x.max) * 0.5,
-  cam_pivot_y: (bounds.y.min + bounds.y.max) * 0.5,
-  cam_pivot_z: 0,
-}
-
 const canvas = document.getElementById("glcanvas");
 const ctx = canvas.getContext('2d');
 (window.onresize = () => {
@@ -402,47 +406,103 @@ const ctx = canvas.getContext('2d');
    canvas.style.height = window.innerHeight + 'px';
  })();
 
-const PHASE0_DURATION = 5;
+const PHASE0_DURATION = 3; /* draw */
+const PHASE1_DURATION = 1; /* camera */
+const PHASE2_DURATION = 2; /* height */
 
-let last_timestamp;
+let last_timestamp, first_timestamp;
 requestAnimationFrame(function render(timestamp) {
   requestAnimationFrame(render);
 
   timestamp *= 0.001;
+  first_timestamp ??= timestamp;
   last_timestamp ??= timestamp;
   const deltaTime = timestamp - last_timestamp;
   last_timestamp = timestamp;
 
+  /* { camera things */
+  let cam_pivot_x = (bounds.x.min + bounds.x.max) * 0.5;
+  let cam_pivot_y = (bounds.y.min + bounds.y.max) * 0.5;
+  let cam_pivot_z = 0                                  ;
+
+  let cam_pitch = Math.PI/2;
+  let cam_yaw   = Math.PI/2;
+
+  const building_scale = Math.sqrt((bounds.x.min - bounds.x.max)*(bounds.x.min - bounds.x.max) +
+                                   (bounds.y.min - bounds.y.max)*(bounds.y.min - bounds.y.max));
+  let cam_zoom = building_scale * 0.9;
+  /* } camera things */
+
+  let lines_t, height_t = 0;
+  {
+    let time = (timestamp - first_timestamp);
+    /* skip to your favorite stage */
+    // time += PHASE0_DURATION;
+    // time += PHASE1_DURATION;
+    // time += PHASE2_DURATION;
+
+    lines_t = easeInCirc(Math.min(1, time / PHASE0_DURATION));
+    time -= PHASE0_DURATION;
+
+    if (time > 0) {
+      let cam_t = easeInOutCubic(Math.min(1, time / PHASE1_DURATION));
+
+      cam_pitch = lerp(cam_pitch,      Math.PI*0.70, cam_t);
+      cam_yaw   = lerp(cam_yaw  ,     -Math.PI*0.22, cam_t);
+      cam_zoom  = lerp(cam_zoom, building_scale*1.0, cam_t);
+    }
+    time -= PHASE1_DURATION;
+
+    if (time > 0) {
+      height_t = easeOutBounce(Math.min(1, time / PHASE2_DURATION));
+      cam_pivot_z = lerp(cam_pivot_z, 1, height_t);
+      cam_zoom = lerp(cam_zoom, building_scale * 1.5, height_t);
+    }
+    time -= PHASE2_DURATION;
+
+    if (time > 0) {
+      let whirl_t = easeInOutBack(Math.min(1, (time % 3.4) / 1.7));
+      cam_pitch += whirl_t * Math.PI * 2;
+      cam_pitch += 0.05*Math.sin(time * 4);
+      cam_zoom = lerp(cam_zoom, building_scale * 3, 1.0 - Math.abs(0.5 - whirl_t) / 0.5);
+
+      height_t = 1 + 0.05*Math.sin(time * 4);
+    }
+  }
+
+
   const mvp = mat4_create();
   const scratch = mat4_create();
   {
-    const FIELD_OF_VIEW = 80 / 180 * Math.PI;
+    const FIELD_OF_VIEW = 50 / 180 * Math.PI;
     const ar = window.innerWidth / window.innerHeight;
     const projection = mat4_perspective(mat4_create(), FIELD_OF_VIEW, ar, 0.01, 100.0);
 
     const view = mat4_create();
     {
-      const eye = input.eye = [input.zoom, 0, 0, 1];
+      const eye = [cam_zoom, 0, 0, 1];
       {
-        mat4_from_z_rotation(scratch, input.pitch); mat4_mul(view, view, scratch);
-        mat4_from_y_rotation(scratch, input.yaw  ); mat4_mul(view, view, scratch);
+        mat4_from_z_rotation(scratch, cam_pitch); mat4_mul(view, view, scratch);
+        mat4_from_y_rotation(scratch, cam_yaw  ); mat4_mul(view, view, scratch);
         mat4_transform_vec4(eye, eye, view);
       }
 
-      eye[0] += input.cam_pivot_x;
-      eye[1] += input.cam_pivot_y;
-      eye[2] += input.cam_pivot_z;
+      eye[0] += cam_pivot_x;
+      eye[1] += cam_pivot_y;
+      eye[2] += cam_pivot_z;
       mat4_target_to(
         view,
         eye,
-        [input.cam_pivot_x, input.cam_pivot_y, input.cam_pivot_z],
-        [                0,                 0,                 1]
+        [cam_pivot_x, cam_pivot_y, cam_pivot_z],
+        [          0,           0,           1]
       );
       mat4_invert(view, view);
     }
 
     mat4_mul(mvp, projection, view);
   }
+
+
 
   ctx.globalAlpha = 1.0;
   ctx.fillStyle = "black";
@@ -460,6 +520,8 @@ requestAnimationFrame(function render(timestamp) {
     p[0] = (0 + (p[0]/w*0.5 + 0.5))*canvas.width;
     p[1] = (1 - (p[1]/w*0.5 + 0.5))*canvas.height;
   }
+
+  const HEIGHT = 4 * height_t;
 
   if (0) {
     ctx.beginPath();
@@ -480,14 +542,132 @@ requestAnimationFrame(function render(timestamp) {
       }
       ctx.globalAlpha = 1.0;
     }
+  }
 
-    ctx.fillStyle = "chartreuse";
-    transform_p(input.cam_pivot_x, input.cam_pivot_y, 0);
-    ctx.fillRect(p[0] - 10, p[1] - 10, 20, 20);
+  {
+    const shadow_p = (x, y) => {
+      let dir_x = -1.0;
+      let dir_y = -1.0 + 0.1*(Math.cos((timestamp * 0.6) % Math.PI*2));
+      let dir_z = -1.2 + 0.4*(Math.cos((timestamp * 0.1) % Math.PI*2));
+      const dir_len = Math.sqrt(dir_x*dir_x + dir_y*dir_y + dir_z*dir_z);
+      dir_x /= dir_len;
+      dir_y /= dir_len;
+      dir_z /= dir_len;
+      ray_hit_plane(
+          p,
 
-    ctx.fillStyle = "teal";
-    transform_p(0, 0, 0);
-    ctx.fillRect(p[0] - 10, p[1] - 10, 20, 20);
+          x, y, HEIGHT,
+          -dir_x, -dir_y, -dir_z,
+
+          0, 0, 0,
+          0, 0, 1
+      )
+      transform_p(p[0], p[1], p[2]);
+    }
+
+    if (0) {
+      ctx.globalAlpha = 1.0;
+      ctx.fillStyle = "rgb(15 20 25)";
+
+      /* shadows */
+      wallPass((from_x, from_y, to_x, to_y) => {
+        ctx.beginPath();
+        transform_p(from_x, from_y,      0); ctx.moveTo(p[0], p[1]);
+           shadow_p(from_x, from_y        ); ctx.lineTo(p[0], p[1]);
+           shadow_p(  to_x,   to_y        ); ctx.lineTo(p[0], p[1]);
+        transform_p(  to_x,   to_y,      0); ctx.lineTo(p[0], p[1]);
+        ctx.closePath();
+        ctx.fill();
+      });
+      /* fill floors in black */
+      shapePass((vertices) => {
+        ctx.beginPath();
+
+        for (let i = 0; i < vertices.length; i++) {
+          const vtx = vertices[i];
+          transform_p(vtx.x, vtx.y, 0);
+
+          if (i == 0) ctx.moveTo(p[0], p[1]);
+          else        ctx.lineTo(p[0], p[1]);
+        }
+
+        ctx.closePath();
+        ctx.fillStyle = "black";
+        ctx.fill();
+      });
+    }
+
+    {
+      ctx.globalAlpha = 0.12;
+      ctx.fillStyle = "orange";
+
+      /* walls */
+      wallPass((from_x, from_y, to_x, to_y) => {
+        ctx.beginPath();
+        transform_p(from_x, from_y,      0); ctx.moveTo(p[0], p[1]);
+        transform_p(from_x, from_y, HEIGHT); ctx.lineTo(p[0], p[1]);
+        transform_p(  to_x,   to_y, HEIGHT); ctx.lineTo(p[0], p[1]);
+        transform_p(  to_x,   to_y,      0); ctx.lineTo(p[0], p[1]);
+        ctx.closePath();
+        ctx.fill();
+      });
+
+      /* floors */
+      shapePass((vertices) => {
+        ctx.beginPath();
+
+        for (let i = 0; i < vertices.length; i++) {
+          const vtx = vertices[i];
+          transform_p(vtx.x, vtx.y, 0);
+
+          if (i == 0) ctx.moveTo(p[0], p[1]);
+          else        ctx.lineTo(p[0], p[1]);
+        }
+
+        ctx.closePath();
+        ctx.fillStyle = "black";
+        ctx.fill();
+        ctx.fillStyle = "orange";
+        ctx.globalAlpha = 0.1;
+        ctx.fill();
+      });
+    }
+  }
+
+  /* outlines */
+  {
+    ctx.globalAlpha = 0.5;
+    ctx.lineWidth = 0.15 * 40;
+    ctx.strokeStyle = 'orange';
+
+    /* floor and ceiling outlines */
+    for (const height of [0, HEIGHT]) {
+      wallPass((from_x, from_y, _to_x, _to_y) => {
+        ctx.beginPath();
+
+        const to_x = lerp(from_x, _to_x, lines_t);
+        const to_y = lerp(from_y, _to_y, lines_t);
+
+        transform_p(from_x, from_y, height); ctx.moveTo(p[0], p[1]);
+        transform_p(  to_x,   to_y, height); ctx.lineTo(p[0], p[1]);
+
+        ctx.closePath();
+        ctx.stroke();
+      });
+    }
+
+    /* vertical lines between floor and ceiling */
+    shapePass((vertices) => {
+      for (const vtx of vertices) {
+        ctx.beginPath();
+        transform_p(vtx.x, vtx.y,      0); ctx.moveTo(p[0], p[1]);
+        transform_p(vtx.x, vtx.y, HEIGHT); ctx.lineTo(p[0], p[1]);
+        ctx.closePath();
+        ctx.stroke();
+      }
+    });
+
+    ctx.globalAlpha = 1.0;
   }
 
   function wallPass(wallback) {
@@ -517,40 +697,6 @@ requestAnimationFrame(function render(timestamp) {
         }
       }
     }
-  }
-
-  const HEIGHT = 0;
-
-  {
-    ctx.globalAlpha = 0.5;
-    ctx.lineWidth = 0.15 * 40;
-    ctx.strokeStyle = 'orange';
-
-    /* floor and ceiling outlines */
-    for (const height of [0, HEIGHT]) {
-      wallPass((from_x, from_y, to_x, to_y) => {
-        ctx.beginPath();
-
-        transform_p(from_x, from_y, height); ctx.moveTo(p[0], p[1]);
-        transform_p(  to_x,   to_y, height); ctx.lineTo(p[0], p[1]);
-
-        ctx.closePath();
-        ctx.stroke();
-      });
-    }
-
-    /* vertical lines between floor and ceiling */
-    shapePass((vertices) => {
-      for (const vtx of vertices) {
-        ctx.beginPath();
-        transform_p(vtx.x, vtx.y,      0); ctx.moveTo(p[0], p[1]);
-        transform_p(vtx.x, vtx.y, HEIGHT); ctx.lineTo(p[0], p[1]);
-        ctx.closePath();
-        ctx.stroke();
-      }
-    });
-
-    ctx.globalAlpha = 1.0;
   }
 })
 
@@ -829,6 +975,38 @@ function mat4_invert(out, a) {
     out[14] = (a31 * b01 - a30 * b03 - a32 * b00) * det;
     out[15] = (a20 * b03 - a21 * b01 + a22 * b00) * det;
     return out;
+}
+
+function easeInOutCubic(x) {
+  return x < 0.5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2;
+}
+
+function easeInCirc(x) {
+  return 1 - Math.sqrt(1 - Math.pow(x, 2));
+}
+
+function easeOutBounce(x) {
+  const n1 = 7.5625;
+  const d1 = 2.75;
+
+  if (x < 1 / d1) {
+    return n1 * x * x;
+  } else if (x < 2 / d1) {
+    return n1 * (x -= 1.5 / d1) * x + 0.75;
+  } else if (x < 2.5 / d1) {
+    return n1 * (x -= 2.25 / d1) * x + 0.9375;
+  } else {
+    return n1 * (x -= 2.625 / d1) * x + 0.984375;
+  }
+}
+
+function easeInOutBack(x) {
+  const c1 = 1.70158;
+  const c2 = c1 * 1.525;
+
+  return x < 0.5
+    ? (Math.pow(2 * x, 2) * ((c2 + 1) * 2 * x - c2)) / 2
+    : (Math.pow(2 * x - 2, 2) * ((c2 + 1) * (x * 2 - 2) + c2) + 2) / 2;
 }
 
 function lerp(v0, v1, t) { return (1 - t) * v0 + t * v1; }
