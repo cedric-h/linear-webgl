@@ -18,13 +18,16 @@ if (!gl) { alert('Failed to initialize WebGL'); }
 
 /* square tile's "radius" is just its size (width/length) */
 const url_params = new URLSearchParams(window.location.search);
+const truey = str => ["true", "1"].some(x => x == str);
 
 const MAX_HEIGHT             = 10;
 const TERRAIN_RADIUS         = 10;
 const TERRAIN_SEGMENTS       = (1 << (url_params.get("detail") ?? 8));
 const PAINT_ATLAS_RESOLUTION = (1 << (url_params.get("detail") ?? 8));
 
-const TRIPLANAR_MAPPING = url_params.has("texture_off") ? (!url_params.has("texture_off")) : true;
+const TRIPLANAR_MAPPING = url_params.has("texture_off") ? !truey(url_params.get("texture_off")) : true;
+
+const HEIGHTMAP_FILTERING = ((url_params.get("heightmap_nearest") && truey(url_params.get("heightmap_nearest"))) ?? false) ? gl.NEAREST : gl.LINEAR;
 
 (window.onresize = () => {
     canvas.width = window.innerWidth;
@@ -384,8 +387,8 @@ function paint_atlas_create(fb, color) {
         /* type,          */ gl.UNSIGNED_BYTE,
         /* data           */ null
     );
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, HEIGHTMAP_FILTERING);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, HEIGHTMAP_FILTERING);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
 
