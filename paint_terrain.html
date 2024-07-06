@@ -17,10 +17,14 @@ const gl = canvas.getContext('webgl2', {antialias: true});
 if (!gl) { alert('Failed to initialize WebGL'); }
 
 /* square tile's "radius" is just its size (width/length) */
+const url_params = new URLSearchParams(window.location.search);
+
 const MAX_HEIGHT             = 10;
 const TERRAIN_RADIUS         = 10;
-const TERRAIN_SEGMENTS       = (1 << 8);
-const PAINT_ATLAS_RESOLUTION = (1 << 8);
+const TERRAIN_SEGMENTS       = (1 << (url_params.get("detail") ?? 8));
+const PAINT_ATLAS_RESOLUTION = (1 << (url_params.get("detail") ?? 8));
+
+const TRIPLANAR_MAPPING = url_params.has("texture_off") ? (!url_params.has("texture_off")) : true;
 
 (window.onresize = () => {
     canvas.width = window.innerWidth;
@@ -151,28 +155,33 @@ let shaders;
                               '     g(p-h.yx) - g(p+h.yx) ) );' +
         '}' +
 
-        'void main() {' +
-            'vec3 world_pos = sampled_pos(v_uv);' +
-            'vec3 normal = sampled_normal(v_uv);' +
+        [
+            'void main() {' +
+                'frag_color = vec4(vec3(sampled_pos(v_uv).z * 0.1), 1);' +
+            '}',
+            'void main() {' +
+                'vec3 world_pos = sampled_pos(v_uv);' +
+                'vec3 normal = sampled_normal(v_uv);' +
 
-            'vec2 y_uv = world_pos.xz / 8.0;' + /* texture scale */
-            'vec2 x_uv = world_pos.zy / 8.0;' + /* texture scale */
-            'vec2 z_uv = world_pos.xy / 8.0;' + /* texture scale */
+                'vec2 y_uv = world_pos.xz / 8.0;' + /* texture scale */
+                'vec2 x_uv = world_pos.zy / 8.0;' + /* texture scale */
+                'vec2 z_uv = world_pos.xy / 8.0;' + /* texture scale */
 
-			'vec3 y_albedo = texture(u_tex_albedo, y_uv).xyz;' +
-			'vec3 x_albedo = texture(u_tex_albedo, x_uv).xyz;' +
-			'vec3 z_albedo = texture(u_tex_albedo, z_uv).xyz;' +
+		 	    'vec3 y_albedo = texture(u_tex_albedo, y_uv).xyz;' +
+		 	    'vec3 x_albedo = texture(u_tex_albedo, x_uv).xyz;' +
+		 	    'vec3 z_albedo = texture(u_tex_albedo, z_uv).xyz;' +
 
-			'vec3 blend_weights = pow(abs(normal), vec3(1.6));' + // pow(abs(normal), 1.0);' + /* sharpness */
-            'blend_weights /= dot(blend_weights, vec3(1.0));' +
+		 	    'vec3 blend_weights = pow(abs(normal), vec3(1.6));' + // pow(abs(normal), 1.0);' + /* sharpness */
+                'blend_weights /= dot(blend_weights, vec3(1.0));' +
 
-            'frag_color = vec4(vec3(0.0), 1.0);' +
-            'frag_color.xyz += x_albedo * blend_weights.x;' +
-            'frag_color.xyz += y_albedo * blend_weights.z;' +
-            'frag_color.xyz += z_albedo * blend_weights.y;' +
-            'frag_color.xyz *= 0.5 + 0.08*world_pos.z;' +
-            // 'frag_color.xyz = frag_color.xyz * 0.5 + abs(normal)*0.5;' + /* normal debug */
-        '}';
+                'frag_color = vec4(vec3(0.0), 1.0);' +
+                'frag_color.xyz += x_albedo * blend_weights.x;' +
+                'frag_color.xyz += y_albedo * blend_weights.z;' +
+                'frag_color.xyz += z_albedo * blend_weights.y;' +
+                'frag_color.xyz *= 0.5 + 0.08*world_pos.z;' +
+                 // 'frag_color.xyz = frag_color.xyz * 0.5 + abs(normal)*0.5;' + /* normal debug */
+            '}'
+        ][+TRIPLANAR_MAPPING]
 
 
     const vs_paint = '#version 300 es\n' +
