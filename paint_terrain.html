@@ -27,7 +27,7 @@ const PAINT_ATLAS_RESOLUTION = (1 << (url_params.get("detail") ?? 8));
 
 const TRIPLANAR_MAPPING = url_params.has("texture_off") ? !truey(url_params.get("texture_off")) : true;
 
-const HEIGHTMAP_FILTERING = ((url_params.get("heightmap_nearest") && truey(url_params.get("heightmap_nearest"))) ?? false) ? gl.NEAREST : gl.LINEAR;
+const HEIGHTMAP_FILTERING = gl.LINEAR;// ((url_params.get("heightmap_nearest") && truey(url_params.get("heightmap_nearest"))) ?? false) ? gl.NEAREST : gl.LINEAR;
 
 (window.onresize = () => {
     canvas.width = window.innerWidth;
@@ -135,7 +135,8 @@ let shaders;
     const fs_grid = '#version 300 es\n' +
         'precision mediump float;' +
 
-        'uniform sampler2D u_tex_albedo;' +
+        'uniform sampler2D u_tex_albedo_cliff;' +
+        'uniform sampler2D u_tex_albedo_grass;' +
         fn_sampled_pos +
 
         'in  vec2 v_uv;' +
@@ -151,7 +152,7 @@ let shaders;
 
         // https://iquilezles.org/articles/normalsSDF/
         'vec3 sampled_normal( const vec2 p ) {' +
-            'const float eps = 0.0001;' +
+            'const float eps = 0.001;' +
             'const vec2 h = vec2(eps,0);' +
             'return normalize( vec3( g(p-h.xy) - g(p+h.xy),' +
                               '     2.0*h.x,' +
@@ -170,11 +171,11 @@ let shaders;
                 'vec2 x_uv = world_pos.zy / 8.0;' + /* texture scale */
                 'vec2 z_uv = world_pos.xy / 8.0;' + /* texture scale */
 
-		 	    'vec3 y_albedo = texture(u_tex_albedo, y_uv).xyz;' +
-		 	    'vec3 x_albedo = texture(u_tex_albedo, x_uv).xyz;' +
-		 	    'vec3 z_albedo = texture(u_tex_albedo, z_uv).xyz;' +
+		 	    'vec3 y_albedo = texture(u_tex_albedo_cliff, y_uv).xyz;' +
+		 	    'vec3 x_albedo = texture(u_tex_albedo_cliff, x_uv).xyz;' +
+		 	    'vec3 z_albedo = texture(u_tex_albedo_grass, z_uv).xyz;' +
 
-		 	    'vec3 blend_weights = pow(abs(normal), vec3(1.6));' + // pow(abs(normal), 1.0);' + /* sharpness */
+		 	    'vec3 blend_weights = pow(abs(normal), vec3(2.6));' + // pow(abs(normal), 1.0);' + /* sharpness */
                 'blend_weights /= dot(blend_weights, vec3(1.0));' +
 
                 'frag_color = vec4(vec3(0.0), 1.0);' +
@@ -183,6 +184,7 @@ let shaders;
                 'frag_color.xyz += z_albedo * blend_weights.y;' +
                 'frag_color.xyz *= 0.5 + 0.08*world_pos.z;' +
                  // 'frag_color.xyz = frag_color.xyz * 0.5 + abs(normal)*0.5;' + /* normal debug */
+                 // 'frag_color.xyz = abs(normal);' + /* normal debug */
             '}'
         ][+TRIPLANAR_MAPPING]
 
@@ -231,24 +233,41 @@ let shaders;
         'out vec4 frag_color;' +
 
         'void main() {' +
-        '    vec3 sampled = sampled_pos(v_pos);' +
-        '    vec4 world_pos_a = u_matrix * vec4(sampled, 1.0);' +
-        '    world_pos_a.xy = world_pos_a.xy / world_pos_a.w;' +
-        '    vec4 world_pos_b = u_matrix * vec4(sampled.xy, 0.0, 1.0);' +
-        '    world_pos_b.xy = world_pos_b.xy / world_pos_b.w;' +
+        '    float ouwt = 0.0;' +
 
-        '    float strength;' +
-        '    {' +
-        '        vec2 ar = u_aspect_ratio;' +
-        '        float dist = sd_segment(ar*u_brush, ar*world_pos_a.xy, ar*world_pos_b.xy);' +
-        '        const float scale = 2.0;' +
-        // '        strength = max(0.0, 1.0 - dist / 0.15);' +
-        '        strength = smoothstep(0.07, 0.03, dist);' +
+        /* calculate paint for all neighboring pixels, store in "out" */
+        // '    for (int x = -8; x <= 8; x++) {' +
+        // '    for (int y = -8; y <= 8; y++) {' +
+        '    for (int x = -4; x <= 4; x++) {' +
+        '    for (int y = -4; y <= 4; y++) {' +
+        `        vec2 pixel = vec2(x, y) * ${1.0 / PAINT_ATLAS_RESOLUTION};` +
+        '        vec2 offset_v_pos = v_pos + pixel;' +
+
+        '        vec3 sampled = sampled_pos(offset_v_pos);' +
+        '        vec4 world_pos_a = u_matrix * vec4(sampled, 1.0);' +
+        '        world_pos_a.xy = world_pos_a.xy / world_pos_a.w;' +
+        '        vec4 world_pos_b = u_matrix * vec4(sampled.xy, 0.0, 1.0);' +
+        '        world_pos_b.xy = world_pos_b.xy / world_pos_b.w;' +
+
+        '        float strength;' +
+        '        {' +
+        '            vec2 ar = u_aspect_ratio;' +
+        '            float dist = sd_segment(ar*u_brush, ar*world_pos_a.xy, ar*world_pos_b.xy);' +
+        '            const float scale = 2.0;' +
+        // '            strength = max(0.0, 1.0 - dist / 0.15);' +
+        // '            strength = smoothstep(0.07, 0.03, dist);' +
+        '            strength = step(dist, 0.08);' +
+        '        }' +
+
+        // '        ouwt += (strength * length(vec2(x, y))) / 9.65685424949238;' +
+        // '        ouwt += strength * ((1.0 - (length(vec2(x, y)) / 11.313708498984761)) / 123.09714543748106);' +
+        '        ouwt += strength * ((1.0 - (length(vec2(x, y)) / 5.656854249492381)) / 31.968924032326242);' +
+        '    }' +
         '    }' +
 
         '    float dst = decode_float_rgba(texture(u_tex_height, v_pos));' +
         '    float src = min(1.0, u_color + dst);' +
-        '    float src_a = strength * u_color;' +
+        '    float src_a = ouwt * u_color;' +
         /* blend is disabled; this is the blend. */
         '    frag_color = encode_float_rgba(src_a*src + dst*(1.0 - src_a));' +
         '}';
@@ -483,7 +502,11 @@ function paint_atlas_create(fb, color) {
             for (let ix = 0; ix <= TERRAIN_SEGMENTS; ix++) {
                 const u = ix / TERRAIN_SEGMENTS;
 
-                grid.push([u, v, 0]);
+                grid.push([
+                    u,// + (0.5 - Math.random())*(1/TERRAIN_SEGMENTS),
+                    v,// + (0.5 - Math.random())*(1/TERRAIN_SEGMENTS),
+                    0
+                ]);
             }
         }
 
@@ -990,7 +1013,7 @@ let tex_skydome = gl.createTexture();
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
 })();
 
-let tex_terrain = gl.createTexture();
+let tex_terrain_cliff = gl.createTexture();
 (async () => {
     const img = new Image();
     img.src = 'seamless.jpg';
@@ -1001,7 +1024,36 @@ let tex_terrain = gl.createTexture();
     canvas.height = img.height;
     canvas.getContext("2d").drawImage(img, 0, 0);
 
-    gl.bindTexture(gl.TEXTURE_2D, tex_terrain);
+    gl.bindTexture(gl.TEXTURE_2D, tex_terrain_cliff);
+    gl.texImage2D(
+        /* target         */ gl.TEXTURE_2D,
+        /* level          */ 0,
+        /* internalformat */ gl.RGBA,
+        /* width          */ canvas.width,
+        /* height         */ canvas.height,
+        /* border,        */ 0,
+        /* format,        */ gl.RGBA,
+        /* type,          */ gl.UNSIGNED_BYTE,
+        /* data           */ canvas
+    );
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.REPEAT);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.REPEAT);
+})();
+
+let tex_terrain_grass = gl.createTexture();
+(async () => {
+    const img = new Image();
+    img.src = 'grass.jpg'; // 
+    await new Promise(res => img.onload = res);
+
+    const canvas = document.createElement("canvas");
+    canvas.width  = img.width;
+    canvas.height = img.height;
+    canvas.getContext("2d").drawImage(img, 0, 0);
+
+    gl.bindTexture(gl.TEXTURE_2D, tex_terrain_grass);
     gl.texImage2D(
         /* target         */ gl.TEXTURE_2D,
         /* level          */ 0,
@@ -1385,8 +1437,12 @@ requestAnimationFrame(function frame(now) {
                 gl.uniform1i(shaders.grid.u_tex_height, 0);
 
                 gl.activeTexture(gl.TEXTURE1);
-                gl.bindTexture(gl.TEXTURE_2D, tex_terrain);
-                gl.uniform1i(shaders.grid.u_tex_albedo, 1);
+                gl.bindTexture(gl.TEXTURE_2D, tex_terrain_cliff);
+                gl.uniform1i(shaders.grid.u_tex_albedo_cliff, 1);
+
+                gl.activeTexture(gl.TEXTURE2);
+                gl.bindTexture(gl.TEXTURE_2D, tex_terrain_grass);
+                gl.uniform1i(shaders.grid.u_tex_albedo_grass, 2);
             }
 
             /* bind geometry */
