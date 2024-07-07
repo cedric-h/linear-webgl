@@ -14,6 +14,10 @@
     <script>
 const canvas = document.getElementById('glcanvas');
 const gl = canvas.getContext('webgl2', {antialias: true});
+const gl_anisotropy =
+  gl.getExtension("EXT_texture_filter_anisotropic") ||
+  gl.getExtension("MOZ_EXT_texture_filter_anisotropic") ||
+  gl.getExtension("WEBKIT_EXT_texture_filter_anisotropic");
 if (!gl) { alert('Failed to initialize WebGL'); }
 
 /* square tile's "radius" is just its size (width/length) */
@@ -256,7 +260,7 @@ let shaders;
         '            const float scale = 2.0;' +
         // '            strength = max(0.0, 1.0 - dist / 0.15);' +
         // '            strength = smoothstep(0.07, 0.03, dist);' +
-        '            strength = step(dist, 0.08);' +
+        '            strength = step(dist, 0.03);' +
         '        }' +
 
         // '        ouwt += (strength * length(vec2(x, y))) / 9.65685424949238;' +
@@ -503,8 +507,9 @@ function paint_atlas_create(fb, color) {
                 const u = ix / TERRAIN_SEGMENTS;
 
                 grid.push([
-                    u,// + (0.5 - Math.random())*(1/TERRAIN_SEGMENTS),
-                    v,// + (0.5 - Math.random())*(1/TERRAIN_SEGMENTS),
+                    //  u, v, // no jitter
+                    u + (0.5 - Math.random())*(1/TERRAIN_SEGMENTS),
+                    v + (0.5 - Math.random())*(1/TERRAIN_SEGMENTS),
                     0
                 ]);
             }
@@ -1036,8 +1041,15 @@ let tex_terrain_cliff = gl.createTexture();
         /* type,          */ gl.UNSIGNED_BYTE,
         /* data           */ canvas
     );
+    if (gl_anisotropy) {
+      const max = gl.getParameter(gl_anisotropy.MAX_TEXTURE_MAX_ANISOTROPY_EXT);
+      gl.texParameterf(gl.TEXTURE_2D, gl_anisotropy.TEXTURE_MAX_ANISOTROPY_EXT, max);
+    }
+
+    gl.generateMipmap(gl.TEXTURE_2D);
+
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.REPEAT);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.REPEAT);
 })();
@@ -1065,8 +1077,15 @@ let tex_terrain_grass = gl.createTexture();
         /* type,          */ gl.UNSIGNED_BYTE,
         /* data           */ canvas
     );
+    if (gl_anisotropy) {
+      const max = gl.getParameter(gl_anisotropy.MAX_TEXTURE_MAX_ANISOTROPY_EXT);
+      gl.texParameterf(gl.TEXTURE_2D, gl_anisotropy.TEXTURE_MAX_ANISOTROPY_EXT, max);
+    }
+
+    gl.generateMipmap(gl.TEXTURE_2D);
+
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.REPEAT);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.REPEAT);
 })();
@@ -1341,7 +1360,7 @@ requestAnimationFrame(function frame(now) {
             {
                 let color = 0;
                 if (input.lmb_down && input.dampedEvent.intent == INTENT_DRAW) {
-                    color = 0.08;
+                    color = 0.03;
                 }
                 gl.uniform1f(shaders.paint.u_color, color);
             }
