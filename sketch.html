@@ -373,6 +373,42 @@ const data = ({
 }).data.buildings[0];
 
 const ACTIVE_FLOOR = data.floors.findIndex(x => x.properties.some(p => p.name == "level" && p.currentValue == 0));
+const WALL_COUNT = (() => {
+  let i = 0;
+  wallPass(() => i++);
+  return i;
+})();
+
+/* helper functions for the windows into the data that we care about */
+function wallPass(wallback) {
+  for (const zone of data.floors[ACTIVE_FLOOR].zones) {
+    for (const surface of zone.surfaces) {
+      for (const shape of surface.shapes) {
+        if (shape.vertices.length == 0) continue;
+
+        for (let i = 0; i < shape.vertices.length; i++) {
+          const from = shape.vertices[(i+0) % shape.vertices.length];
+          const   to = shape.vertices[(i+1) % shape.vertices.length];
+          wallback(from.x, from.y, to.x, to.y);
+        }
+
+      }
+    }
+  }
+}
+function shapePass(shape_callback) {
+  let shape_i = 0;
+  for (const zone of data.floors[ACTIVE_FLOOR].zones) {
+    for (const surface of zone.surfaces) {
+      for (const shape of surface.shapes) {
+        if (shape.vertices.length == 0) continue;
+
+        shape_callback(shape.vertices, shape_i);
+        shape_i += shape.vertices.length;
+      }
+    }
+  }
+}
 
 /* getting the bounds lets us center the camera on the building, no matter where it is. */
 const bounds = {
@@ -406,9 +442,9 @@ const ctx = canvas.getContext('2d');
    canvas.style.height = window.innerHeight + 'px';
  })();
 
-const PHASE0_DURATION = 3; /* draw */
+const PHASE0_DURATION = 5; /* draw */
 const PHASE1_DURATION = 1; /* camera */
-const PHASE2_DURATION = 2; /* height */
+const PHASE2_DURATION = 6; /* height */
 
 let last_timestamp, first_timestamp;
 requestAnimationFrame(function render(timestamp) {
@@ -433,7 +469,8 @@ requestAnimationFrame(function render(timestamp) {
   let cam_zoom = building_scale * 0.9;
   /* } camera things */
 
-  let lines_t, height_t = 0;
+  /* wall_up_t increases monotonically, height_t is modulated slightly to make building "breathe" */
+  let lines_t, wall_up_t = 0, height_t = 0;
   {
     let time = (timestamp - first_timestamp);
     /* skip to your favorite stage */
@@ -441,7 +478,7 @@ requestAnimationFrame(function render(timestamp) {
     // time += PHASE1_DURATION;
     // time += PHASE2_DURATION;
 
-    lines_t = easeInCirc(Math.min(1, time / PHASE0_DURATION));
+    lines_t = Math.min(1, time / PHASE0_DURATION);
     time -= PHASE0_DURATION;
 
     if (time > 0) {
@@ -454,19 +491,17 @@ requestAnimationFrame(function render(timestamp) {
     time -= PHASE1_DURATION;
 
     if (time > 0) {
-      height_t = easeOutBounce(Math.min(1, time / PHASE2_DURATION));
-      cam_pivot_z = lerp(cam_pivot_z, 1, height_t);
-      cam_zoom = lerp(cam_zoom, building_scale * 1.5, height_t);
+      wall_up_t = height_t = Math.min(1, (time / PHASE2_DURATION));
+      cam_pivot_z = lerp(cam_pivot_z, 1, easeInQuint(height_t));
+      cam_zoom = lerp(cam_zoom, building_scale * 1.5, easeInQuint(height_t));
+
+      height_t = 1 + 0.05*Math.sin(time * 4);
     }
     time -= PHASE2_DURATION;
 
     if (time > 0) {
-      let whirl_t = easeInOutBack(Math.min(1, (time % 3.4) / 1.7));
+      let whirl_t = time * 0.1;
       cam_pitch += whirl_t * Math.PI * 2;
-      cam_pitch += 0.05*Math.sin(time * 4);
-      cam_zoom = lerp(cam_zoom, building_scale * 3, 1.0 - Math.abs(0.5 - whirl_t) / 0.5);
-
-      height_t = 1 + 0.05*Math.sin(time * 4);
     }
   }
 
@@ -522,27 +557,15 @@ requestAnimationFrame(function render(timestamp) {
   }
 
   const HEIGHT = 4 * height_t;
-
-  if (0) {
-    ctx.beginPath();
-
-    transform_p(bounds.x.min, bounds.y.min, 0); ctx.moveTo(p[0], p[1]);
-    transform_p(bounds.x.max, bounds.y.min, 0); ctx.lineTo(p[0], p[1]);
-    transform_p(bounds.x.max, bounds.y.max, 0); ctx.lineTo(p[0], p[1]);
-    transform_p(bounds.x.min, bounds.y.max, 0); ctx.lineTo(p[0], p[1]);
-    transform_p(bounds.x.min, bounds.y.min, 0); ctx.lineTo(p[0], p[1]);
-
-    {
-      ctx.globalAlpha = 0.5;
-      {
-        ctx.lineWidth = 0.15 * 40;
-        ctx.strokeStyle = 'teal';
-        ctx.stroke();
-        ctx.closePath();
-      }
-      ctx.globalAlpha = 1.0;
-    }
+  function heightForWall(wall_i) {
+      const wall_t = wall_i / WALL_COUNT;
+      const delta_t = wall_up_t - wall_t;
+      if (delta_t < 0) return 0;
+      let wall_height_t = delta_t / (1 / WALL_COUNT);
+      wall_height_t = Math.min(1, Math.max(0, wall_height_t));
+      return HEIGHT * wall_height_t;
   }
+
 
   {
     const shadow_p = (x, y) => {
@@ -565,48 +588,20 @@ requestAnimationFrame(function render(timestamp) {
       transform_p(p[0], p[1], p[2]);
     }
 
-    if (0) {
-      ctx.globalAlpha = 1.0;
-      ctx.fillStyle = "rgb(15 20 25)";
-
-      /* shadows */
-      wallPass((from_x, from_y, to_x, to_y) => {
-        ctx.beginPath();
-        transform_p(from_x, from_y,      0); ctx.moveTo(p[0], p[1]);
-           shadow_p(from_x, from_y        ); ctx.lineTo(p[0], p[1]);
-           shadow_p(  to_x,   to_y        ); ctx.lineTo(p[0], p[1]);
-        transform_p(  to_x,   to_y,      0); ctx.lineTo(p[0], p[1]);
-        ctx.closePath();
-        ctx.fill();
-      });
-      /* fill floors in black */
-      shapePass((vertices) => {
-        ctx.beginPath();
-
-        for (let i = 0; i < vertices.length; i++) {
-          const vtx = vertices[i];
-          transform_p(vtx.x, vtx.y, 0);
-
-          if (i == 0) ctx.moveTo(p[0], p[1]);
-          else        ctx.lineTo(p[0], p[1]);
-        }
-
-        ctx.closePath();
-        ctx.fillStyle = "black";
-        ctx.fill();
-      });
-    }
-
     {
       ctx.globalAlpha = 0.12;
       ctx.fillStyle = "orange";
 
       /* walls */
+      let wall_i = 0;
       wallPass((from_x, from_y, to_x, to_y) => {
+        wall_i++;
+
         ctx.beginPath();
+        const height = heightForWall(wall_i);
         transform_p(from_x, from_y,      0); ctx.moveTo(p[0], p[1]);
-        transform_p(from_x, from_y, HEIGHT); ctx.lineTo(p[0], p[1]);
-        transform_p(  to_x,   to_y, HEIGHT); ctx.lineTo(p[0], p[1]);
+        transform_p(from_x, from_y, height); ctx.lineTo(p[0], p[1]);
+        transform_p(  to_x,   to_y, height); ctx.lineTo(p[0], p[1]);
         transform_p(  to_x,   to_y,      0); ctx.lineTo(p[0], p[1]);
         ctx.closePath();
         ctx.fill();
@@ -641,13 +636,23 @@ requestAnimationFrame(function render(timestamp) {
     ctx.strokeStyle = 'orange';
 
     /* floor and ceiling outlines */
-    for (const height of [0, HEIGHT]) {
+    for (const height_on of [false, true]) {
+      let wall_i = 0;
       wallPass((from_x, from_y, _to_x, _to_y) => {
+        wall_i++;
+
+        const wall_t = wall_i / WALL_COUNT;
+        const delta_t = lines_t - wall_t;
+        if (delta_t < 0) return;
+        let line_t = delta_t / (1 / WALL_COUNT);
+        line_t = Math.min(1, Math.max(0, line_t));
+
+        const to_x = lerp(from_x, _to_x, line_t);
+        const to_y = lerp(from_y, _to_y, line_t);
+
         ctx.beginPath();
 
-        const to_x = lerp(from_x, _to_x, lines_t);
-        const to_y = lerp(from_y, _to_y, lines_t);
-
+        const height = height_on ? heightForWall(wall_i) : 0; 
         transform_p(from_x, from_y, height); ctx.moveTo(p[0], p[1]);
         transform_p(  to_x,   to_y, height); ctx.lineTo(p[0], p[1]);
 
@@ -657,11 +662,15 @@ requestAnimationFrame(function render(timestamp) {
     }
 
     /* vertical lines between floor and ceiling */
-    shapePass((vertices) => {
-      for (const vtx of vertices) {
+    shapePass((vertices, shape_i) => {
+      for (let i = 0; i < vertices.length; i++) {
+        const vtx = vertices[i];
+        const wall_i = shape_i + i;
+        const height = heightForWall(wall_i);
+
         ctx.beginPath();
         transform_p(vtx.x, vtx.y,      0); ctx.moveTo(p[0], p[1]);
-        transform_p(vtx.x, vtx.y, HEIGHT); ctx.lineTo(p[0], p[1]);
+        transform_p(vtx.x, vtx.y, height); ctx.lineTo(p[0], p[1]);
         ctx.closePath();
         ctx.stroke();
       }
@@ -670,34 +679,6 @@ requestAnimationFrame(function render(timestamp) {
     ctx.globalAlpha = 1.0;
   }
 
-  function wallPass(wallback) {
-    for (const zone of data.floors[ACTIVE_FLOOR].zones) {
-      for (const surface of zone.surfaces) {
-        for (const shape of surface.shapes) {
-          if (shape.vertices.length == 0) continue;
-
-          for (let i = 0; i < shape.vertices.length; i++) {
-            const from = shape.vertices[(i+0) % shape.vertices.length];
-            const   to = shape.vertices[(i+1) % shape.vertices.length];
-            wallback(from.x, from.y, to.x, to.y);
-          }
-
-        }
-      }
-    }
-  }
-
-  function shapePass(shape_callback) {
-    for (const zone of data.floors[ACTIVE_FLOOR].zones) {
-      for (const surface of zone.surfaces) {
-        for (const shape of surface.shapes) {
-          if (shape.vertices.length == 0) continue;
-
-          shape_callback(shape.vertices);
-        }
-      }
-    }
-  }
 })
 
 function mat4_create() {
@@ -998,6 +979,10 @@ function easeOutBounce(x) {
   } else {
     return n1 * (x -= 2.625 / d1) * x + 0.984375;
   }
+}
+
+function easeInQuint(x) {
+  return x * x * x * x * x;
 }
 
 function easeInOutBack(x) {
