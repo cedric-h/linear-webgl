@@ -44,6 +44,27 @@ let save = {
     player_vel: { x: 0, y: 0 },
 };
 
+const SHADER_FLAG_NONE     = 0;
+const SHADER_FLAG_GREENIFY = 1;
+
+
+/* used especially in the rendering functions */
+const AXIS_FLAT = 0;
+const AXIS_UP   = 1;
+
+
+const ATLAS_CHARS = [];
+const ATLAS_NINJA   = (ATLAS_CHARS.push('🥷'), ATLAS_CHARS.length - 1);
+const ATLAS_MOON    = (ATLAS_CHARS.push('🌕'), ATLAS_CHARS.length - 1);
+const ATLAS_CLOVER  = (ATLAS_CHARS.push('☘️'),  ATLAS_CHARS.length - 1);
+const ATLAS_KNIFE   = (ATLAS_CHARS.push('🔪'), ATLAS_CHARS.length - 1);
+const ATLAS_THREAD  = (ATLAS_CHARS.push('🧵'), ATLAS_CHARS.length - 1);
+const ATLAS_DOOR    = (ATLAS_CHARS.push('🚪'), ATLAS_CHARS.length - 1);
+
+
+const ATLAS_SIZE = Math.ceil(Math.sqrt(ATLAS_CHARS.length)); /* in emoji */
+const EMOJI_SIZE = 1 << 8;
+
 const LAST_ACTION_KEY   = 0;
 const LAST_ACTION_MOUSE = 1;
 
@@ -188,6 +209,14 @@ let shaders;
             vec4 color = vec4(0);
             if (v_uv.x < 0.0) {
                 color = texture2D(u_texture, abs(v_uv.xy));
+                
+                if (v_uv.z == ${SHADER_FLAG_GREENIFY.toFixed(2)}) {
+                    color.xyz /= color.w;
+                    float gray = 0.21 * color.r + 0.71 * color.g + 0.07 * color.b;
+                    color.xyz = gray*vec3(0.5, 0.75, 0.4);
+                    color.xyz *= color.w;
+                }
+                
                 if (color.w == 0.0) discard;
             } else {
                 color = vec4(v_uv, 1.0);
@@ -242,20 +271,6 @@ let shaders;
 }
 
 let atlas = gl.createTexture();
-
-/* used especially in the rendering functions */
-const AXIS_FLAT = 0;
-const AXIS_UP   = 1;
-
-const ATLAS_NINJA  = 0;
-const ATLAS_MOON  = 1;
-const ATLAS_CLOVER = 2;
-const ATLAS_KINFE  = 3;
-// const ATLAS_CHARS = ['🥷', '🎋', '☘️', '🔪'];
-const ATLAS_CHARS = ['🥷', '🌑', '☘️', '🔪'];
-
-const ATLAS_SIZE = 2; /* in emoji */
-const EMOJI_SIZE = 1 << 8;
 
 {
     const canvas = document.createElement("canvas");
@@ -374,14 +389,37 @@ function do_platform(method, arg) {
         const { drawBox, drawImg } = arg;
 
         // drawBox(AXIS_FLAT, 0, 0, 15, 1, 1);
-        drawImg(AXIS_FLAT, 0, 0, 15, ATLAS_MOON);
+        // drawImg(AXIS_FLAT,  2,  3,  7, ATLAS_MOON, SHADER_FLAG_GREENIFY);
+        // drawImg(AXIS_FLAT, -4,  0,  8, ATLAS_MOON, SHADER_FLAG_GREENIFY);
+        // drawImg(AXIS_FLAT,  2,- 3,  9, ATLAS_MOON, SHADER_FLAG_GREENIFY);
 
-        drawBox(
-            PATH_FROM, -2,
-            PATH_TO  ,  2,
+        // drawBox(
+        //     PATH_FROM, -2,
+        //     PATH_TO  ,  2,
 
-            0.1, 0.1, 0.1
-        );
+        //     0.1, 0.1, 0.1
+        // );
+
+
+        let path_min = Math.min(PATH_FROM, PATH_TO);
+        let path_max = Math.max(PATH_FROM, PATH_TO);
+
+        for (let i = (path_min-1); i < (path_max+1); i += 2)
+            drawImg(
+                /* axis */ AXIS_FLAT,
+                /* x, y */ i, 0,
+                /* size */ 2.5,
+                /* img  */ ATLAS_DOOR
+            );
+
+        for (let x = 0; x < 2; x += 1)
+            for (let y = -1; y <= 2; y += 2)
+                drawImg(
+                    /* axis */ AXIS_UP,
+                    /* x, y */ lerp(path_min-1.5, path_max, x), 1.8*y + 0.5,
+                    /* size */ 1,
+                    /* img  */ ATLAS_THREAD
+                );
     }
 }
 
@@ -458,7 +496,7 @@ requestAnimationFrame(function frame(timestamp) {
                             const dy = save.player.y - best_vec.y;
                             save.player_vel.x += dx * 0.1;
                             save.player_vel.y += dy * 0.1;
-                            console.log("hm?");
+                            /* try changing p.x/p.y instead of vel here */
                         }
                     }
 
@@ -577,7 +615,7 @@ requestAnimationFrame(function frame(timestamp) {
     };
 
     {
-        function drawImg(axis, x, y, size, atlas_index) {
+        function drawImg(axis, x, y, size, atlas_index, flag=0) {
 
             /* generate UVs from atlas_index */
             {
@@ -585,10 +623,10 @@ requestAnimationFrame(function frame(timestamp) {
                 const v = (Math.floor(atlas_index / ATLAS_SIZE));
 
                 geo.uv.push(
-                    -(u+0.99)/ATLAS_SIZE, -(v+0.99)/ATLAS_SIZE, 0,
-                    -(u+0.01)/ATLAS_SIZE, -(v+0.99)/ATLAS_SIZE, 0,
-                    -(u+0.01)/ATLAS_SIZE, -(v+0.01)/ATLAS_SIZE, 0,
-                    -(u+0.99)/ATLAS_SIZE, -(v+0.01)/ATLAS_SIZE, 0
+                    -(u+0.99)/ATLAS_SIZE, -(v+0.99)/ATLAS_SIZE, flag,
+                    -(u+0.01)/ATLAS_SIZE, -(v+0.99)/ATLAS_SIZE, flag,
+                    -(u+0.01)/ATLAS_SIZE, -(v+0.01)/ATLAS_SIZE, flag,
+                    -(u+0.99)/ATLAS_SIZE, -(v+0.01)/ATLAS_SIZE, flag
                 );
             }
 
@@ -660,7 +698,7 @@ requestAnimationFrame(function frame(timestamp) {
         }
 
         do_platform('draw', { drawBox, drawImg });
-        drawImg(
+        if (0) drawImg(
             AXIS_UP,
             save.player.x,
             save.player.y,

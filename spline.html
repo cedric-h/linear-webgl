@@ -1,0 +1,321 @@
+<!-- vim: sw=2 ts=2 expandtab smartindent ft=javascript
+-->
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>WebGL Demo</title>
+    <style> document, body { margin: 0px; padding: 0px; overflow: hidden; } </style>
+  </head>
+
+  <body>
+    <canvas id="glcanvas"></canvas>
+    <script>"use strict";
+
+const canvas = document.getElementById("glcanvas");
+const ctx = canvas.getContext('2d');
+(window.onresize = () => {
+   canvas.width = window.innerWidth*window.devicePixelRatio,
+   canvas.height = window.innerHeight*window.devicePixelRatio
+   canvas.style.width = window.innerWidth + 'px';
+   canvas.style.height = window.innerHeight + 'px';
+ })();
+
+let points;
+{
+  let min_x = 0;
+  let min_y = 0;
+  let max_x = canvas.width;
+  let max_y = canvas.height;
+  let mid_x = max_x*0.5;
+  let mid_y = max_y*0.5;
+
+  max_x = lerp(max_x, mid_x, 0.25);
+  max_y = lerp(max_y, mid_y, 0.25);
+  min_x = lerp(min_x, mid_x, 0.25);
+  min_y = lerp(min_y, mid_y, 0.25);
+
+  points = [
+      [min_x, mid_y],
+      [lerp(min_x, max_x, 0.25), lerp(mid_y, max_y, 0.5)],
+      [lerp(min_x, max_x, 0.75), lerp(mid_y, max_y, 0.5)],
+      [max_x, mid_y]
+  ];
+}
+
+/* damps from goal to mouse */
+let input_mouse_goal = [0, 0];
+let input_mouse      = [0, 0];
+
+let input_held_point_index = -1;
+window.onpointermove = e => {
+  const dpi = window.devicePixelRatio;
+
+  input_mouse_goal[0] = e.pageX*dpi;
+  input_mouse_goal[1] = e.pageY*dpi;
+}
+window.onpointerdown = e => {
+  for (let i = 0; i < points.length; i++) {
+    if (dot_hover(points[i], 50)) {
+      input_held_point_index = i;
+      break;
+    }
+  }
+}
+window.onpointerup = e => {
+  input_held_point_index = -1;
+}
+
+function line(a, b, thick, color) {
+  ctx.lineWidth = thick;
+  ctx.strokeStyle = color;
+  ctx.beginPath();
+  ctx.moveTo(a[0], a[1]);
+  ctx.lineTo(b[0], b[1]);
+  ctx.stroke();
+}
+
+function dot(p, radius, color) {
+  ctx.beginPath();
+  ctx.arc(
+    p[0],
+    p[1],
+    radius,
+    0,
+    Math.PI*2
+  );
+  ctx.fillStyle = color;
+  ctx.fill();
+}
+
+function dot_hover(p, radius) {
+  const dx = p[0] - input_mouse[0];
+  const dy = p[1] - input_mouse[1];
+
+  return (Math.sqrt(dx*dx + dy*dy) < radius);
+}
+
+let then = 0;
+let deltaTime = 0;
+requestAnimationFrame(function render(now) {
+  requestAnimationFrame(render);
+
+  now *= 0.001;
+  deltaTime = now - then;
+  then = now;
+
+  /* damp input */
+  {
+    const t = 1 - Math.pow(1 - 0.3, 60*deltaTime);
+    const b4_x = input_mouse[0];
+    const b4_y = input_mouse[1];
+    input_mouse[0] = lerp(input_mouse[0], input_mouse_goal[0], t);
+    input_mouse[1] = lerp(input_mouse[1], input_mouse_goal[1], t);
+
+    if (input_held_point_index > -1) {
+      const dx = input_mouse[0] - b4_x;
+      const dy = input_mouse[1] - b4_y;
+
+      points[input_held_point_index][0] += dx,
+      points[input_held_point_index][1] += dy;
+    }
+  }
+
+  ctx.fillStyle = "white";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  for (const p of points)
+    dot(p, 40, dot_hover(p, 50) ? "red" : "gray");
+
+  const MODE_LINEAR       = 0;
+  const MODE_BEZIER       = 1;
+  const MODE_CATMULL      = 2;
+  const MODE_CATMULL_FULL = 3;
+  const MODE_CATMULL_EVEN = 4;
+
+  const mode = MODE_CATMULL_EVEN;
+
+  switch (mode) {
+    case (MODE_LINEAR): {
+      for (let i = 1; i < points.length; i++)
+        line(points[i - 1], points[i], 5, "purple");
+    }; break;
+
+    case (MODE_BEZIER): {
+      const SEGMENTS = 10;
+
+      let last_x = points[0][0];
+      let last_y = points[0][1];
+      for (let i = 0; i < (SEGMENTS + 1); i++) {
+        const t = i / SEGMENTS;
+
+        function bez_quad(p0, p1, p2, t) {
+          const a_x = lerp(p0[0], p1[0], t);
+          const a_y = lerp(p0[1], p1[1], t);
+
+          const b_x = lerp(p1[0], p2[0], t);
+          const b_y = lerp(p1[1], p2[1], t);
+
+          return [lerp(a_x, b_x, t),
+                  lerp(a_y, b_y, t)];
+        }
+        const p0 = bez_quad(points[0], points[1], points[2], t);
+        const p1 = bez_quad(points[1], points[2], points[3], t);
+        const p_x = lerp(p0[0], p1[0], t);
+        const p_y = lerp(p0[1], p1[1], t);
+
+        dot([p_x, p_y], 5, "pink");
+        line([last_x, last_y], [p_x, p_y], 5, "pink");
+        last_x = p_x;
+        last_y = p_y;
+      }
+    }; break;
+
+    case (MODE_CATMULL): {
+      const SEGMENTS = 10;
+
+      let last = catmull(points[0], points[1], points[2], points[3], 0);
+      for (let i = 0; i < (SEGMENTS + 1); i++) {
+        const t = i / SEGMENTS;
+
+        const p = catmull(points[0], points[1], points[2], points[3], t);
+        dot(p, 5, "pink");
+        line(last, p, 5, "pink");
+        last = p;
+      }
+    }; break;
+
+    /* problem: you give catmull 4 points, you get a line between the inner 2.
+     *
+     * solution: make it behave more like bezier by:
+     *  1. extrapolating past the boundaries so you have 6 points
+     *  2. chaining together the catmull roms between all of them */
+    case (MODE_CATMULL_FULL): {
+      const SEGMENTS = 10;
+
+      /* simple reflection */
+      const extrap_min = [
+        points[0][0] - (points[1][0] - points[0][0]),
+        points[0][1] - (points[1][1] - points[0][1])
+      ]
+
+      const extrap_max = [
+        points[3][0] - (points[2][0] - points[3][0]),
+        points[3][1] - (points[2][1] - points[3][1])
+      ];
+
+      draw_catmull(extrap_min, points[0], points[1], points[2]);
+      draw_catmull(points[0], points[1], points[2], points[3]);
+      draw_catmull(points[1], points[2], points[3], extrap_max);
+
+      function draw_catmull(p0, p1, p2, p3) {
+        let last = catmull(p0, p1, p2, p3, 0);
+        for (let i = 0; i < (SEGMENTS + 1); i++) {
+          const t = i / SEGMENTS;
+
+          const p = catmull(p0, p1, p2, p3, t);
+          dot(p, 5, "pink");
+          line(last, p, 5, "pink");
+          last = p;
+        }
+      }
+    }; break;
+
+
+    case (MODE_CATMULL_EVEN): {
+      const DRAWN_SEGMENTS = 20;
+      const TABLE_SEGMENTS = 100;
+
+      const arc_len_table = Array.from({ length: TABLE_SEGMENTS }, _ => 0);
+      let last = catmull(points[0], points[1], points[2], points[3], 0);
+      for (let last_len = 0, i = 0; i < (TABLE_SEGMENTS + 1); i++) {
+        const t = i / TABLE_SEGMENTS;
+
+        const p = catmull(points[0], points[1], points[2], points[3], t);
+        const len = Math.sqrt((p[0] - last[0])*(p[0] - last[0]) +
+                              (p[1] - last[1])*(p[1] - last[1]));
+        arc_len_table[i] = last_len + len;
+        last_len = len;
+      }
+      const arc_len_of_t = t => lerp(
+        arc_len_table[Math.floor(t * TABLE_SEGMENTS)],
+        arc_len_table[Math. ceil(t * TABLE_SEGMENTS)],
+        (t * TABLE_SEGMENTS) - Math.floor(t * TABLE_SEGMENTS)
+      );
+
+      last = catmull(points[0], points[1], points[2], points[3], 0);
+      dot(last, 5, "pink");
+
+      let last_t = 0;
+      for (let i = 1; i < (DRAWN_SEGMENTS + 1); i++) {
+        const desired_arc_len = (i / DRAWN_SEGMENTS) * arc_len_table[arc_len_table.length - 1];
+
+        let min = last_t;
+        let max = 1;
+        let mid;
+        for (let i = 0; i < 4096; i++) {
+          mid = lerp(min, max, 0.5);
+          const mid_arc_len = arc_len_of_t(mid);
+
+          if (desired_arc_len < mid_arc_len) {
+            max = mid;
+          } else {
+            min = mid;
+          }
+
+          if (Math.abs(mid_arc_len - desired_arc_len) < 0.01)
+            break;
+        }
+
+        const p = catmull(points[0], points[1], points[2], points[3], mid);
+        dot(p, 5, "pink");
+        line(last, p, 5, "pink");
+        last = p;
+      }
+    }; break;
+
+  }
+})
+
+
+function catmull(p0, p1, p2, p3, t, alpha=0.5) {
+  function get_t(t, alpha, p0, p1) {
+    const dx = p1[0] - p0[0];
+    const dy = p1[1] - p0[1];
+    const a = dx*dx + dy*dy; /* dot product */
+    const b = Math.pow(a, alpha*0.5);
+    return (b + t);
+  }
+
+  const t0 = 0.0;
+  const t1 = get_t(t0, alpha, p0, p1);
+  const t2 = get_t(t1, alpha, p1, p2);
+  const t3 = get_t(t2, alpha, p2, p3);
+  t = lerp(t1, t2, t);
+
+  const A1_x = (t1 - t)/(t1 - t0)*p0[0] + (t - t0)/(t1 - t0)*p1[0];
+  const A1_y = (t1 - t)/(t1 - t0)*p0[1] + (t - t0)/(t1 - t0)*p1[1];
+
+  const A2_x = (t2 - t)/(t2 - t1)*p1[0] + (t - t1)/(t2 - t1)*p2[0];
+  const A2_y = (t2 - t)/(t2 - t1)*p1[1] + (t - t1)/(t2 - t1)*p2[1];
+
+  const A3_x = (t3 - t)/(t3 - t2)*p2[0] + (t - t2)/(t3 - t2)*p3[0];
+  const A3_y = (t3 - t)/(t3 - t2)*p2[1] + (t - t2)/(t3 - t2)*p3[1];
+
+  const B1_x = (t2 - t)/(t2 - t0)*A1_x + (t - t0)/(t2 - t0)*A2_x;
+  const B1_y = (t2 - t)/(t2 - t0)*A1_y + (t - t0)/(t2 - t0)*A2_y;
+
+  const B2_x = (t3 - t)/(t3 - t1)*A2_x + (t - t1)/(t3 - t1)*A3_x;
+  const B2_y = (t3 - t)/(t3 - t1)*A2_y + (t - t1)/(t3 - t1)*A3_y;
+
+  const C_x  = (t2 - t)/(t2 - t1)*B1_x + (t - t1)/(t2 - t1)*B2_x;
+  const C_y  = (t2 - t)/(t2 - t1)*B1_y + (t - t1)/(t2 - t1)*B2_y;
+
+  return [C_x, C_y];
+}
+
+function lerp(v0, v1, t) { return (1 - t) * v0 + t * v1; }
+function inv_lerp(min, max, p) { return (p - min) / (max - min); }
+    </script>
+  </body>
+</html>
