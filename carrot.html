@@ -1,0 +1,86 @@
+<!-- vim: sw=2 ts=2 expandtab smartindent ft=javascript
+-->
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>WebGL Demo</title>
+    <style> document, body { margin: 0px; padding: 0px; overflow: hidden; } </style>
+  </head>
+
+  <body>
+    <canvas id="glcanvas"></canvas>
+    <script>"use strict";
+
+const canvas = document.getElementById("glcanvas");
+const ctx = canvas.getContext('2d');
+(window.onresize = () => {
+   canvas.width = window.innerWidth*window.devicePixelRatio,
+   canvas.height = window.innerHeight*window.devicePixelRatio
+   canvas.style.width = window.innerWidth + 'px';
+   canvas.style.height = window.innerHeight + 'px';
+ })();
+
+let mouse_x = 0;
+let mouse_y = 0;
+window.onpointermove = e => {
+  mouse_x = e.pageX*window.devicePixelRatio;
+  mouse_y = e.pageY*window.devicePixelRatio;
+}
+
+let carrot_x = canvas.width *0.5;
+let carrot_y = canvas.height*0.5;
+window.onkeydown = e => {
+  if (e.key == 'w') carrot_y -= 100;
+  if (e.key == 's') carrot_y += 100;
+  if (e.key == 'a') carrot_x -= 100;
+  if (e.key == 'd') carrot_x += 100;
+}
+
+requestAnimationFrame(function render(now) {
+  requestAnimationFrame(render);
+
+  ctx.fillStyle = "white";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  ctx.save();
+  {
+    ctx.fillStyle = "magenta";
+    ctx.fillRect(mouse_x-10, mouse_y-10, 20, 20);
+
+    ctx.translate(carrot_x, carrot_y);
+
+    ctx.fillStyle = "red";
+    ctx.fillRect(-2, -300, 4, 600);
+    ctx.fillStyle = "blue";
+    ctx.fillRect(-300, -2, 600, 4);
+
+    const angle_to_mouse = Math.atan2(mouse_y - carrot_y, mouse_x - carrot_x);
+
+    {
+      ctx.beginPath();
+      ctx.moveTo(0, 0);
+      ctx.lineTo(Math.cos(angle_to_mouse) * 800,
+                 Math.sin(angle_to_mouse) * 800);
+      ctx.lineWidth = 10;
+      ctx.strokeStyle = "black";
+      ctx.stroke();
+      ctx.closePath();
+    }
+
+    ctx.rotate(angle_to_mouse);
+
+    ctx.font = "200px serif";
+    ctx.rotate(-Math.PI * 0.5);
+    ctx.translate(-200, -20)
+
+    ctx.fillText('🐙', 100, 100);
+  }
+  ctx.restore();
+})
+
+function lerp(v0, v1, t) { return (1 - t) * v0 + t * v1; }
+function inv_lerp(min, max, p) { return (p - min) / (max - min); }
+    </script>
+  </body>
+</html>

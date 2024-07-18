@@ -1,0 +1,943 @@
+<!-- vim: sw=4 ts=4 expandtab smartindent ft=javascript
+-->
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>WebGL Demo</title>
+    <style> document, body { margin: 0px; padding: 0px; overflow: hidden; } </style>
+  </head>
+
+  <body>
+    <canvas id="glcanvas"></canvas>
+    <script>
+const canvas = document.getElementById('glcanvas');
+const gl = canvas.getContext('webgl2', {antialias: true});
+const gl_anisotropy =
+  gl.getExtension("EXT_texture_filter_anisotropic") ||
+  gl.getExtension("MOZ_EXT_texture_filter_anisotropic") ||
+  gl.getExtension("WEBKIT_EXT_texture_filter_anisotropic");
+if (!gl) { alert('Failed to initialize WebGL'); }
+
+(window.onresize = () => {
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+
+    /* account for e.g. high-retina macbook screens */
+    if (window.devicePixelRatio > 1) {
+        canvas.style.width = `${canvas.width}px`;
+        canvas.style.height = `${canvas.height}px`;
+        canvas.width *= window.devicePixelRatio;
+        canvas.height *= window.devicePixelRatio;
+    }
+
+    gl.viewport(
+        0,
+        0,
+        canvas.width,
+        canvas.height
+    );
+})();
+
+let save = {
+    player:     { x: 0, y: 0 },
+    player_vel: { x: 0, y: 0 },
+};
+
+const LAST_ACTION_KEY   = 0;
+const LAST_ACTION_MOUSE = 1;
+
+const DEFAULT_PITCH =  Math.PI*0.50;
+const DEFAULT_YAW   = -Math.PI*0.25;
+let input = {
+    /* mousewheel input is damped here before ending up in "zoom" */ 
+    scroll: 0,
+    /* drags are damped here before ending up in pitch/yaw (lmb) or cam_pivot (rmb) */
+    dampedEvent: { button: 0, movementX: 0, movementY: 0 },
+    keysdown:    new Map(),
+    last_action: LAST_ACTION_MOUSE,
+
+    zoom: 30,
+
+    pitch: DEFAULT_PITCH,
+    yaw:   DEFAULT_YAW,
+    eye: [0, 0, 0, 1],
+
+    cam_pivot_x: 0,
+    cam_pivot_y: 0,
+    cam_pivot_z: 0,
+
+
+    lmb_down: false, /* lmb =  left mouse button */
+    rmb_down: false, /* rmb = right mouse button */
+    mouse_x:  0,
+    mouse_y:  0,
+};
+
+/* key handling */
+{
+    function set_key(key, down) {
+        input.last_action = LAST_ACTION_KEY;
+        input.keysdown.set(key, down);
+    }
+    window.addEventListener('keydown', e => set_key(e.key, true ));
+    window.addEventListener('keyup',   e => set_key(e.key, false));
+}
+
+{
+    const opts = { passive: false };
+
+    window.addEventListener('wheel', e => {
+        e.preventDefault();
+
+        if (input.mouse_down) return;
+        input.scroll += e.deltaY;
+    }, opts);
+    window.addEventListener('mousedown', ev => {
+        ev.preventDefault();
+
+        input.last_action = LAST_ACTION_MOUSE;
+        input.dampedEvent.button = ev.button ? 2 : 0;
+
+        if (ev.button == 0) input.lmb_down = true;
+        if (ev.button == 2) input.rmb_down = true;
+    }, opts);
+    window.addEventListener('mousemove', ev => {
+        ev.preventDefault();
+
+        if (input.lmb_down || input.rmb_down) {
+            input.dampedEvent.movementX += ev.movementX;
+            input.dampedEvent.movementY += ev.movementY;
+        }
+
+        input.mouse_x = ev.offsetX*window.devicePixelRatio;
+        input.mouse_y = ev.offsetY*window.devicePixelRatio;
+    }, opts);
+    window.addEventListener("contextmenu", ev => {
+        ev.preventDefault();
+    }, opts);
+    window.addEventListener('mouseup', ev => {
+        ev.preventDefault();
+
+        if (ev.button == 0) input.lmb_down = false;
+        if (ev.button == 2) input.rmb_down = false;
+    }, opts);
+}
+
+/* touch */
+{
+    const opts = { passive: false };
+
+    let touch_x = 0;
+    let touch_y = 0;
+    window.addEventListener("touchstart", ev => {
+        ev.preventDefault();
+
+        touch_x = ev.changedTouches[0].clientX;
+        touch_y = ev.changedTouches[0].clientY;
+
+        input.lmb_down = true;
+    }, opts);
+
+    window.addEventListener("touchmove", ev => {
+        ev.preventDefault();
+        input.dampedEvent.button = 0;
+
+        input.dampedEvent.movementX += ev.changedTouches[0].clientX - touch_x;
+        input.dampedEvent.movementY += ev.changedTouches[0].clientY - touch_y;
+
+        touch_x = ev.changedTouches[0].clientX;
+        touch_y = ev.changedTouches[0].clientY;
+    }, opts);
+
+    window.addEventListener("touchend", ev => {
+        ev.preventDefault();
+
+        input.lmb_down = false;
+    }, opts);
+}
+
+const geo_vbuf_pos = gl.createBuffer();
+const geo_vbuf_uv  = gl.createBuffer();
+const geo_ibuf     = gl.createBuffer();
+
+let shaders;
+/* compile shaders */
+{
+    const vs_geo = `
+        uniform mat4 u_matrix;
+
+        attribute vec3 a_pos;
+        attribute vec3 a_uv;
+
+        varying vec3 v_uv;
+
+        void main() {
+            gl_Position = u_matrix * vec4(a_pos.xyz, 1);
+            v_uv = a_uv;
+        }`;
+
+    const fs_geo = `
+        precision mediump float;
+
+        uniform sampler2D u_texture;
+
+        varying vec3 v_uv;
+
+        void main() {
+            vec4 color = vec4(0);
+            if (v_uv.x < 0.0) {
+                color = texture2D(u_texture, abs(v_uv.xy));
+                if (color.w == 0.0) discard;
+            } else {
+                color = vec4(v_uv, 1.0);
+            }
+            gl_FragColor = color;
+        }`;
+
+    function createProgram(gl, vertexSource, fragmentSource) {
+        function createShader(gl, type, source) {
+            const shader = gl.createShader(type);
+            gl.shaderSource(shader, source);
+            gl.compileShader(shader);
+            if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+                throw new Error(gl.getShaderInfoLog(shader));
+            }
+            return shader;
+        }
+
+        const program = gl.createProgram();
+
+        const vertexShader = createShader(gl, gl.VERTEX_SHADER, vertexSource);
+        const fragmentShader = createShader(gl, gl.FRAGMENT_SHADER, fragmentSource);
+
+        gl.attachShader(program, vertexShader);
+        gl.attachShader(program, fragmentShader);
+
+        gl.linkProgram(program);
+        if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+            throw new Error(gl.getProgramInfoLog(program));
+        }
+
+        const wrapper = {program};
+
+        const numAttributes = gl.getProgramParameter(program, gl.ACTIVE_ATTRIBUTES);
+        for (let i = 0; i < numAttributes; i++) {
+            const attribute = gl.getActiveAttrib(program, i);
+            wrapper[attribute.name] = gl.getAttribLocation(program, attribute.name);
+        }
+        const numUniforms = gl.getProgramParameter(program, gl.ACTIVE_UNIFORMS);
+        for (let i = 0; i < numUniforms; i++) {
+            const uniform = gl.getActiveUniform(program, i);
+            wrapper[uniform.name] = gl.getUniformLocation(program, uniform.name);
+        }
+
+        return wrapper;
+    }
+
+
+    shaders = {
+        geo: createProgram(gl, vs_geo, fs_geo)
+    }
+}
+
+let atlas = gl.createTexture();
+
+/* used especially in the rendering functions */
+const AXIS_FLAT = 0;
+const AXIS_UP   = 1;
+
+const ATLAS_NINJA  = 0;
+const ATLAS_MOON  = 1;
+const ATLAS_CLOVER = 2;
+const ATLAS_KINFE  = 3;
+// const ATLAS_CHARS = ['🥷', '🎋', '☘️', '🔪'];
+const ATLAS_CHARS = ['🥷', '🌑', '☘️', '🔪'];
+
+const ATLAS_SIZE = 2; /* in emoji */
+const EMOJI_SIZE = 1 << 8;
+
+{
+    const canvas = document.createElement("canvas");
+
+    canvas.width = canvas.height = ATLAS_SIZE * EMOJI_SIZE;
+
+    const ctx = canvas.getContext("2d");
+
+    {
+        const PAD = EMOJI_SIZE*0.1;
+        ctx.font = (EMOJI_SIZE - PAD*2) + 'px sans-serif';
+
+        let i = 0;
+        for (const char of ATLAS_CHARS) {
+            const x = (           i % ATLAS_SIZE ) * EMOJI_SIZE;
+            const y = (Math.floor(i / ATLAS_SIZE)) * EMOJI_SIZE;
+
+            ctx.fillText(
+                char,
+                x + PAD,
+                y + EMOJI_SIZE - PAD*2
+            );
+
+            i++;
+        }
+    }
+
+    gl.bindTexture(gl.TEXTURE_2D, atlas);
+    gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, true);
+    gl.texImage2D(
+        /* target         */ gl.TEXTURE_2D,
+        /* level          */ 0,
+        /* internalformat */ gl.RGBA,
+        /* width          */ canvas.width,
+        /* height         */ canvas.height,
+        /* border,        */ 0,
+        /* format,        */ gl.RGBA,
+        /* type,          */ gl.UNSIGNED_BYTE,
+        /* data           */ canvas
+    );
+    gl.generateMipmap(gl.TEXTURE_2D);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+
+    if (gl_anisotropy) {
+        const max = gl.getParameter(gl_anisotropy.MAX_TEXTURE_MAX_ANISOTROPY_EXT);
+        gl.texParameterf(gl.TEXTURE_2D, gl_anisotropy.TEXTURE_MAX_ANISOTROPY_EXT, max);
+    }
+}
+
+function do_platform(method, arg) {
+    const PLATFORM_SIZE = 11.0;
+
+    const PATH_FROM = -10;
+    const PATH_TO   = -30;
+
+    /* sauce: https://iquilezles.org/articles/distfunctions2d/ */
+    function sd_segment(p, a_x, a_y, b_x, b_y) {
+        const pa_x = p.x-a_x;
+        const pa_y = p.y-a_y;
+        const ba_x = b_x-a_x;
+        const ba_y = b_y-a_y;
+
+        let h = (pa_x*ba_x+pa_y*ba_y)/(ba_x*ba_x+ba_y*ba_y)
+        h = Math.max(0, h);
+        h = Math.min(1, h);
+
+        const dx = pa_x - ba_x*h;
+        const dy = pa_y - ba_y*h;
+        return Math.sqrt(dx*dx + dy*dy);
+    }
+
+    /* 
+     * I somehow translated this to JS wrong.
+     *
+     * function sd_oriented_box(p, a_x, a_y, b_x, b_y, th) {
+     *     const l = Math.sqrt((b_x - a_x)*(b_x - a_x) +
+     *                         (b_y - a_y)*(b_y - a_y));
+     *     const d_x = (b_x-a_x)/l;
+     *     const d_y = (b_y-a_y)/l;
+
+     *     let q_x = p.x - (a_x+b_x)*0.5;
+     *     let q_y = p.y - (a_y+b_y)*0.5;
+
+     *     {
+     *         let x = q_x, y = a_y;
+     *         q_x = d_x*x + -d_y*y;
+     *         q_y = d_y*x +  d_x*y;
+     *     }
+
+     *     q_x = Math.abs(q_x)- l*0.5;
+     *     q_y = Math.abs(q_y)-th*0.5;
+
+     *     const _q_x = Math.max(q_x, 0);
+     *     const _q_y = Math.max(q_y, 0);
+     *     return Math.sqrt(_q_x*_q_x + _q_y*_q_y) + Math.min(Math.max(q_x,q_y), 0.0);
+     * }
+     */
+
+    if (method == "collision") {
+        const pos = arg;
+
+        let min_dist = Math.sqrt(pos.x*pos.x + pos.y*pos.y) - PLATFORM_SIZE;
+        min_dist = Math.min(min_dist, sd_segment(
+            pos,
+            PATH_FROM, 0,
+            PATH_TO  , 0
+        ) - 1.5);
+
+        return min_dist;
+    }
+
+    if (method == "draw") {
+        const { drawBox, drawImg } = arg;
+
+        // drawBox(AXIS_FLAT, 0, 0, 15, 1, 1);
+        drawImg(AXIS_FLAT, 0, 0, 15, ATLAS_MOON);
+
+        drawBox(
+            PATH_FROM, -2,
+            PATH_TO  ,  2,
+
+            0.1, 0.1, 0.1
+        );
+    }
+}
+
+let last_timestamp;
+requestAnimationFrame(function frame(timestamp) {
+    requestAnimationFrame(frame);
+
+    timestamp *= 0.001;
+    last_timestamp ??= timestamp;
+    const deltaTime = timestamp - last_timestamp;
+    last_timestamp = timestamp;
+
+    {
+        let movement_x = (input.keysdown.get("a") ?? 0) - (input.keysdown.get("d") ?? 0);
+        let movement_y = (input.keysdown.get("s") ?? 0) - (input.keysdown.get("w") ?? 0);
+        if (Math.abs(movement_x) > 0 || Math.abs(movement_y) > 0) {
+            const movement_len = Math.sqrt(movement_x*movement_x + movement_y*movement_y);
+            movement_x /= movement_len;
+            movement_y /= movement_len;
+        }
+        {
+            save.player_vel.x += movement_x*0.03;
+            save.player_vel.y += movement_y*0.03;
+            save.player_vel.x *= 0.85;
+            save.player_vel.y *= 0.85;
+
+            const p = { x: save.player.x, y: save.player.y };
+
+            const SPEED = 0.02;
+            p.x += movement_x*SPEED + save.player_vel.x;
+            p.y += movement_y*SPEED + save.player_vel.y;
+
+            /* platform collision
+             * - weird combination of SAT and SDFs */
+            {
+                let next_p_x = save.player.x;
+                let next_p_y = save.player.y;
+                const axes = [{ x: save.player.x, y: p.y }, { x: p.x, y: save.player.y }];
+                for (let i = 0; i < axes.length; i++) {
+                    const o = axes[i];
+
+                    /* how far you're trying to go */
+                    let moved_dist = Math.sqrt((save.player.x - o.x)*(save.player.x - o.x) +
+                                               (save.player.y - o.y)*(save.player.y - o.y));
+
+                    /* how far you can go w/o hitting something */
+                    let max_dist = do_platform('collision', o);
+
+                    const min = Math.min(-max_dist, moved_dist);
+
+                    const cut_dist = Math.abs(min - moved_dist);
+
+                    /* here we address an edge case where the user gets stuck in a wall
+                     * we get the normal of the surface and push them out. */
+                    if (cut_dist > SPEED*0.9) {
+                        let best_vec, best_vec_dist = Infinity;
+                        for (let j = 0; j < 2; j++) {
+                            const perp = axes[j];
+                            const perp_backwards = {
+                                x: save.player.x - (perp.x - save.player.x),
+                                y: save.player.y - (perp.y - save.player.y)
+                            };
+                            for (const p of [perp, perp_backwards]) {
+                                const dist = do_platform('collision', p);
+                                if (dist < best_vec_dist) {
+                                    best_vec_dist = dist;
+                                    best_vec = p;
+                                }
+                            }
+                        }
+
+                        if (best_vec) {
+                            const dx = save.player.x - best_vec.x;
+                            const dy = save.player.y - best_vec.y;
+                            save.player_vel.x += dx * 0.1;
+                            save.player_vel.y += dy * 0.1;
+                            console.log("hm?");
+                        }
+                    }
+
+                    let dx = o.x - save.player.x;
+                    let dy = o.y - save.player.y;
+
+                    if (Math.abs(dx) > 0 || Math.abs(dy) > 0) {
+                        const d_len = Math.sqrt(dx*dx + dy*dy);
+                        dx /= d_len;
+                        dy /= d_len;
+
+                        next_p_x += dx*min;
+                        next_p_y += dy*min;
+                    }
+                }
+                save.player.x = next_p_x;
+                save.player.y = next_p_y;
+            }
+
+            if (input.last_action == LAST_ACTION_KEY) {
+                const t = Math.pow(1 - 0.95, 60*deltaTime);
+                input.cam_pivot_x = lerp(input.cam_pivot_x, save.player.x, t);
+                input.cam_pivot_y = lerp(input.cam_pivot_y, save.player.y, t);
+
+                input.pitch = lerp(input.pitch, DEFAULT_PITCH, t);
+                input.yaw   = lerp(input.yaw  , DEFAULT_YAW,   t);
+            }
+
+        }
+    }
+
+    {
+        const ev = input.dampedEvent;
+
+        /* based on the assumption that if you're zoomed in more,
+         * you're doing finer-detailed work and want more precise movements. */
+        const zoom_fudge = 2;// Math.sqrt(input.zoom/10.0)*2.0;
+
+        if (ev.button == 0) {
+            input.pitch -= ev.movementX * 0.0005 * zoom_fudge;
+            input.yaw   -= ev.movementY * 0.0005 * zoom_fudge;
+            input.yaw = Math.max(-Math.PI*0.5 + 0.01, Math.min(Math.PI*0.5 - 0.01, input.yaw));
+        }
+        if (ev.button == 2) {
+            const unit = [0, -ev.movementX*0.00075*zoom_fudge, ev.movementY*0.00075*zoom_fudge, 1];
+            {
+                const view    = mat4_create();
+                const scratch = mat4_create();
+
+                mat4_from_z_rotation(scratch, input.pitch);
+                mat4_mul(view, view, scratch);
+
+                mat4_from_y_rotation(scratch, input.yaw);
+                mat4_mul(view, view, scratch);
+
+                mat4_transform_vec4(unit, unit, view);
+            }
+
+            input.cam_pivot_x += unit[0];
+            input.cam_pivot_y += unit[1];
+            input.cam_pivot_z += unit[2];
+        }
+
+        ev.movementX *= Math.pow(1 - 0.17, 60*deltaTime);
+        ev.movementY *= Math.pow(1 - 0.17, 60*deltaTime);
+
+        {
+            const t = Math.cbrt(Math.abs(input.scroll)) * Math.sign(input.scroll);
+
+            input.zoom += 0.005*t*input.zoom;
+            input.scroll *= Math.pow(1 - 0.5, 60*deltaTime);
+            input.zoom = Math.min(200, input.zoom);
+        }
+    }
+
+    const ORTHO = false;
+    const vp = mat4_create();
+    const scratch = mat4_create();
+    {
+        const FIELD_OF_VIEW = 50 / 180 * Math.PI;
+        const ar = window.innerWidth / window.innerHeight;
+        const projection = mat4_perspective(mat4_create(), FIELD_OF_VIEW, ar, 0.01, 100.0);
+
+        const view = mat4_create();
+        {
+            const eye = input.eye = [input.zoom, 0, 0, 1];
+            {
+                mat4_from_z_rotation(scratch, input.pitch);
+                mat4_mul(view, view, scratch);
+
+                mat4_from_y_rotation(scratch, input.yaw);
+                mat4_mul(view, view, scratch);
+
+                mat4_transform_vec4(eye, eye, view);
+            }
+
+            eye[0] += input.cam_pivot_x;
+            eye[1] += input.cam_pivot_y;
+            eye[2] += input.cam_pivot_z;
+            mat4_target_to(
+                view,
+                eye,
+                [input.cam_pivot_x, input.cam_pivot_y, input.cam_pivot_z],
+                [                0,                 0,                 1]
+            );
+            mat4_invert(view, view);
+        }
+
+        mat4_mul(vp, projection, view);
+    }
+
+    const geo = {
+        idx: [],
+        pos: [],
+        uv : [],
+    };
+
+    {
+        function drawImg(axis, x, y, size, atlas_index) {
+
+            /* generate UVs from atlas_index */
+            {
+                const u = (           atlas_index % ATLAS_SIZE );
+                const v = (Math.floor(atlas_index / ATLAS_SIZE));
+
+                geo.uv.push(
+                    -(u+0.99)/ATLAS_SIZE, -(v+0.99)/ATLAS_SIZE, 0,
+                    -(u+0.01)/ATLAS_SIZE, -(v+0.99)/ATLAS_SIZE, 0,
+                    -(u+0.01)/ATLAS_SIZE, -(v+0.01)/ATLAS_SIZE, 0,
+                    -(u+0.99)/ATLAS_SIZE, -(v+0.01)/ATLAS_SIZE, 0
+                );
+            }
+
+            /* generate position + index */
+            {
+                const vbuf_i = geo.pos.length / 3;
+                switch (axis) {
+                    case (AXIS_FLAT): {
+                        geo.pos.push(x+size, y-size, 0.0);
+                        geo.pos.push(x-size, y-size, 0.0);
+                        geo.pos.push(x-size, y+size, 0.0);
+                        geo.pos.push(x+size, y+size, 0.0);
+                    }; break;
+
+                    case (AXIS_UP): {
+                        const back_x = Math.cos(Math.PI*0.25); /* hard-coded yaw */
+                        const back_y = Math.sin(Math.PI*0.25); /* hard-coded yaw */
+                        geo.pos.push(x+size, y, 0);
+                        geo.pos.push(x-size, y, 0);
+                        geo.pos.push(x-size, y-back_x*size, size + back_y*size);
+                        geo.pos.push(x+size, y-back_x*size, size + back_y*size);
+                    }; break;
+                }
+
+
+                geo.idx.push(
+                    vbuf_i + 0,
+                    vbuf_i + 1,
+                    vbuf_i + 2,
+                    vbuf_i + 2,
+                    vbuf_i + 3,
+                    vbuf_i + 0
+                );
+            }
+        }
+
+        function drawBox(
+            min_x, min_y,
+            max_x, max_y,
+
+            color_r, color_g, color_b
+        ) {
+
+            /* generate UVs from atlas_index */
+            geo.uv.push(
+                color_r, color_g, color_b,
+                color_r, color_g, color_b,
+                color_r, color_g, color_b,
+                color_r, color_g, color_b
+            );
+
+            /* generate position + index */
+            {
+                const vbuf_i = geo.pos.length / 3;
+                geo.pos.push(max_x, min_y, 0.0);
+                geo.pos.push(min_x, min_y, 0.0);
+                geo.pos.push(min_x, max_y, 0.0);
+                geo.pos.push(max_x, max_y, 0.0);
+
+                geo.idx.push(
+                    vbuf_i + 0,
+                    vbuf_i + 1,
+                    vbuf_i + 2,
+                    vbuf_i + 2,
+                    vbuf_i + 3,
+                    vbuf_i + 0
+                );
+            }
+        }
+
+        do_platform('draw', { drawBox, drawImg });
+        drawImg(
+            AXIS_UP,
+            save.player.x,
+            save.player.y,
+            1,
+            ATLAS_NINJA
+        );
+    }
+
+    {
+        /* no point in enabling depth since things need to be sorted anyway :thinking: */
+        // gl.enable(gl.DEPTH_TEST);
+        // gl.depthFunc(gl.LEQUAL);
+
+        /* set up premultiplied alpha */
+        gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
+        gl.enable(gl.BLEND);
+
+        /* clear all */
+        gl.clearColor(0, 0, 0, 1);
+        gl.clear(gl.DEPTH_BUFFER_BIT | gl.COLOR_BUFFER_BIT);
+
+        /* geo pass */
+        {
+            gl.useProgram(shaders.geo.program);
+            gl.enableVertexAttribArray(shaders.geo.a_pos);
+            gl.enableVertexAttribArray(shaders.geo.a_uv);
+
+            gl.uniformMatrix4fv(shaders.geo.u_matrix, false, vp);
+
+            /* upload/bind atlas */
+            {
+                gl.activeTexture(gl.TEXTURE0);
+                gl.bindTexture(gl.TEXTURE_2D, atlas);
+                gl.uniform1i(shaders.geo.u_texture, 0);
+            }
+
+            /* upload/bind geometry */
+            {
+                gl.bindBuffer(gl.ARRAY_BUFFER, geo_vbuf_pos);
+                gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(geo.pos), gl.STATIC_DRAW);
+                gl.vertexAttribPointer(shaders.geo.a_pos, 3, gl.FLOAT, false, 0, 0);
+
+                gl.bindBuffer(gl.ARRAY_BUFFER, geo_vbuf_uv);
+                gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(geo.uv), gl.STATIC_DRAW);
+                gl.vertexAttribPointer(shaders.geo.a_uv, 3, gl.FLOAT, false, 0, 0);
+
+                gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, geo_ibuf);
+                gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, new Uint16Array(geo.idx), gl.STATIC_DRAW);
+            }
+
+            gl.drawElements(gl.TRIANGLES, geo.idx.length, gl.UNSIGNED_SHORT, 0);
+        }
+    }
+})
+
+function mat4_create() {
+    let out = new Float32Array(16);
+    out[0] = 1;
+    out[5] = 1;
+    out[10] = 1;
+    out[15] = 1;
+    return out;
+}
+
+function mat4_transform_vec4(out, a, m) {
+    let x = a[0], y = a[1], z = a[2], w = a[3];
+    out[0] = m[0] * x + m[4] * y + m[8] * z + m[12] * w;
+    out[1] = m[1] * x + m[5] * y + m[9] * z + m[13] * w;
+    out[2] = m[2] * x + m[6] * y + m[10] * z + m[14] * w;
+    out[3] = m[3] * x + m[7] * y + m[11] * z + m[15] * w;
+    return out;
+}
+
+function mat4_mul(out, a, b) {
+    let a00 = a[0], a01 = a[1], a02 = a[2], a03 = a[3];
+    let a10 = a[4], a11 = a[5], a12 = a[6], a13 = a[7];
+    let a20 = a[8], a21 = a[9], a22 = a[10], a23 = a[11];
+    let a30 = a[12], a31 = a[13], a32 = a[14], a33 = a[15];
+    /* Cache only the current line of the second matrix */
+    let b0 = b[0], b1 = b[1], b2 = b[2], b3 = b[3];
+    out[0] = b0 * a00 + b1 * a10 + b2 * a20 + b3 * a30;
+    out[1] = b0 * a01 + b1 * a11 + b2 * a21 + b3 * a31;
+    out[2] = b0 * a02 + b1 * a12 + b2 * a22 + b3 * a32;
+    out[3] = b0 * a03 + b1 * a13 + b2 * a23 + b3 * a33;
+    b0 = b[4];
+    b1 = b[5];
+    b2 = b[6];
+    b3 = b[7];
+    out[4] = b0 * a00 + b1 * a10 + b2 * a20 + b3 * a30;
+    out[5] = b0 * a01 + b1 * a11 + b2 * a21 + b3 * a31;
+    out[6] = b0 * a02 + b1 * a12 + b2 * a22 + b3 * a32;
+    out[7] = b0 * a03 + b1 * a13 + b2 * a23 + b3 * a33;
+    b0 = b[8];
+    b1 = b[9];
+    b2 = b[10];
+    b3 = b[11];
+    out[8] = b0 * a00 + b1 * a10 + b2 * a20 + b3 * a30;
+    out[9] = b0 * a01 + b1 * a11 + b2 * a21 + b3 * a31;
+    out[10] = b0 * a02 + b1 * a12 + b2 * a22 + b3 * a32;
+    out[11] = b0 * a03 + b1 * a13 + b2 * a23 + b3 * a33;
+    b0 = b[12];
+    b1 = b[13];
+    b2 = b[14];
+    b3 = b[15];
+    out[12] = b0 * a00 + b1 * a10 + b2 * a20 + b3 * a30;
+    out[13] = b0 * a01 + b1 * a11 + b2 * a21 + b3 * a31;
+    out[14] = b0 * a02 + b1 * a12 + b2 * a22 + b3 * a32;
+    out[15] = b0 * a03 + b1 * a13 + b2 * a23 + b3 * a33;
+    return out;
+}
+
+function mat4_target_to(out, eye, target, up=VEC3_UP) {
+    let eyex = eye[0], eyey = eye[1], eyez = eye[2],
+         upx =  up[0],  upy =  up[1],  upz =  up[2];
+    let z0 = eyex - target[0],
+        z1 = eyey - target[1],
+        z2 = eyez - target[2];
+    let len = z0 * z0 + z1 * z1 + z2 * z2;
+    if (len > 0) {
+        len = 1 / Math.sqrt(len);
+        z0 *= len;
+        z1 *= len;
+        z2 *= len;
+    }
+    let x0 = upy * z2 - upz * z1,
+        x1 = upz * z0 - upx * z2,
+        x2 = upx * z1 - upy * z0;
+    len = x0 * x0 + x1 * x1 + x2 * x2;
+    if (len > 0) {
+        len = 1 / Math.sqrt(len);
+        x0 *= len;
+        x1 *= len;
+        x2 *= len;
+    }
+    out[0] = x0;
+    out[1] = x1;
+    out[2] = x2;
+    out[3] = 0;
+    out[4] = z1 * x2 - z2 * x1;
+    out[5] = z2 * x0 - z0 * x2;
+    out[6] = z0 * x1 - z1 * x0;
+    out[7] = 0;
+    out[8] = z0;
+    out[9] = z1;
+    out[10] = z2;
+    out[11] = 0;
+    out[12] = eyex;
+    out[13] = eyey;
+    out[14] = eyez;
+    out[15] = 1;
+    return out;
+}
+
+function mat4_perspective(out, fovy, aspect, near, far) {
+    let f = 1.0 / Math.tan(fovy / 2),
+        nf;
+    out[0] = f / aspect;
+    out[1] = 0;
+    out[2] = 0;
+    out[3] = 0;
+    out[4] = 0;
+    out[5] = f;
+    out[6] = 0;
+    out[7] = 0;
+    out[8] = 0;
+    out[9] = 0;
+    out[11] = -1;
+    out[12] = 0;
+    out[13] = 0;
+    out[15] = 0;
+    if (far != null && far !== Infinity) {
+        nf = 1 / (near - far);
+        out[10] = (far + near) * nf;
+        out[14] = 2 * far * near * nf;
+    } else {
+        out[10] = -1;
+        out[14] = -2 * near;
+    }
+    return out;
+}
+
+function mat4_from_y_rotation(out, rad) {
+    let s = Math.sin(rad);
+    let c = Math.cos(rad);
+    /* Perform axis-specific matrix multiplication */
+    out[0] = c;
+    out[1] = 0;
+    out[2] = -s;
+    out[3] = 0;
+    out[4] = 0;
+    out[5] = 1;
+    out[6] = 0;
+    out[7] = 0;
+    out[8] = s;
+    out[9] = 0;
+    out[10] = c;
+    out[11] = 0;
+    out[12] = 0;
+    out[13] = 0;
+    out[14] = 0;
+    out[15] = 1;
+    return out;
+}
+
+function mat4_from_z_rotation(out, rad) {
+    let s = Math.sin(rad);
+    let c = Math.cos(rad);
+    /* Perform axis-specific matrix multiplication */
+    out[0] = c;
+    out[1] = s;
+    out[2] = 0;
+    out[3] = 0;
+    out[4] = -s;
+    out[5] = c;
+    out[6] = 0;
+    out[7] = 0;
+    out[8] = 0;
+    out[9] = 0;
+    out[10] = 1;
+    out[11] = 0;
+    out[12] = 0;
+    out[13] = 0;
+    out[14] = 0;
+    out[15] = 1;
+    return out;
+}
+
+function mat4_invert(out, a) {
+    let a00 = a[0], a01 = a[1], a02 = a[2], a03 = a[3];
+    let a10 = a[4], a11 = a[5], a12 = a[6], a13 = a[7];
+    let a20 = a[8], a21 = a[9], a22 = a[10], a23 = a[11];
+    let a30 = a[12], a31 = a[13], a32 = a[14], a33 = a[15];
+    let b00 = a00 * a11 - a01 * a10;
+    let b01 = a00 * a12 - a02 * a10;
+    let b02 = a00 * a13 - a03 * a10;
+    let b03 = a01 * a12 - a02 * a11;
+    let b04 = a01 * a13 - a03 * a11;
+    let b05 = a02 * a13 - a03 * a12;
+    let b06 = a20 * a31 - a21 * a30;
+    let b07 = a20 * a32 - a22 * a30;
+    let b08 = a20 * a33 - a23 * a30;
+    let b09 = a21 * a32 - a22 * a31;
+    let b10 = a21 * a33 - a23 * a31;
+    let b11 = a22 * a33 - a23 * a32;
+    /* Calculate the determinant */
+    let det = b00 * b11 - b01 * b10 + b02 * b09 + b03 * b08 - b04 * b07 + b05 * b06;
+    if (!det) {
+        return null;
+    }
+    det = 1.0 / det;
+    out[0] = (a11 * b11 - a12 * b10 + a13 * b09) * det;
+    out[1] = (a02 * b10 - a01 * b11 - a03 * b09) * det;
+    out[2] = (a31 * b05 - a32 * b04 + a33 * b03) * det;
+    out[3] = (a22 * b04 - a21 * b05 - a23 * b03) * det;
+    out[4] = (a12 * b08 - a10 * b11 - a13 * b07) * det;
+    out[5] = (a00 * b11 - a02 * b08 + a03 * b07) * det;
+    out[6] = (a32 * b02 - a30 * b05 - a33 * b01) * det;
+    out[7] = (a20 * b05 - a22 * b02 + a23 * b01) * det;
+    out[8] = (a10 * b10 - a11 * b08 + a13 * b06) * det;
+    out[9] = (a01 * b08 - a00 * b10 - a03 * b06) * det;
+    out[10] = (a30 * b04 - a31 * b02 + a33 * b00) * det;
+    out[11] = (a21 * b02 - a20 * b04 - a23 * b00) * det;
+    out[12] = (a11 * b07 - a10 * b09 - a12 * b06) * det;
+    out[13] = (a00 * b09 - a01 * b07 + a02 * b06) * det;
+    out[14] = (a31 * b01 - a30 * b03 - a32 * b00) * det;
+    out[15] = (a20 * b03 - a21 * b01 + a22 * b00) * det;
+    return out;
+}
+
+function inv_lerp(min, max, p) { return (p - min) / (max - min); }
+function lerp(v0, v1, t) { return (1 - t) * v0 + t * v1; }
+function lerp_rads(a, b, t) {
+  let difference = fmodf(b - a, Math.PI*2.0),
+        distance = fmodf(2.0 * difference, Math.PI*2.0) - difference;
+  return a + distance * t;
+}
+
+    </script>
+  </body>
+</html>

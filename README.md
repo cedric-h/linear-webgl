@@ -1,3 +1,5 @@
+EDIT: this started out with the lofty goals stated below, and quickly just became my scratchpad where I test out random ideas, only most of which are WebGL-related ...
+
 # webgl demos in a single file, the way god intended
 
 If you ask me, any attempt to make an abstraction over WebGL ... only makes it more difficult to use.
