@@ -57,6 +57,8 @@ const ATLAS_CHARS = [];
 const ATLAS_NINJA   = (ATLAS_CHARS.push('🥷'), ATLAS_CHARS.length - 1);
 const ATLAS_MOON    = (ATLAS_CHARS.push('🌕'), ATLAS_CHARS.length - 1);
 const ATLAS_CLOVER  = (ATLAS_CHARS.push('☘️'),  ATLAS_CHARS.length - 1);
+const ATLAS_BAMBOO  = (ATLAS_CHARS.push('🎋'),  ATLAS_CHARS.length - 1);
+const ATLAS_TREE    = (ATLAS_CHARS.push('🌳'),  ATLAS_CHARS.length - 1);
 const ATLAS_KNIFE   = (ATLAS_CHARS.push('🔪'), ATLAS_CHARS.length - 1);
 const ATLAS_THREAD  = (ATLAS_CHARS.push('🧵'), ATLAS_CHARS.length - 1);
 const ATLAS_DOOR    = (ATLAS_CHARS.push('🚪'), ATLAS_CHARS.length - 1);
@@ -213,7 +215,7 @@ let shaders;
                 if (v_uv.z == ${SHADER_FLAG_GREENIFY.toFixed(2)}) {
                     color.xyz /= color.w;
                     float gray = 0.21 * color.r + 0.71 * color.g + 0.07 * color.b;
-                    color.xyz = gray*vec3(0.5, 0.75, 0.4);
+                    color.xyz = 0.5*gray*vec3(0.7, 1.15, 0.5);
                     color.xyz *= color.w;
                 }
                 
@@ -328,51 +330,10 @@ function do_platform(method, arg) {
 
     const PATH_FROM = -10;
     const PATH_TO   = -30;
+    // const PATH_FROM =  10;
+    // const PATH_TO   = -10;
 
-    /* sauce: https://iquilezles.org/articles/distfunctions2d/ */
-    function sd_segment(p, a_x, a_y, b_x, b_y) {
-        const pa_x = p.x-a_x;
-        const pa_y = p.y-a_y;
-        const ba_x = b_x-a_x;
-        const ba_y = b_y-a_y;
-
-        let h = (pa_x*ba_x+pa_y*ba_y)/(ba_x*ba_x+ba_y*ba_y)
-        h = Math.max(0, h);
-        h = Math.min(1, h);
-
-        const dx = pa_x - ba_x*h;
-        const dy = pa_y - ba_y*h;
-        return Math.sqrt(dx*dx + dy*dy);
-    }
-
-    /* 
-     * I somehow translated this to JS wrong.
-     *
-     * function sd_oriented_box(p, a_x, a_y, b_x, b_y, th) {
-     *     const l = Math.sqrt((b_x - a_x)*(b_x - a_x) +
-     *                         (b_y - a_y)*(b_y - a_y));
-     *     const d_x = (b_x-a_x)/l;
-     *     const d_y = (b_y-a_y)/l;
-
-     *     let q_x = p.x - (a_x+b_x)*0.5;
-     *     let q_y = p.y - (a_y+b_y)*0.5;
-
-     *     {
-     *         let x = q_x, y = a_y;
-     *         q_x = d_x*x + -d_y*y;
-     *         q_y = d_y*x +  d_x*y;
-     *     }
-
-     *     q_x = Math.abs(q_x)- l*0.5;
-     *     q_y = Math.abs(q_y)-th*0.5;
-
-     *     const _q_x = Math.max(q_x, 0);
-     *     const _q_y = Math.max(q_y, 0);
-     *     return Math.sqrt(_q_x*_q_x + _q_y*_q_y) + Math.min(Math.max(q_x,q_y), 0.0);
-     * }
-     */
-
-    if (method == "collision") {
+    if (method == 'collision') {
         const pos = arg;
 
         let min_dist = Math.sqrt(pos.x*pos.x + pos.y*pos.y) - PLATFORM_SIZE;
@@ -385,13 +346,17 @@ function do_platform(method, arg) {
         return min_dist;
     }
 
-    if (method == "draw") {
-        const { drawBox, drawImg } = arg;
+    if (method == 'draw') {
+        const { geo, pushImgUV, drawBox, drawImg } = arg;
 
-        // drawBox(AXIS_FLAT, 0, 0, 15, 1, 1);
-        // drawImg(AXIS_FLAT,  2,  3,  7, ATLAS_MOON, SHADER_FLAG_GREENIFY);
-        // drawImg(AXIS_FLAT, -4,  0,  8, ATLAS_MOON, SHADER_FLAG_GREENIFY);
-        // drawImg(AXIS_FLAT,  2,- 3,  9, ATLAS_MOON, SHADER_FLAG_GREENIFY);
+        drawImg(AXIS_FLAT,  2,  3,  7, ATLAS_MOON, SHADER_FLAG_GREENIFY);
+        drawImg(AXIS_FLAT, -4,  0,  8, ATLAS_MOON, SHADER_FLAG_GREENIFY);
+        drawImg(AXIS_FLAT,  2,- 3,  9, ATLAS_MOON, SHADER_FLAG_GREENIFY);
+
+        drawImg(AXIS_UP, -5, -3,  2.0, ATLAS_TREE);
+        drawImg(AXIS_UP,  2, -5,  4.0, ATLAS_TREE);
+        drawImg(AXIS_UP,  2,  7,  1.0, ATLAS_BAMBOO);
+        drawImg(AXIS_UP,  4,  5,  1.2, ATLAS_BAMBOO);
 
         // drawBox(
         //     PATH_FROM, -2,
@@ -404,19 +369,73 @@ function do_platform(method, arg) {
         let path_min = Math.min(PATH_FROM, PATH_TO);
         let path_max = Math.max(PATH_FROM, PATH_TO);
 
-        for (let i = (path_min-1); i < (path_max+1); i += 2)
-            drawImg(
-                /* axis */ AXIS_FLAT,
-                /* x, y */ i, 0,
-                /* size */ 2.5,
-                /* img  */ ATLAS_DOOR
-            );
+        {
+            let planks_min = Math.min(PATH_FROM, PATH_TO)-3.5;
+            let planks_max = Math.max(PATH_FROM, PATH_TO)+2.5;
+
+            /*
+            let last = catmull(points[0], points[1], points[2], points[3], 0);
+            for (let i = 0; i < (SEGMENTS + 1); i++) {
+                const t = i / SEGMENTS;
+
+                const p = catmull(points[0], points[1], points[2], points[3], t);
+                line(last, p, 5, "pink");
+                last = p;
+            }
+             */
+
+            const control0 = [planks_min - 5,
+                                         + 5];
+            const control1 = [planks_max + 5,
+                                         + 5];
+            const start = [planks_min, 0];
+            const end   = [planks_max, 0];
+            const arg = { p0: control0, p1: start, p2: end, p3: control1, alpha: 0.6 };
+            const catmull_pts = catmull_uniformly_spaced(arg, 3.6);
+
+            let last;
+            for (const p of catmull_pts) {
+                if (!last) {
+                    last = p;
+                    continue;
+                }
+                pushImgUV(ATLAS_DOOR);
+
+                const size = 2.5;
+
+                let x0 = last[0];
+                let z0 = last[1];
+                let x1 = p   [0];
+                let z1 = p   [1];
+
+                {
+                    let dx = x1 - x0;
+                    let dz = z1 - z0;
+                    const d_len = Math.sqrt(dx*dx + dz*dz);
+                    dx /= d_len;
+                    dz /= d_len;
+
+                    x0 -= dx;
+                    z0 -= dz;
+                    x1 += dx;
+                    z1 += dz;
+                }
+
+                geo.pos.push(x0, -size, z0 + 0.9);
+                geo.pos.push(x1, -size, z1 + 0.9);
+                geo.pos.push(x1,  size, z1 + 0.9);
+                geo.pos.push(x0,  size, z0 + 0.9);
+
+                last[0] = p[0];
+                last[1] = p[1];
+            }
+        }
 
         for (let x = 0; x < 2; x += 1)
             for (let y = -1; y <= 2; y += 2)
                 drawImg(
                     /* axis */ AXIS_UP,
-                    /* x, y */ lerp(path_min-1.5, path_max, x), 1.8*y + 0.5,
+                    /* x, y */ lerp(path_min-1.5, path_max+0.5, x), 1.8*y,
                     /* size */ 1,
                     /* img  */ ATLAS_THREAD
                 );
@@ -615,7 +634,8 @@ requestAnimationFrame(function frame(timestamp) {
     };
 
     {
-        function drawImg(axis, x, y, size, atlas_index, flag=0) {
+        /* don't use this without also pushing a pos; see drawImg */
+        function pushImgUV(atlas_index, flag=0) {
 
             /* generate UVs from atlas_index */
             {
@@ -633,24 +653,6 @@ requestAnimationFrame(function frame(timestamp) {
             /* generate position + index */
             {
                 const vbuf_i = geo.pos.length / 3;
-                switch (axis) {
-                    case (AXIS_FLAT): {
-                        geo.pos.push(x+size, y-size, 0.0);
-                        geo.pos.push(x-size, y-size, 0.0);
-                        geo.pos.push(x-size, y+size, 0.0);
-                        geo.pos.push(x+size, y+size, 0.0);
-                    }; break;
-
-                    case (AXIS_UP): {
-                        const back_x = Math.cos(Math.PI*0.25); /* hard-coded yaw */
-                        const back_y = Math.sin(Math.PI*0.25); /* hard-coded yaw */
-                        geo.pos.push(x+size, y, 0);
-                        geo.pos.push(x-size, y, 0);
-                        geo.pos.push(x-size, y-back_x*size, size + back_y*size);
-                        geo.pos.push(x+size, y-back_x*size, size + back_y*size);
-                    }; break;
-                }
-
 
                 geo.idx.push(
                     vbuf_i + 0,
@@ -662,6 +664,29 @@ requestAnimationFrame(function frame(timestamp) {
                 );
             }
         }
+
+        function drawImg(axis, x, y, size, atlas_index, flag=0) {
+            pushImgUV(atlas_index, flag);
+
+            switch (axis) {
+                case (AXIS_FLAT): {
+                    geo.pos.push(x+size, y-size, 0.0);
+                    geo.pos.push(x-size, y-size, 0.0);
+                    geo.pos.push(x-size, y+size, 0.0);
+                    geo.pos.push(x+size, y+size, 0.0);
+                }; break;
+
+                case (AXIS_UP): {
+                    const back_x = Math.cos(Math.PI*0.25); /* hard-coded yaw */
+                    const back_y = Math.sin(Math.PI*0.25); /* hard-coded yaw */
+                    geo.pos.push(x+size, y, 0);
+                    geo.pos.push(x-size, y, 0);
+                    geo.pos.push(x-size, y-back_x*size, size + back_y*size);
+                    geo.pos.push(x+size, y-back_x*size, size + back_y*size);
+                }; break;
+            }
+        }
+
 
         function drawBox(
             min_x, min_y,
@@ -697,8 +722,8 @@ requestAnimationFrame(function frame(timestamp) {
             }
         }
 
-        do_platform('draw', { drawBox, drawImg });
-        if (0) drawImg(
+        do_platform('draw', { geo, pushImgUV, drawImg, drawBox });
+        drawImg(
             AXIS_UP,
             save.player.x,
             save.player.y,
@@ -967,6 +992,146 @@ function mat4_invert(out, a) {
     out[15] = (a20 * b03 - a21 * b01 + a22 * b00) * det;
     return out;
 }
+
+function catmull(p0, p1, p2, p3, t, alpha=0.5) {
+  function get_t(t, alpha, p0, p1) {
+    const dx = p1[0] - p0[0];
+    const dy = p1[1] - p0[1];
+    const a = dx*dx + dy*dy; /* dot product */
+    const b = Math.pow(a, alpha*0.5);
+    return (b + t);
+  }
+
+  const t0 = 0.0;
+  const t1 = get_t(t0, alpha, p0, p1);
+  const t2 = get_t(t1, alpha, p1, p2);
+  const t3 = get_t(t2, alpha, p2, p3);
+  t = lerp(t1, t2, t);
+
+  const A1_x = (t1 - t)/(t1 - t0)*p0[0] + (t - t0)/(t1 - t0)*p1[0];
+  const A1_y = (t1 - t)/(t1 - t0)*p0[1] + (t - t0)/(t1 - t0)*p1[1];
+
+  const A2_x = (t2 - t)/(t2 - t1)*p1[0] + (t - t1)/(t2 - t1)*p2[0];
+  const A2_y = (t2 - t)/(t2 - t1)*p1[1] + (t - t1)/(t2 - t1)*p2[1];
+
+  const A3_x = (t3 - t)/(t3 - t2)*p2[0] + (t - t2)/(t3 - t2)*p3[0];
+  const A3_y = (t3 - t)/(t3 - t2)*p2[1] + (t - t2)/(t3 - t2)*p3[1];
+
+  const B1_x = (t2 - t)/(t2 - t0)*A1_x + (t - t0)/(t2 - t0)*A2_x;
+  const B1_y = (t2 - t)/(t2 - t0)*A1_y + (t - t0)/(t2 - t0)*A2_y;
+
+  const B2_x = (t3 - t)/(t3 - t1)*A2_x + (t - t1)/(t3 - t1)*A3_x;
+  const B2_y = (t3 - t)/(t3 - t1)*A2_y + (t - t1)/(t3 - t1)*A3_y;
+
+  const C_x  = (t2 - t)/(t2 - t1)*B1_x + (t - t1)/(t2 - t1)*B2_x;
+  const C_y  = (t2 - t)/(t2 - t1)*B1_y + (t - t1)/(t2 - t1)*B2_y;
+
+  return [C_x, C_y];
+}
+
+function catmull_uniformly_spaced(catmull_args, desired_spacing) {
+    catmull_args.alpha ??= 0.5;
+    const { p0, p1, p2, p3, t, alpha } = catmull_args;
+
+    const TABLE_SEGMENTS = 100;
+
+    const arc_len_table = Array.from({ length: TABLE_SEGMENTS }, _ => 0);
+    let last = catmull(p0, p1, p2, p3, 0);
+    for (let last_len = 0, i = 0; i < (TABLE_SEGMENTS + 1); i++) {
+        const t = i / TABLE_SEGMENTS;
+
+        const p = catmull(p0, p1, p2, p3, t);
+        const len = Math.sqrt((p[0] - last[0])*(p[0] - last[0]) +
+                              (p[1] - last[1])*(p[1] - last[1]));
+        arc_len_table[i] = last_len + len;
+        last_len = len;
+    }
+    const arc_len_of_t = t => lerp(
+        arc_len_table[Math.floor(t * TABLE_SEGMENTS)],
+        arc_len_table[Math. ceil(t * TABLE_SEGMENTS)],
+        (t * TABLE_SEGMENTS) - Math.floor(t * TABLE_SEGMENTS)
+    );
+
+    let spacing, can_fit;
+    {
+        const total_space = arc_len_table[arc_len_table.length - 1];
+        can_fit = Math.floor(total_space / desired_spacing);
+        spacing = total_space / can_fit;
+    }
+    const pad = desired_spacing - spacing;
+
+    const evenly_spaced = [];
+
+    let last_t = 0;
+    for (let i = 1; i < can_fit; i++) {
+        const desired_arc_len = i * spacing + pad/2;
+
+        let min = last_t;
+        let max = 1;
+        let mid;
+        for (let i = 0; i < 4096; i++) {
+            mid = lerp(min, max, 0.5);
+            const mid_arc_len = arc_len_of_t(mid);
+
+            if (desired_arc_len < mid_arc_len) {
+                max = mid;
+            } else {
+                min = mid;
+            }
+
+            if (Math.abs(mid_arc_len - desired_arc_len) < 0.01)
+                break;
+        }
+        last_t = mid;
+
+        evenly_spaced.push(catmull(p0, p1, p2, p3, mid, alpha));
+    }
+
+    return evenly_spaced;
+}
+
+/* sauce: https://iquilezles.org/articles/distfunctions2d/ */
+function sd_segment(p, a_x, a_y, b_x, b_y) {
+    const pa_x = p.x-a_x;
+    const pa_y = p.y-a_y;
+    const ba_x = b_x-a_x;
+    const ba_y = b_y-a_y;
+
+    let h = (pa_x*ba_x+pa_y*ba_y)/(ba_x*ba_x+ba_y*ba_y)
+    h = Math.max(0, h);
+    h = Math.min(1, h);
+
+    const dx = pa_x - ba_x*h;
+    const dy = pa_y - ba_y*h;
+    return Math.sqrt(dx*dx + dy*dy);
+}
+
+/* 
+ * I somehow translated this to JS wrong.
+ *
+ * function sd_oriented_box(p, a_x, a_y, b_x, b_y, th) {
+ *     const l = Math.sqrt((b_x - a_x)*(b_x - a_x) +
+ *                         (b_y - a_y)*(b_y - a_y));
+ *     const d_x = (b_x-a_x)/l;
+ *     const d_y = (b_y-a_y)/l;
+
+ *     let q_x = p.x - (a_x+b_x)*0.5;
+ *     let q_y = p.y - (a_y+b_y)*0.5;
+
+ *     {
+ *         let x = q_x, y = a_y;
+ *         q_x = d_x*x + -d_y*y;
+ *         q_y = d_y*x +  d_x*y;
+ *     }
+
+ *     q_x = Math.abs(q_x)- l*0.5;
+ *     q_y = Math.abs(q_y)-th*0.5;
+
+ *     const _q_x = Math.max(q_x, 0);
+ *     const _q_y = Math.max(q_y, 0);
+ *     return Math.sqrt(_q_x*_q_x + _q_y*_q_y) + Math.min(Math.max(q_x,q_y), 0.0);
+ * }
+ */
 
 function inv_lerp(min, max, p) { return (p - min) / (max - min); }
 function lerp(v0, v1, t) { return (1 - t) * v0 + t * v1; }

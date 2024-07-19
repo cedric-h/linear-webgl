@@ -246,6 +246,8 @@ requestAnimationFrame(function render(now) {
       last = catmull(points[0], points[1], points[2], points[3], 0);
       dot(last, 5, "pink");
 
+      const evenly_spaced = [last];
+
       let last_t = 0;
       for (let i = 1; i < (DRAWN_SEGMENTS + 1); i++) {
         const desired_arc_len = (i / DRAWN_SEGMENTS) * arc_len_table[arc_len_table.length - 1];
@@ -266,12 +268,15 @@ requestAnimationFrame(function render(now) {
           if (Math.abs(mid_arc_len - desired_arc_len) < 0.01)
             break;
         }
+        last_t = mid;
 
-        const p = catmull(points[0], points[1], points[2], points[3], mid);
-        dot(p, 5, "pink");
-        line(last, p, 5, "pink");
-        last = p;
+        evenly_spaced.push(catmull(points[0], points[1], points[2], points[3], mid));
+        dot(evenly_spaced[evenly_spaced.length - 1], 5, "pink");
       }
+
+      for (let i = 1; i < evenly_spaced.length; i++)
+        line(evenly_spaced[i - 1], evenly_spaced[i], 5, "purple");
+
     }; break;
 
   }
