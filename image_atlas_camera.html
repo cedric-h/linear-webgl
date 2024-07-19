@@ -49,8 +49,8 @@ const SHADER_FLAG_GREENIFY = 1;
 
 
 /* used especially in the rendering functions */
-const AXIS_FLAT = 0;
-const AXIS_UP   = 1;
+const AXIS_FLAT   = 0;
+const AXIS_SPRITE = 1; /* up, but tilted back slightly to face camera */
 
 
 const ATLAS_CHARS = [];
@@ -333,33 +333,59 @@ function do_platform(method, arg) {
 
     const PATH_FROM = -10;
     const PATH_TO   = -30;
-    // const PATH_FROM =  10;
-    // const PATH_TO   = -10;
+
+    let min_dist = Infinity;
+
+    let circle = () => {};
+    if (method == 'draw'     ) circle = (x, y, size) => arg.drawImg(AXIS_FLAT, x, y, size, ATLAS_MOON, SHADER_FLAG_GREENIFY);
+    if (method == 'collision') circle = (x, y, size) => {
+        const dx = arg.x - x;
+        const dy = arg.y - y;
+        min_dist = Math.min(min_dist, Math.sqrt(dx*dx + dy*dy) - size*0.7);
+    }
+
+    /*      x,  y,  size */
+    circle( 2,  3,     7.0);
+    circle(-4,  0,     8.5);
+    circle( 2,- 3,     9.0);
+
+    circle(PATH_TO - 5.8,  0,     5);
+
+    const walkway_dist = (method == 'collision' || method == 'heightmap') && sd_segment(
+        arg,
+        PATH_FROM + 0, 0,
+        PATH_TO   - 2, 0
+    ) - 1.5;
+    min_dist = Math.min(min_dist, walkway_dist);
 
     if (method == 'collision') {
-        const pos = arg;
-
-        let min_dist = Math.sqrt(pos.x*pos.x + pos.y*pos.y) - PLATFORM_SIZE;
-        min_dist = Math.min(min_dist, sd_segment(
-            pos,
-            PATH_FROM, 0,
-            PATH_TO  , 0
-        ) - 1.5);
-
         return min_dist;
+    }
+
+    if (method == 'heightmap') {
+        if (walkway_dist > 0) return 0;
+
+        let planks_min = Math.min(PATH_FROM, PATH_TO)-3.5;
+        let planks_max = Math.max(PATH_FROM, PATH_TO)+2.5;
+        const player_t = inv_lerp(planks_min, planks_max, arg.x);
+        let ramp;
+        if (player_t > 0.5) ramp = Math.max(0, Math.min(1, inv_lerp(0 + 0.95, 0 + 0.85, player_t)));
+        else                ramp = Math.max(0, Math.min(1, inv_lerp(1 - 0.95, 1 - 0.85, player_t)));
+
+        const control0 = [planks_min - 5, 5 + 30*(0 + player_t)];
+        const control1 = [planks_max + 5, 5 + 30*(1 - player_t)];
+        const start = [planks_min, 0];
+        const end   = [planks_max, 0];
+        return ramp*(1.0 + catmull(control0, start, end, control1, player_t, 0.6)[1]);
     }
 
     if (method == 'draw') {
         const { geo, pushImgUV, drawImg } = arg;
 
-        drawImg(AXIS_FLAT,  2,  3,  7, ATLAS_MOON, SHADER_FLAG_GREENIFY);
-        drawImg(AXIS_FLAT, -4,  0,  8, ATLAS_MOON, SHADER_FLAG_GREENIFY);
-        drawImg(AXIS_FLAT,  2,- 3,  9, ATLAS_MOON, SHADER_FLAG_GREENIFY);
-
-        drawImg(AXIS_UP, -5, -3,  2.0, ATLAS_TREE);
-        drawImg(AXIS_UP,  2, -5,  4.0, ATLAS_TREE);
-        drawImg(AXIS_UP,  2,  7,  1.0, ATLAS_BAMBOO);
-        drawImg(AXIS_UP,  4,  5,  1.2, ATLAS_BAMBOO);
+        drawImg(AXIS_SPRITE, -5, -3,  2.0, ATLAS_TREE);
+        drawImg(AXIS_SPRITE,  2, -5,  4.0, ATLAS_TREE);
+        drawImg(AXIS_SPRITE,  2,  7,  1.0, ATLAS_BAMBOO);
+        drawImg(AXIS_SPRITE,  4,  5,  1.2, ATLAS_BAMBOO);
 
         let path_min = Math.min(PATH_FROM, PATH_TO);
         let path_max = Math.max(PATH_FROM, PATH_TO);
@@ -367,22 +393,11 @@ function do_platform(method, arg) {
         {
             let planks_min = Math.min(PATH_FROM, PATH_TO)-3.5;
             let planks_max = Math.max(PATH_FROM, PATH_TO)+2.5;
+            let player_t = inv_lerp(planks_min, planks_max, save.player.x);
+            player_t = Math.min(1, Math.max(0, player_t));
 
-            /*
-            let last = catmull(points[0], points[1], points[2], points[3], 0);
-            for (let i = 0; i < (SEGMENTS + 1); i++) {
-                const t = i / SEGMENTS;
-
-                const p = catmull(points[0], points[1], points[2], points[3], t);
-                line(last, p, 5, "pink");
-                last = p;
-            }
-             */
-
-            const control0 = [planks_min - 5,
-                                         + 5];
-            const control1 = [planks_max + 5,
-                                         + 5];
+            const control0 = [planks_min - 5, 5 + 30*(0 + player_t)];
+            const control1 = [planks_max + 5, 5 + 30*(1 - player_t)];
             const start = [planks_min, 0];
             const end   = [planks_max, 0];
             const arg = { p0: control0, p1: start, p2: end, p3: control1, alpha: 0.6 };
@@ -416,10 +431,10 @@ function do_platform(method, arg) {
                     z1 += dz;
                 }
 
-                geo.pos.push(x0, -size, z0 + 0.9);
-                geo.pos.push(x1, -size, z1 + 0.9);
-                geo.pos.push(x1,  size, z1 + 0.9);
-                geo.pos.push(x0,  size, z0 + 0.9);
+                geo.pos.push(x0, -size, z0 + 1.0);
+                geo.pos.push(x1, -size, z1 + 1.0);
+                geo.pos.push(x1,  size, z1 + 1.0);
+                geo.pos.push(x0,  size, z0 + 1.0);
                 geo.layer.push(-1e6 - (z0 + z1));
                 geo.layer.push(-1e6 - (z0 + z1));
 
@@ -431,7 +446,7 @@ function do_platform(method, arg) {
         for (let x = 0; x < 2; x += 1)
             for (let y = -1; y <= 2; y += 2)
                 drawImg(
-                    /* axis */ AXIS_UP,
+                    /* axis */ AXIS_SPRITE,
                     /* x, y */ lerp(path_min-1.5, path_max+0.5, x), 1.8*y,
                     /* size */ 1,
                     /* img  */ ATLAS_THREAD
@@ -665,6 +680,18 @@ requestAnimationFrame(function frame(timestamp) {
             }
         }
 
+        function pushSpriteXYZ(axis, x, y, z, size) {
+            const back_x = Math.cos(Math.PI*0.25); /* hard-coded yaw */
+            const back_y = Math.sin(Math.PI*0.25); /* hard-coded yaw */
+            geo.pos.push(x+size, y            , z);
+            geo.pos.push(x-size, y            , z);
+            geo.pos.push(x-size, y-back_x*size, z + size + back_y*size);
+            geo.pos.push(x+size, y-back_x*size, z + size + back_y*size);
+
+            geo.layer.push(y);
+            geo.layer.push(y);
+        }
+
         function drawImg(axis, x, y, size, atlas_index, flag=0) {
             pushImgUV(atlas_index, flag);
 
@@ -679,16 +706,8 @@ requestAnimationFrame(function frame(timestamp) {
                     geo.layer.push(-1e6);
                 }; break;
 
-                case (AXIS_UP): {
-                    const back_x = Math.cos(Math.PI*0.25); /* hard-coded yaw */
-                    const back_y = Math.sin(Math.PI*0.25); /* hard-coded yaw */
-                    geo.pos.push(x+size, y, 0);
-                    geo.pos.push(x-size, y, 0);
-                    geo.pos.push(x-size, y-back_x*size, size + back_y*size);
-                    geo.pos.push(x+size, y-back_x*size, size + back_y*size);
-
-                    geo.layer.push(y);
-                    geo.layer.push(y);
+                case (AXIS_SPRITE): {
+                    pushSpriteXYZ(axis, x, y, 0, size);
                 }; break;
             }
 
@@ -696,12 +715,14 @@ requestAnimationFrame(function frame(timestamp) {
 
 
         do_platform('draw', { geo, pushImgUV, drawImg });
-        drawImg(
-            AXIS_UP,
+        const z = do_platform('heightmap', save.player);
+        pushImgUV(ATLAS_NINJA);
+        pushSpriteXYZ(
+            AXIS_SPRITE,
             save.player.x,
             save.player.y,
+            z,
             1,
-            ATLAS_NINJA
         );
     }
 
