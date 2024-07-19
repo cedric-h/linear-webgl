@@ -180,13 +180,87 @@ let input = {
     }, opts);
 }
 
-const geo_vbuf_pos = gl.createBuffer();
-const geo_vbuf_uv  = gl.createBuffer();
-const geo_ibuf     = gl.createBuffer();
+const buf = {
+    geo_v_pos: gl.createBuffer(),
+    geo_v_uv:  gl.createBuffer(),
+    geo_i:     gl.createBuffer(),
+
+    skydome_v_pos: gl.createBuffer(),
+    skydome_v_uv:  gl.createBuffer(),
+    skydome_i:     gl.createBuffer(),
+};
 
 let shaders;
 /* compile shaders */
 {
+
+    const vs_blur = `#version 300 es
+        precision mediump float;
+
+        out vec2 v_texcoord;
+
+        void main(void) {
+            float x = float((gl_VertexID & 1) << 2);
+            float y = float((gl_VertexID & 2) << 1);
+            v_texcoord.x = x * 0.5;
+            v_texcoord.y = y * 0.5;
+            gl_Position = vec4(x - 1.0, y - 1.0, 0, 1);
+        }
+    `;
+
+    const fs_blur = `#version 300 es
+        precision mediump float;
+
+        uniform sampler2D u_texture;
+        uniform vec2 u_direction;
+
+        in vec2 v_texcoord;
+
+        out vec4 frag_color;
+
+        void main(void) {
+            vec2 one_pixel = u_direction*(vec2(1) / vec2(textureSize(u_texture, 0)));
+
+            frag_color = texture(u_texture, v_texcoord) * 0.2270270270;
+
+            frag_color += texture(u_texture, v_texcoord + one_pixel    ) * 0.1945945946;
+            frag_color += texture(u_texture, v_texcoord - one_pixel    ) * 0.1945945946;
+
+            frag_color += texture(u_texture, v_texcoord + one_pixel*2.0) * 0.1216216216;
+            frag_color += texture(u_texture, v_texcoord - one_pixel*2.0) * 0.1216216216;
+
+            frag_color += texture(u_texture, v_texcoord + one_pixel*3.0) * 0.0540540541;
+            frag_color += texture(u_texture, v_texcoord - one_pixel*3.0) * 0.0540540541;
+
+            frag_color += texture(u_texture, v_texcoord + one_pixel*4.0) * 0.0162162162;
+            frag_color += texture(u_texture, v_texcoord - one_pixel*4.0) * 0.0162162162;
+        }
+    `;
+
+    const vs_skydome = 
+        'attribute vec3 a_pos;' +
+        'attribute vec2 a_uv;' +
+
+        'uniform mat4 u_matrix;' +
+
+        'varying vec2 v_uv;' +
+
+        'void main() {' +
+            'gl_Position = u_matrix * vec4(a_pos.xyz, 1);' +
+            'v_uv = a_uv;' +
+        '}';
+
+    const fs_skydome = 
+        'precision mediump float;' +
+
+        'uniform sampler2D u_texture;' +
+
+        'varying vec2 v_uv;' +
+
+        'void main() {' +
+            'gl_FragColor = 0.4 * texture2D(u_texture, v_uv);' +
+        '}';
+
     const vs_geo = `
         uniform mat4 u_matrix;
 
@@ -268,7 +342,9 @@ let shaders;
 
 
     shaders = {
-        geo: createProgram(gl, vs_geo, fs_geo)
+        geo:     createProgram(gl, vs_geo    , fs_geo    ),
+        skydome: createProgram(gl, vs_skydome, fs_skydome),
+        blur:    createProgram(gl, vs_blur   , fs_blur   )
     }
 }
 
@@ -328,6 +404,140 @@ let atlas = gl.createTexture();
     }
 }
 
+let tex_skydome = gl.createTexture();
+let tex_skydome_loaded  = false;
+let tex_skydome_blurred = false;
+(async () => {
+    const img = new Image();
+    img.src = 'garden_hdri.jpg';
+    await new Promise(res => img.onload = res);
+
+    const canvas = document.createElement("canvas");
+    canvas.width  = img.width;
+    canvas.height = img.height;
+    canvas.getContext("2d").drawImage(img, 0, 0);
+
+    gl.bindTexture(gl.TEXTURE_2D, tex_skydome);
+    gl.texImage2D(
+        /* target         */ gl.TEXTURE_2D,
+        /* level          */ 0,
+        /* internalformat */ gl.RGBA,
+        /* width          */ canvas.width,
+        /* height         */ canvas.height,
+        /* border,        */ 0,
+        /* format,        */ gl.RGBA,
+        /* type,          */ gl.UNSIGNED_BYTE,
+        /* data           */ canvas
+    );
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+
+    return;
+    {
+        let render_targets = [
+            { tex: null, fb: null },
+            { tex: null, fb: null },
+        ];
+
+        /* create scene-sized render-target for post-processing fx (like shadows) */
+        for (const target of render_targets) {
+            target.tex = gl.createTexture();
+            gl.bindTexture(gl.TEXTURE_2D, target.tex);
+
+            // define size and format of level 0
+            gl.texImage2D(
+                gl.TEXTURE_2D,
+                /* level,          */ 0,
+                /* internalFormat, */ gl.RGBA,
+                /* width,          */ canvas.width,
+                /* height,         */ canvas.height,
+                /* border,         */ 0,
+                /* format,         */ gl.RGBA,
+                /* type,           */ gl.UNSIGNED_BYTE,
+                /* data            */ null
+            );
+
+            // set the filtering so we don't need mips
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+
+            target.fb = gl.createFramebuffer();
+            gl.bindFramebuffer(gl.FRAMEBUFFER, target.fb);
+            gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, target.tex, 0);
+        }
+
+        gl.deleteTexture(    target.tex);
+        gl.deleteFramebuffer(target.fb );
+    }
+
+    tex_skydome_loaded = true;
+})();
+
+/* generate skydome geometry */
+{
+    const geo_idx = [];
+    const geo_pos = [];
+    const geo_uv  = [];
+    {
+        const WIDTH_SEGMENTS  = 1 << 6;
+        const HEIGHT_SEGMENTS = 1 << 5;
+        const RADIUS          = 100;
+
+        const grid = [];
+        let index = 0;
+        for (let iy = 0; iy <= HEIGHT_SEGMENTS; iy++) {
+            const v = iy / HEIGHT_SEGMENTS;
+
+            /* poles */
+            let u_offset = 0;
+            if (iy == 0              ) u_offset =   0.5 / WIDTH_SEGMENTS;
+            if (iy == HEIGHT_SEGMENTS) u_offset = - 0.5 / WIDTH_SEGMENTS;
+
+            for (let ix = 0; ix <= WIDTH_SEGMENTS; ix++) {
+                const u = ix / WIDTH_SEGMENTS;
+
+                geo_uv.push(u + u_offset, 1 - v);
+
+                geo_pos.push(
+                    RADIUS * -Math.cos(u * Math.PI*2) * Math.sin(v * Math.PI),
+                    RADIUS *  Math.sin(u * Math.PI*2) * Math.sin(v * Math.PI),
+                    RADIUS * -Math.cos(v * Math.PI)
+                );
+
+                grid.push(index++);
+            }
+        }
+
+        for (let iy = 0; iy < HEIGHT_SEGMENTS; iy++) {
+            for (let ix = 0; ix < WIDTH_SEGMENTS; ix++) {
+                const a = grid[(iy    )*(WIDTH_SEGMENTS + 1) + ix + 1];
+                const b = grid[(iy    )*(WIDTH_SEGMENTS + 1) + ix    ];
+                const c = grid[(iy + 1)*(WIDTH_SEGMENTS + 1) + ix    ];
+                const d = grid[(iy + 1)*(WIDTH_SEGMENTS + 1) + ix + 1];
+
+                if (iy !== 0                  ) geo_idx.push(a, b, d);
+                if (iy !== HEIGHT_SEGMENTS - 1) geo_idx.push(b, c, d);
+            }
+        }
+    }
+
+    {
+        gl.bindBuffer(gl.ARRAY_BUFFER, buf.skydome_v_pos);
+        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(geo_pos), gl.STATIC_DRAW);
+
+        gl.bindBuffer(gl.ARRAY_BUFFER, buf.skydome_v_uv);
+        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(geo_uv), gl.STATIC_DRAW);
+
+        gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, buf.skydome_i);
+        gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, new Uint16Array(geo_idx), gl.STATIC_DRAW);
+    }
+
+    buf.skydome_i_count = geo_idx.length;
+}
+
 function do_platform(method, arg) {
     const PLATFORM_SIZE = 11.0;
 
@@ -367,16 +577,16 @@ function do_platform(method, arg) {
 
         let planks_min = Math.min(PATH_FROM, PATH_TO)-3.5;
         let planks_max = Math.max(PATH_FROM, PATH_TO)+2.5;
-        const player_t = inv_lerp(planks_min, planks_max, arg.x);
-        let ramp;
-        if (player_t > 0.5) ramp = Math.max(0, Math.min(1, inv_lerp(0 + 0.95, 0 + 0.85, player_t)));
-        else                ramp = Math.max(0, Math.min(1, inv_lerp(1 - 0.95, 1 - 0.85, player_t)));
+        const player_t = inv_lerp(planks_min+1, planks_max-1, arg.x);
+        let ramp = inv_lerp(planks_min-2, planks_max+2, arg.x);
+        if (player_t > 0.5) ramp = Math.max(0, Math.min(1, inv_lerp(0 + 0.9, 0 + 0.85, ramp)));
+        else                ramp = Math.max(0, Math.min(1, inv_lerp(1 - 0.9, 1 - 0.85, ramp)));
 
         const control0 = [planks_min - 5, 5 + 30*(0 + player_t)];
         const control1 = [planks_max + 5, 5 + 30*(1 - player_t)];
         const start = [planks_min, 0];
         const end   = [planks_max, 0];
-        return ramp*(1.0 + catmull(control0, start, end, control1, player_t, 0.6)[1]);
+        return ramp*(1.4 + catmull(control0, start, end, control1, player_t, 0.6)[1]) - 0.5*ramp;
     }
 
     if (method == 'draw') {
@@ -393,7 +603,7 @@ function do_platform(method, arg) {
         {
             let planks_min = Math.min(PATH_FROM, PATH_TO)-3.5;
             let planks_max = Math.max(PATH_FROM, PATH_TO)+2.5;
-            let player_t = inv_lerp(planks_min, planks_max, save.player.x);
+            let player_t = inv_lerp(planks_min+1, planks_max-1, save.player.x);
             player_t = Math.min(1, Math.max(0, player_t));
 
             const control0 = [planks_min - 5, 5 + 30*(0 + player_t)];
@@ -603,12 +813,34 @@ requestAnimationFrame(function frame(timestamp) {
     }
 
     const ORTHO = false;
-    const vp = mat4_create();
+    const vp         = mat4_create();
+    const vp_skydome = mat4_create();
     const scratch = mat4_create();
     {
         const FIELD_OF_VIEW = 50 / 180 * Math.PI;
         const ar = window.innerWidth / window.innerHeight;
         const projection = mat4_perspective(mat4_create(), FIELD_OF_VIEW, ar, 0.01, 100.0);
+
+        const view_skydome = mat4_create();
+        {
+            const view = view_skydome;
+
+            const eye = [70, 0, 0, 1];
+            {
+                mat4_from_z_rotation(scratch, input.pitch + Math.PI*0.5);
+                mat4_mul(view, view, scratch);
+
+                // mat4_from_y_rotation(scratch, input.yaw + Math.PI*0.12);
+                mat4_from_y_rotation(scratch, input.yaw);
+                mat4_mul(view, view, scratch);
+
+                mat4_transform_vec4(eye, eye, view);
+            }
+
+            mat4_target_to(view, eye, [0, 0, 1], [0, 0, 1]);
+            mat4_invert(view, view);
+        }
+
 
         const view = mat4_create();
         {
@@ -635,6 +867,7 @@ requestAnimationFrame(function frame(timestamp) {
             mat4_invert(view, view);
         }
 
+        mat4_mul(vp_skydome, mat4_perspective(mat4_create(), FIELD_OF_VIEW, ar, 0.01, 10000.0), view_skydome);
         mat4_mul(vp, projection, view);
     }
 
@@ -759,6 +992,35 @@ requestAnimationFrame(function frame(timestamp) {
         gl.clearColor(0, 0, 0, 1);
         gl.clear(gl.DEPTH_BUFFER_BIT | gl.COLOR_BUFFER_BIT);
 
+        /* skydome pass */
+        {
+            gl.useProgram(shaders.skydome.program);
+            gl.enableVertexAttribArray(shaders.skydome.a_pos);
+            gl.enableVertexAttribArray(shaders.skydome.a_uv);
+
+            gl.uniformMatrix4fv(shaders.skydome.u_matrix, false, vp_skydome);
+
+            /* bind tex_skydome */
+            {
+                gl.activeTexture(gl.TEXTURE0);
+                gl.bindTexture(gl.TEXTURE_2D, tex_skydome);
+                gl.uniform1i(shaders.skydome.u_texture, 0);
+            }
+
+            /* bind geometry */
+            {
+                gl.bindBuffer(gl.ARRAY_BUFFER, buf.skydome_v_pos);
+                gl.vertexAttribPointer(shaders.skydome.a_pos, 3, gl.FLOAT, false, 0, 0);
+
+                gl.bindBuffer(gl.ARRAY_BUFFER, buf.skydome_v_uv);
+                gl.vertexAttribPointer(shaders.skydome.a_uv, 2, gl.FLOAT, true, 0, 0);
+
+                gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, buf.skydome_i);
+            }
+
+            gl.drawElements(gl.TRIANGLES, buf.skydome_i_count, gl.UNSIGNED_SHORT, 0);
+        }
+
         /* geo pass */
         {
             gl.useProgram(shaders.geo.program);
@@ -776,15 +1038,15 @@ requestAnimationFrame(function frame(timestamp) {
 
             /* upload/bind geometry */
             {
-                gl.bindBuffer(gl.ARRAY_BUFFER, geo_vbuf_pos);
+                gl.bindBuffer(gl.ARRAY_BUFFER, buf.geo_v_pos);
                 gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(geo.pos), gl.STATIC_DRAW);
                 gl.vertexAttribPointer(shaders.geo.a_pos, 3, gl.FLOAT, false, 0, 0);
 
-                gl.bindBuffer(gl.ARRAY_BUFFER, geo_vbuf_uv);
+                gl.bindBuffer(gl.ARRAY_BUFFER, buf.geo_v_uv);
                 gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(geo.uv), gl.STATIC_DRAW);
                 gl.vertexAttribPointer(shaders.geo.a_uv, 3, gl.FLOAT, false, 0, 0);
 
-                gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, geo_ibuf);
+                gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, buf.geo_i);
                 gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, new Uint16Array(geo.idx), gl.STATIC_DRAW);
             }
 
