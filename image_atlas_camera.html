@@ -80,7 +80,7 @@ let input = {
     keysdown:    new Map(),
     last_action: LAST_ACTION_MOUSE,
 
-    zoom: 30,
+    zoom: 25,
 
     pitch: DEFAULT_PITCH,
     yaw:   DEFAULT_YAW,
@@ -281,6 +281,9 @@ let atlas = gl.createTexture();
 
     const ctx = canvas.getContext("2d");
 
+    let X_FUDGE = 0;
+    if (navigator.userAgentData.platform == "Windows") X_FUDGE = -0.1*EMOJI_SIZE;
+
     {
         const PAD = EMOJI_SIZE*0.1;
         ctx.font = (EMOJI_SIZE - PAD*2) + 'px sans-serif';
@@ -292,7 +295,7 @@ let atlas = gl.createTexture();
 
             ctx.fillText(
                 char,
-                x + PAD,
+                x + PAD + X_FUDGE,
                 y + EMOJI_SIZE - PAD*2
             );
 
@@ -347,7 +350,7 @@ function do_platform(method, arg) {
     }
 
     if (method == 'draw') {
-        const { geo, pushImgUV, drawBox, drawImg } = arg;
+        const { geo, pushImgUV, drawImg } = arg;
 
         drawImg(AXIS_FLAT,  2,  3,  7, ATLAS_MOON, SHADER_FLAG_GREENIFY);
         drawImg(AXIS_FLAT, -4,  0,  8, ATLAS_MOON, SHADER_FLAG_GREENIFY);
@@ -357,14 +360,6 @@ function do_platform(method, arg) {
         drawImg(AXIS_UP,  2, -5,  4.0, ATLAS_TREE);
         drawImg(AXIS_UP,  2,  7,  1.0, ATLAS_BAMBOO);
         drawImg(AXIS_UP,  4,  5,  1.2, ATLAS_BAMBOO);
-
-        // drawBox(
-        //     PATH_FROM, -2,
-        //     PATH_TO  ,  2,
-
-        //     0.1, 0.1, 0.1
-        // );
-
 
         let path_min = Math.min(PATH_FROM, PATH_TO);
         let path_max = Math.max(PATH_FROM, PATH_TO);
@@ -425,6 +420,8 @@ function do_platform(method, arg) {
                 geo.pos.push(x1, -size, z1 + 0.9);
                 geo.pos.push(x1,  size, z1 + 0.9);
                 geo.pos.push(x0,  size, z0 + 0.9);
+                geo.layer.push(-1e6 - (z0 + z1));
+                geo.layer.push(-1e6 - (z0 + z1));
 
                 last[0] = p[0];
                 last[1] = p[1];
@@ -515,7 +512,6 @@ requestAnimationFrame(function frame(timestamp) {
                             const dy = save.player.y - best_vec.y;
                             save.player_vel.x += dx * 0.1;
                             save.player_vel.y += dy * 0.1;
-                            /* try changing p.x/p.y instead of vel here */
                         }
                     }
 
@@ -631,6 +627,10 @@ requestAnimationFrame(function frame(timestamp) {
         idx: [],
         pos: [],
         uv : [],
+
+        /* this isn't uploaded to the GPU, but is used for sorting beforehand.
+         *  per-triangle. */
+        layer: []
     };
 
     {
@@ -674,6 +674,9 @@ requestAnimationFrame(function frame(timestamp) {
                     geo.pos.push(x-size, y-size, 0.0);
                     geo.pos.push(x-size, y+size, 0.0);
                     geo.pos.push(x+size, y+size, 0.0);
+
+                    geo.layer.push(-1e6);
+                    geo.layer.push(-1e6);
                 }; break;
 
                 case (AXIS_UP): {
@@ -683,46 +686,16 @@ requestAnimationFrame(function frame(timestamp) {
                     geo.pos.push(x-size, y, 0);
                     geo.pos.push(x-size, y-back_x*size, size + back_y*size);
                     geo.pos.push(x+size, y-back_x*size, size + back_y*size);
+
+                    geo.layer.push(y);
+                    geo.layer.push(y);
                 }; break;
             }
+
         }
 
 
-        function drawBox(
-            min_x, min_y,
-            max_x, max_y,
-
-            color_r, color_g, color_b
-        ) {
-
-            /* generate UVs from atlas_index */
-            geo.uv.push(
-                color_r, color_g, color_b,
-                color_r, color_g, color_b,
-                color_r, color_g, color_b,
-                color_r, color_g, color_b
-            );
-
-            /* generate position + index */
-            {
-                const vbuf_i = geo.pos.length / 3;
-                geo.pos.push(max_x, min_y, 0.0);
-                geo.pos.push(min_x, min_y, 0.0);
-                geo.pos.push(min_x, max_y, 0.0);
-                geo.pos.push(max_x, max_y, 0.0);
-
-                geo.idx.push(
-                    vbuf_i + 0,
-                    vbuf_i + 1,
-                    vbuf_i + 2,
-                    vbuf_i + 2,
-                    vbuf_i + 3,
-                    vbuf_i + 0
-                );
-            }
-        }
-
-        do_platform('draw', { geo, pushImgUV, drawImg, drawBox });
+        do_platform('draw', { geo, pushImgUV, drawImg });
         drawImg(
             AXIS_UP,
             save.player.x,
@@ -730,6 +703,26 @@ requestAnimationFrame(function frame(timestamp) {
             1,
             ATLAS_NINJA
         );
+    }
+
+    /* there are probably very trivial ways to optimize this */
+    {
+        const tris = [];
+
+        for (let i = 0; i < geo.idx.length; i += 3) {
+            tris.push([
+                [
+                    geo.idx[i + 0],
+                    geo.idx[i + 1],
+                    geo.idx[i + 2]
+                ],
+                geo.layer[i / 3]
+            ]);
+        }
+
+        tris.sort((a, b) => a[1] - b[1]);
+
+        geo.idx = tris.map(x => x[0]).flat();
     }
 
     {
