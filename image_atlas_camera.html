@@ -39,11 +39,6 @@ if (!gl) { alert('Failed to initialize WebGL'); }
     );
 })();
 
-let save = {
-    player:     { x: 0, y: 0 },
-    player_vel: { x: 0, y: 0 },
-};
-
 const SHADER_FLAG_NONE     = 0;
 const SHADER_FLAG_GREENIFY = 1;
 
@@ -57,9 +52,10 @@ const ATLAS_CHARS = [];
 const ATLAS_NINJA   = (ATLAS_CHARS.push('🥷'), ATLAS_CHARS.length - 1);
 const ATLAS_MOON    = (ATLAS_CHARS.push('🌕'), ATLAS_CHARS.length - 1);
 const ATLAS_CLOVER  = (ATLAS_CHARS.push('☘️'),  ATLAS_CHARS.length - 1);
-const ATLAS_BAMBOO  = (ATLAS_CHARS.push('🎋'),  ATLAS_CHARS.length - 1);
-const ATLAS_TREE    = (ATLAS_CHARS.push('🌳'),  ATLAS_CHARS.length - 1);
+const ATLAS_BAMBOO  = (ATLAS_CHARS.push('🎋'), ATLAS_CHARS.length - 1);
+const ATLAS_TREE    = (ATLAS_CHARS.push('🌳'), ATLAS_CHARS.length - 1);
 const ATLAS_KNIFE   = (ATLAS_CHARS.push('🔪'), ATLAS_CHARS.length - 1);
+const ATLAS_CARROT  = (ATLAS_CHARS.push('🥕'), ATLAS_CHARS.length - 1);
 const ATLAS_THREAD  = (ATLAS_CHARS.push('🧵'), ATLAS_CHARS.length - 1);
 const ATLAS_DOOR    = (ATLAS_CHARS.push('🚪'), ATLAS_CHARS.length - 1);
 
@@ -67,6 +63,7 @@ const ATLAS_DOOR    = (ATLAS_CHARS.push('🚪'), ATLAS_CHARS.length - 1);
 const ATLAS_SIZE = Math.ceil(Math.sqrt(ATLAS_CHARS.length)); /* in emoji */
 const EMOJI_SIZE = 1 << 8;
 
+const CAMERA_CONTROLS_ACTIVE = false;
 const LAST_ACTION_KEY   = 0;
 const LAST_ACTION_MOUSE = 1;
 
@@ -95,6 +92,139 @@ let input = {
     rmb_down: false, /* rmb = right mouse button */
     mouse_x:  0,
     mouse_y:  0,
+
+    vp        : mat4_create(),
+    vp_inv    : mat4_create(),
+    vp_skydome: mat4_create(),
+
+    /* writes to the vp matrices  */
+    camera_construct() {
+        const FIELD_OF_VIEW = 50 / 180 * Math.PI;
+        const ar = window.innerWidth / window.innerHeight;
+        const projection = mat4_perspective(mat4_create(), FIELD_OF_VIEW, ar, 0.01, 100.0);
+
+        const view_skydome = mat4_create();
+        {
+            const view = view_skydome;
+
+            const eye = [70, 0, 0, 1];
+            {
+                mat4_from_z_rotation(mat4_scratch, input.pitch + Math.PI*0.5);
+                mat4_mul(view, view, mat4_scratch);
+
+                // mat4_from_y_rotation(scratch, input.yaw + Math.PI*0.12);
+                mat4_from_y_rotation(mat4_scratch, input.yaw);
+                mat4_mul(view, view, mat4_scratch);
+
+                mat4_transform_vec4(eye, eye, view);
+            }
+
+            mat4_target_to(view, eye, [0, 0, 1], [0, 0, 1]);
+            mat4_invert(view, view);
+        }
+
+
+        const view = mat4_create();
+        {
+            const eye = input.eye = [input.zoom, 0, 0, 1];
+            {
+                mat4_from_z_rotation(mat4_scratch, input.pitch);
+                mat4_mul(view, view, mat4_scratch);
+
+                mat4_from_y_rotation(mat4_scratch, input.yaw);
+                mat4_mul(view, view, mat4_scratch);
+
+                mat4_transform_vec4(eye, eye, view);
+            }
+
+            eye[0] += input.cam_pivot_x;
+            eye[1] += input.cam_pivot_y;
+            eye[2] += input.cam_pivot_z;
+            mat4_target_to(
+                view,
+                eye,
+                [input.cam_pivot_x, input.cam_pivot_y, input.cam_pivot_z],
+                [                0,                 0,                 1]
+            );
+            mat4_invert(view, view);
+        }
+
+        mat4_mul(
+            input.vp_skydome,
+            mat4_perspective(mat4_create(), FIELD_OF_VIEW, ar, 0.01, 10000.0),
+            view_skydome
+        );
+        mat4_mul(input.vp, projection, view);
+        mat4_invert(input.vp_inv, input.vp);
+    },
+
+    camera_controls() {
+        const ev = input.dampedEvent;
+
+        /* based on the assumption that if you're zoomed in more,
+         * you're doing finer-detailed work and want more precise movements. */
+        const zoom_fudge = 2;// Math.sqrt(input.zoom/10.0)*2.0;
+
+        if (ev.button == 0) {
+            input.pitch -= ev.movementX * 0.0005 * zoom_fudge;
+            input.yaw   -= ev.movementY * 0.0005 * zoom_fudge;
+            input.yaw = Math.max(-Math.PI*0.5 + 0.01, Math.min(Math.PI*0.5 - 0.01, input.yaw));
+        }
+        if (ev.button == 2) {
+            const unit = [0, -ev.movementX*0.00075*zoom_fudge, ev.movementY*0.00075*zoom_fudge, 1];
+            {
+                const view    = mat4_create();
+                const mat4_scratch = mat4_create();
+
+                mat4_from_z_rotation(mat4_scratch, input.pitch);
+                mat4_mul(view, view, mat4_scratch);
+
+                mat4_from_y_rotation(mat4_scratch, input.yaw);
+                mat4_mul(view, view, mat4_scratch);
+
+                mat4_transform_vec4(unit, unit, view);
+            }
+
+            input.cam_pivot_x += unit[0] * input.zoom/20;
+            input.cam_pivot_y += unit[1] * input.zoom/20;
+            input.cam_pivot_z += unit[2] * input.zoom/20;
+        }
+
+        ev.movementX *= Math.pow(1 - 0.17, 60*delta_time);
+        ev.movementY *= Math.pow(1 - 0.17, 60*delta_time);
+
+        {
+            const t = Math.cbrt(Math.abs(input.scroll)) * Math.sign(input.scroll);
+
+            input.zoom += 0.005*t*input.zoom;
+            input.scroll *= Math.pow(1 - 0.5, 60*delta_time);
+            input.zoom = Math.min(200, input.zoom);
+        }
+    },
+
+    mouse_to_ground(vec=[0, 0, 0, 1]) {
+        const eye = input.eye;
+        vec[0] = -1 + (input.mouse_x / canvas.width )*2;
+        vec[1] = +1 - (input.mouse_y / canvas.height)*2;
+        vec[2] = 1;
+        vec[3] = 1;
+
+        mat4_transform_vec4(vec, vec, input.vp_inv);
+        vec[0] /= vec[3];
+        vec[1] /= vec[3];
+        vec[2] /= vec[3];
+
+        ray_hit_plane(
+            vec,
+                     eye[0],          eye[1],          eye[2], /* ray origin */
+            vec[0] - eye[0], vec[1] - eye[1], vec[2] - eye[2], /* ray vector */
+
+            0, 0, 0, /* plane origin */
+            0, 0, 1  /* plane vector */
+        );
+
+        return vec;
+    }
 };
 
 /* key handling */
@@ -107,6 +237,7 @@ let input = {
     window.addEventListener('keyup',   e => set_key(e.key, false));
 }
 
+/* mouse controls */
 {
     const opts = { passive: false };
 
@@ -119,7 +250,7 @@ let input = {
     window.addEventListener('mousedown', ev => {
         ev.preventDefault();
 
-        input.last_action = LAST_ACTION_MOUSE;
+        if (CAMERA_CONTROLS_ACTIVE) input.last_action = LAST_ACTION_MOUSE;
         input.dampedEvent.button = ev.button ? 2 : 0;
 
         if (ev.button == 0) input.lmb_down = true;
@@ -147,7 +278,7 @@ let input = {
     }, opts);
 }
 
-/* touch */
+/* touch controls */
 {
     const opts = { passive: false };
 
@@ -180,6 +311,7 @@ let input = {
     }, opts);
 }
 
+/* GPU geometry buffers */
 const buf = {
     geo_v_pos: gl.createBuffer(),
     geo_v_uv:  gl.createBuffer(),
@@ -193,7 +325,6 @@ const buf = {
 let shaders;
 /* compile shaders */
 {
-
     const vs_blur = `#version 300 es
         precision mediump float;
 
@@ -257,17 +388,16 @@ let shaders;
 
         'varying vec2 v_uv;' +
 
-        'void main() {' +
-            'gl_FragColor = 0.4 * texture2D(u_texture, v_uv);' +
+        'void main() {' + 'gl_FragColor = 0.4 * texture2D(u_texture, v_uv);' +
         '}';
 
     const vs_geo = `
         uniform mat4 u_matrix;
 
         attribute vec3 a_pos;
-        attribute vec3 a_uv;
+        attribute vec4 a_uv;
 
-        varying vec3 v_uv;
+        varying vec4 v_uv;
 
         void main() {
             gl_Position = u_matrix * vec4(a_pos.xyz, 1);
@@ -279,24 +409,26 @@ let shaders;
 
         uniform sampler2D u_texture;
 
-        varying vec3 v_uv;
+        varying vec4 v_uv;
 
         void main() {
             vec4 color = vec4(0);
             if (v_uv.x < 0.0) {
                 color = texture2D(u_texture, abs(v_uv.xy));
+                color *= v_uv.w;
                 
                 if (v_uv.z == ${SHADER_FLAG_GREENIFY.toFixed(2)}) {
                     color.xyz /= color.w;
                     float gray = 0.21 * color.r + 0.71 * color.g + 0.07 * color.b;
-                    color.xyz = 0.5*gray*vec3(0.7, 1.15, 0.5);
+                    color.xyz = 0.8*gray*vec3(0.58, 0.75, 0.35);
                     color.xyz *= color.w;
                 }
                 
                 if (color.w == 0.0) discard;
             } else {
-                color = vec4(v_uv, 1.0);
+                color = v_uv;
             }
+            // gl_FragColor = vec4(vec3(0.4), 1.0)*color;
             gl_FragColor = color;
         }`;
 
@@ -348,8 +480,8 @@ let shaders;
     }
 }
 
+/* creating spritesheet, uploading to GPU */
 let atlas = gl.createTexture();
-
 {
     const canvas = document.createElement("canvas");
 
@@ -358,7 +490,7 @@ let atlas = gl.createTexture();
     const ctx = canvas.getContext("2d");
 
     let X_FUDGE = 0;
-    if (navigator.userAgentData.platform == "Windows") X_FUDGE = -0.1*EMOJI_SIZE;
+    if (navigator.userAgentData?.platform == "Windows") X_FUDGE = -0.1*EMOJI_SIZE;
 
     {
         const PAD = EMOJI_SIZE*0.1;
@@ -404,6 +536,8 @@ let atlas = gl.createTexture();
     }
 }
 
+/* uploading skydome texture to GPU
+ * TODO: blur it */
 let tex_skydome = gl.createTexture();
 let tex_skydome_loaded  = false;
 let tex_skydome_blurred = false;
@@ -538,176 +672,72 @@ let tex_skydome_blurred = false;
     buf.skydome_i_count = geo_idx.length;
 }
 
-function do_platform(method, arg) {
-    const PLATFORM_SIZE = 11.0;
-
-    const PATH_FROM = -10;
-    const PATH_TO   = -30;
-
-    let min_dist = Infinity;
-
-    let circle = () => {};
-    if (method == 'draw'     ) circle = (x, y, size) => arg.drawImg(AXIS_FLAT, x, y, size, ATLAS_MOON, SHADER_FLAG_GREENIFY);
-    if (method == 'collision') circle = (x, y, size) => {
-        const dx = arg.x - x;
-        const dy = arg.y - y;
-        min_dist = Math.min(min_dist, Math.sqrt(dx*dx + dy*dy) - size*0.7);
-    }
-
-    /*      x,  y,  size */
-    circle( 2,  3,     7.0);
-    circle(-4,  0,     8.5);
-    circle( 2,- 3,     9.0);
-
-    circle(PATH_TO - 5.8,  0,     5);
-
-    const walkway_dist = (method == 'collision' || method == 'heightmap') && sd_segment(
-        arg,
-        PATH_FROM + 0, 0,
-        PATH_TO   - 2, 0
-    ) - 1.5;
-    min_dist = Math.min(min_dist, walkway_dist);
-
-    if (method == 'collision') {
-        return min_dist;
-    }
-
-    if (method == 'heightmap') {
-        if (walkway_dist > 0) return 0;
-
-        let planks_min = Math.min(PATH_FROM, PATH_TO)-3.5;
-        let planks_max = Math.max(PATH_FROM, PATH_TO)+2.5;
-        const player_t = inv_lerp(planks_min+1, planks_max-1, arg.x);
-        let ramp = inv_lerp(planks_min-2, planks_max+2, arg.x);
-        if (player_t > 0.5) ramp = Math.max(0, Math.min(1, inv_lerp(0 + 0.9, 0 + 0.85, ramp)));
-        else                ramp = Math.max(0, Math.min(1, inv_lerp(1 - 0.9, 1 - 0.85, ramp)));
-
-        const control0 = [planks_min - 5, 5 + 30*(0 + player_t)];
-        const control1 = [planks_max + 5, 5 + 30*(1 - player_t)];
-        const start = [planks_min, 0];
-        const end   = [planks_max, 0];
-        return ramp*(1.4 + catmull(control0, start, end, control1, player_t, 0.6)[1]) - 0.5*ramp;
-    }
-
-    if (method == 'draw') {
-        const { geo, pushImgUV, drawImg } = arg;
-
-        drawImg(AXIS_SPRITE, -5, -3,  2.0, ATLAS_TREE);
-        drawImg(AXIS_SPRITE,  2, -5,  4.0, ATLAS_TREE);
-        drawImg(AXIS_SPRITE,  2,  7,  1.0, ATLAS_BAMBOO);
-        drawImg(AXIS_SPRITE,  4,  5,  1.2, ATLAS_BAMBOO);
-
-        let path_min = Math.min(PATH_FROM, PATH_TO);
-        let path_max = Math.max(PATH_FROM, PATH_TO);
-
-        {
-            let planks_min = Math.min(PATH_FROM, PATH_TO)-3.5;
-            let planks_max = Math.max(PATH_FROM, PATH_TO)+2.5;
-            let player_t = inv_lerp(planks_min+1, planks_max-1, save.player.x);
-            player_t = Math.min(1, Math.max(0, player_t));
-
-            const control0 = [planks_min - 5, 5 + 30*(0 + player_t)];
-            const control1 = [planks_max + 5, 5 + 30*(1 - player_t)];
-            const start = [planks_min, 0];
-            const end   = [planks_max, 0];
-            const arg = { p0: control0, p1: start, p2: end, p3: control1, alpha: 0.6 };
-            const catmull_pts = catmull_uniformly_spaced(arg, 3.6);
-
-            let last;
-            for (const p of catmull_pts) {
-                if (!last) {
-                    last = p;
-                    continue;
-                }
-                pushImgUV(ATLAS_DOOR);
-
-                const size = 2.5;
-
-                let x0 = last[0];
-                let z0 = last[1];
-                let x1 = p   [0];
-                let z1 = p   [1];
-
-                {
-                    let dx = x1 - x0;
-                    let dz = z1 - z0;
-                    const d_len = Math.sqrt(dx*dx + dz*dz);
-                    dx /= d_len;
-                    dz /= d_len;
-
-                    x0 -= dx;
-                    z0 -= dz;
-                    x1 += dx;
-                    z1 += dz;
-                }
-
-                geo.pos.push(x0, -size, z0 + 1.0);
-                geo.pos.push(x1, -size, z1 + 1.0);
-                geo.pos.push(x1,  size, z1 + 1.0);
-                geo.pos.push(x0,  size, z0 + 1.0);
-                geo.layer.push(-1e6 - (z0 + z1));
-                geo.layer.push(-1e6 - (z0 + z1));
-
-                last[0] = p[0];
-                last[1] = p[1];
-            }
-        }
-
-        for (let x = 0; x < 2; x += 1)
-            for (let y = -1; y <= 2; y += 2)
-                drawImg(
-                    /* axis */ AXIS_SPRITE,
-                    /* x, y */ lerp(path_min-1.5, path_max+0.5, x), 1.8*y,
-                    /* size */ 1,
-                    /* img  */ ATLAS_THREAD
-                );
-    }
-}
-
+let delta_time;
 let last_timestamp;
-requestAnimationFrame(function frame(timestamp) {
-    requestAnimationFrame(frame);
 
-    timestamp *= 0.001;
-    last_timestamp ??= timestamp;
-    const deltaTime = timestamp - last_timestamp;
-    last_timestamp = timestamp;
+const save = {
 
-    {
-        let movement_x = (input.keysdown.get("a") ?? 0) - (input.keysdown.get("d") ?? 0);
-        let movement_y = (input.keysdown.get("s") ?? 0) - (input.keysdown.get("w") ?? 0);
-        if (Math.abs(movement_x) > 0 || Math.abs(movement_y) > 0) {
-            const movement_len = Math.sqrt(movement_x*movement_x + movement_y*movement_y);
-            movement_x /= movement_len;
-            movement_y /= movement_len;
-        }
-        {
-            save.player_vel.x += movement_x*0.03;
-            save.player_vel.y += movement_y*0.03;
-            save.player_vel.x *= 0.85;
-            save.player_vel.y *= 0.85;
+    player: {
+        pos: { x: 0, y: 0 },
+        vel: { x: 0, y: 0 },
+        wep: false,
+        last_shot_timestamp: 0,
 
-            const p = { x: save.player.x, y: save.player.y };
+        controls_aiming() {
+            if (!save.player.wep) return;
+            if (!input.lmb_down) return;
+            if ((last_timestamp - this.last_shot_timestamp) < 0.5) return;
+
+            const mouse = input.mouse_to_ground();
+
+            this.last_shot_timestamp = last_timestamp;
+            const dx = mouse[0] - save.player.pos.x;
+            const dy = mouse[1] - save.player.pos.y;
+            const angle = Math.atan2(dy, dx);
+            save.bullets.push({
+                pos: { x: this.pos.x, y: this.pos.y },
+                dir: { x: Math.cos(angle), y: Math.sin(angle) },
+                range: 10,
+                speed: 20,
+                sprite: ATLAS_CARROT
+            });
+        },
+
+        controls_movement() {
+            let movement_x = (input.keysdown.get("a") ?? 0) - (input.keysdown.get("d") ?? 0);
+            let movement_y = (input.keysdown.get("s") ?? 0) - (input.keysdown.get("w") ?? 0);
+            if (Math.abs(movement_x) > 0 || Math.abs(movement_y) > 0) {
+                const movement_len = Math.sqrt(movement_x*movement_x + movement_y*movement_y);
+                movement_x /= movement_len;
+                movement_y /= movement_len;
+            }
+
+            save.player.vel.x += movement_x*0.03;
+            save.player.vel.y += movement_y*0.03;
+            save.player.vel.x *= 0.85;
+            save.player.vel.y *= 0.85;
+
+            const p = { x: save.player.pos.x, y: save.player.pos.y };
 
             const SPEED = 0.02;
-            p.x += movement_x*SPEED + save.player_vel.x;
-            p.y += movement_y*SPEED + save.player_vel.y;
+            p.x += movement_x*SPEED + save.player.vel.x;
+            p.y += movement_y*SPEED + save.player.vel.y;
 
             /* platform collision
              * - weird combination of SAT and SDFs */
             {
-                let next_p_x = save.player.x;
-                let next_p_y = save.player.y;
-                const axes = [{ x: save.player.x, y: p.y }, { x: p.x, y: save.player.y }];
+                let next_p_x = save.player.pos.x;
+                let next_p_y = save.player.pos.y;
+                const axes = [{ x: save.player.pos.x, y: p.y }, { x: p.x, y: save.player.pos.y }];
                 for (let i = 0; i < axes.length; i++) {
                     const o = axes[i];
 
                     /* how far you're trying to go */
-                    let moved_dist = Math.sqrt((save.player.x - o.x)*(save.player.x - o.x) +
-                                               (save.player.y - o.y)*(save.player.y - o.y));
+                    let moved_dist = Math.sqrt((save.player.pos.x - o.x)*(save.player.pos.x - o.x) +
+                                               (save.player.pos.y - o.y)*(save.player.pos.y - o.y));
 
                     /* how far you can go w/o hitting something */
-                    let max_dist = do_platform('collision', o);
+                    let max_dist = save.platform.collision(o);
 
                     const min = Math.min(-max_dist, moved_dist);
 
@@ -720,11 +750,11 @@ requestAnimationFrame(function frame(timestamp) {
                         for (let j = 0; j < 2; j++) {
                             const perp = axes[j];
                             const perp_backwards = {
-                                x: save.player.x - (perp.x - save.player.x),
-                                y: save.player.y - (perp.y - save.player.y)
+                                x: save.player.pos.x - (perp.x - save.player.pos.x),
+                                y: save.player.pos.y - (perp.y - save.player.pos.y)
                             };
                             for (const p of [perp, perp_backwards]) {
-                                const dist = do_platform('collision', p);
+                                const dist = save.platform.collision(p);
                                 if (dist < best_vec_dist) {
                                     best_vec_dist = dist;
                                     best_vec = p;
@@ -733,15 +763,15 @@ requestAnimationFrame(function frame(timestamp) {
                         }
 
                         if (best_vec) {
-                            const dx = save.player.x - best_vec.x;
-                            const dy = save.player.y - best_vec.y;
-                            save.player_vel.x += dx * 0.1;
-                            save.player_vel.y += dy * 0.1;
+                            const dx = save.player.pos.x - best_vec.x;
+                            const dy = save.player.pos.y - best_vec.y;
+                            save.player.vel.x += dx * 0.1;
+                            save.player.vel.y += dy * 0.1;
                         }
                     }
 
-                    let dx = o.x - save.player.x;
-                    let dy = o.y - save.player.y;
+                    let dx = o.x - save.player.pos.x;
+                    let dy = o.y - save.player.pos.y;
 
                     if (Math.abs(dx) > 0 || Math.abs(dy) > 0) {
                         const d_len = Math.sqrt(dx*dx + dy*dy);
@@ -752,125 +782,294 @@ requestAnimationFrame(function frame(timestamp) {
                         next_p_y += dy*min;
                     }
                 }
-                save.player.x = next_p_x;
-                save.player.y = next_p_y;
+                save.player.pos.x = next_p_x;
+                save.player.pos.y = next_p_y;
             }
 
             if (input.last_action == LAST_ACTION_KEY) {
-                const t = Math.pow(1 - 0.95, 60*deltaTime);
-                input.cam_pivot_x = lerp(input.cam_pivot_x, save.player.x, t);
-                input.cam_pivot_y = lerp(input.cam_pivot_y, save.player.y, t);
+                const t = Math.pow(1 - 0.95, 60*delta_time);
+                input.cam_pivot_x = lerp(input.cam_pivot_x, save.player.pos.x, t);
+                input.cam_pivot_y = lerp(input.cam_pivot_y, save.player.pos.y, t);
 
                 input.pitch = lerp(input.pitch, DEFAULT_PITCH, t);
                 input.yaw   = lerp(input.yaw  , DEFAULT_YAW,   t);
             }
-
         }
-    }
+    },
 
-    {
-        const ev = input.dampedEvent;
+    bullets: [],
+    bullet: {
+        update(bullets) {
+            for (let i = 0; i < bullets.length; i++) {
+                const bullet = bullets[i];
 
-        /* based on the assumption that if you're zoomed in more,
-         * you're doing finer-detailed work and want more precise movements. */
-        const zoom_fudge = 2;// Math.sqrt(input.zoom/10.0)*2.0;
+                bullet.pos.x += bullet.speed * bullet.dir.x * delta_time;
+                bullet.pos.y += bullet.speed * bullet.dir.y * delta_time;
+                bullet.range -= bullet.speed * delta_time;
 
-        if (ev.button == 0) {
-            input.pitch -= ev.movementX * 0.0005 * zoom_fudge;
-            input.yaw   -= ev.movementY * 0.0005 * zoom_fudge;
-            input.yaw = Math.max(-Math.PI*0.5 + 0.01, Math.min(Math.PI*0.5 - 0.01, input.yaw));
-        }
-        if (ev.button == 2) {
-            const unit = [0, -ev.movementX*0.00075*zoom_fudge, ev.movementY*0.00075*zoom_fudge, 1];
-            {
-                const view    = mat4_create();
-                const scratch = mat4_create();
-
-                mat4_from_z_rotation(scratch, input.pitch);
-                mat4_mul(view, view, scratch);
-
-                mat4_from_y_rotation(scratch, input.yaw);
-                mat4_mul(view, view, scratch);
-
-                mat4_transform_vec4(unit, unit, view);
+                if (bullet.range < 0) bullets.splice(i--, 1);
             }
-
-            input.cam_pivot_x += unit[0];
-            input.cam_pivot_y += unit[1];
-            input.cam_pivot_z += unit[2];
-        }
-
-        ev.movementX *= Math.pow(1 - 0.17, 60*deltaTime);
-        ev.movementY *= Math.pow(1 - 0.17, 60*deltaTime);
-
-        {
-            const t = Math.cbrt(Math.abs(input.scroll)) * Math.sign(input.scroll);
-
-            input.zoom += 0.005*t*input.zoom;
-            input.scroll *= Math.pow(1 - 0.5, 60*deltaTime);
-            input.zoom = Math.min(200, input.zoom);
-        }
-    }
-
-    const ORTHO = false;
-    const vp         = mat4_create();
-    const vp_skydome = mat4_create();
-    const scratch = mat4_create();
-    {
-        const FIELD_OF_VIEW = 50 / 180 * Math.PI;
-        const ar = window.innerWidth / window.innerHeight;
-        const projection = mat4_perspective(mat4_create(), FIELD_OF_VIEW, ar, 0.01, 100.0);
-
-        const view_skydome = mat4_create();
-        {
-            const view = view_skydome;
-
-            const eye = [70, 0, 0, 1];
-            {
-                mat4_from_z_rotation(scratch, input.pitch + Math.PI*0.5);
-                mat4_mul(view, view, scratch);
-
-                // mat4_from_y_rotation(scratch, input.yaw + Math.PI*0.12);
-                mat4_from_y_rotation(scratch, input.yaw);
-                mat4_mul(view, view, scratch);
-
-                mat4_transform_vec4(eye, eye, view);
-            }
-
-            mat4_target_to(view, eye, [0, 0, 1], [0, 0, 1]);
-            mat4_invert(view, view);
-        }
-
-
-        const view = mat4_create();
-        {
-            const eye = input.eye = [input.zoom, 0, 0, 1];
-            {
-                mat4_from_z_rotation(scratch, input.pitch);
-                mat4_mul(view, view, scratch);
-
-                mat4_from_y_rotation(scratch, input.yaw);
-                mat4_mul(view, view, scratch);
-
-                mat4_transform_vec4(eye, eye, view);
-            }
-
-            eye[0] += input.cam_pivot_x;
-            eye[1] += input.cam_pivot_y;
-            eye[2] += input.cam_pivot_z;
-            mat4_target_to(
-                view,
-                eye,
-                [input.cam_pivot_x, input.cam_pivot_y, input.cam_pivot_z],
-                [                0,                 0,                 1]
+        },
+        
+        draw({ pushImgUV, pushFlatXYZ }, bullet) {
+            pushImgUV(bullet.sprite, 0, unit_clamp(inv_lerp(0.0, 1.5, bullet.range)));
+            pushFlatXYZ(
+                bullet.pos.x,
+                bullet.pos.y,
+                1,
+                1,
+                (-last_timestamp * 10) % (Math.PI*2)
             );
-            mat4_invert(view, view);
         }
+    },
 
-        mat4_mul(vp_skydome, mat4_perspective(mat4_create(), FIELD_OF_VIEW, ar, 0.01, 10000.0), view_skydome);
-        mat4_mul(vp, projection, view);
-    }
+    platform: {
+        PICKUP_X: -65.8,
+        PICKUP_Y: 0,
+        pickup_get: false,
 
+        for_circles(circle) {
+            /*      x,  y,  size */
+            circle(  2.0,   3.0,     7.0);
+            circle( -4.0,   0.0,     8.5);
+            circle(  2.0,  -3.0,     9.0);
+
+            circle(-35.8,   0.0,     6.5);
+            circle(-65.8,   0.0,     6.5);
+
+            /* enemy platforms */
+            circle(-25.0, -15.0,     6.5);
+            circle(-45.0,  12.5,     6.5);
+        },
+
+        for_enemies(enemy) {
+            enemy(-25.0, -15.0);
+            enemy(-45.0,  12.5);
+        },
+
+        for_bridges(bridge) {
+            bridge({ path_from: -10, path_to: -30 });
+            bridge({ path_from: -40, path_to: -60 });
+        },
+
+        draw(ctx) {
+            const { drawImg } = ctx;
+
+            this.for_circles((x, y, size) => {
+                drawImg(
+                    AXIS_FLAT,
+                    x, y,
+                    size * 0.9,
+                    ATLAS_MOON,
+                    SHADER_FLAG_GREENIFY
+                );
+            });
+
+            this.for_enemies((enemy_x, enemy_y) => {
+                drawImg(AXIS_SPRITE, enemy_x, enemy_y, 1, ATLAS_NINJA);
+            });
+
+            drawImg(AXIS_SPRITE, -5, -3,  2.0, ATLAS_TREE);
+            drawImg(AXIS_SPRITE,  2, -5,  4.0, ATLAS_TREE);
+            drawImg(AXIS_SPRITE,  2,  7,  1.0, ATLAS_BAMBOO);
+            drawImg(AXIS_SPRITE,  4,  5,  1.2, ATLAS_BAMBOO);
+
+            if (!this.pickup_get)
+                drawImg(
+                    AXIS_SPRITE,
+                    this.PICKUP_X,
+                    this.PICKUP_Y + 0.2 + 0.2*Math.sin(last_timestamp*3),
+                    1.2,
+                    ATLAS_CARROT
+                );
+
+            this.for_bridges((bridge) => {
+                this.bridge.draw(bridge, ctx);
+            });
+        },
+
+        collision(pos) {
+            let min_dist = Infinity;
+
+            this.for_circles((x, y, size) => {
+                const dx = pos.x - x;
+                const dy = pos.y - y;
+                min_dist = Math.min(min_dist, Math.sqrt(dx*dx + dy*dy) - size*0.7);
+            });
+
+            this.for_bridges((bridge) => {
+                min_dist = Math.min(min_dist, this.bridge.distance(bridge, pos));
+            });
+
+            return min_dist;
+        },
+
+        heightmap(p) {
+            let height = Infinity;
+
+            this.for_bridges((bridge) => {
+                const bridge_height = Math.min(0, 0.5 + this.bridge.height_at(bridge, p));
+                height = Math.min(height, bridge_height);
+            });
+
+            return height;
+        },
+
+        bridge: {
+            PLANK_SPACING: 3.6,
+            BENDYNESS    : 0.4,
+
+            plank_points(bridge) {
+                let planks_min = Math.min(bridge.path_from, bridge.path_to)-3.5;
+                let planks_max = Math.max(bridge.path_from, bridge.path_to)+2.5;
+                let player_t = inv_lerp(planks_min+1, planks_max-1, save.player.pos.x);
+                player_t = Math.min(1, Math.max(0, player_t));
+
+                const control0 = [planks_min - 5, 5 + 30*(0 + player_t)];
+                const control1 = [planks_max + 5, 5 + 30*(1 - player_t)];
+                const start = [planks_min, 0];
+                const end   = [planks_max, 0];
+                const arg = { p0: control0, p1: start, p2: end, p3: control1, alpha: this.BENDYNESS };
+
+                return catmull_uniformly_spaced(arg, this.PLANK_SPACING);
+            },
+
+            height_at(bridge, p) {
+                let planks_min = Math.min(bridge.path_from, bridge.path_to)-3.5;
+                let planks_max = Math.max(bridge.path_from, bridge.path_to)+2.5;
+                let player_t = inv_lerp(planks_min+1, planks_max-1, p.x);
+                player_t = Math.min(1, Math.max(0, player_t));
+
+                const control0 = [planks_min - 5, 5 + 30*(0 + player_t)];
+                const control1 = [planks_max + 5, 5 + 30*(1 - player_t)];
+                const start = [planks_min, 0];
+                const end   = [planks_max, 0];
+                return catmull(control0, start, end, control1, player_t, this.BENDYNESS)[1];
+            },
+
+            /* distance from point to bridge */
+            distance(bridge, p) {
+                return sd_segment(
+                    p,
+                    bridge.path_from + 0, 0,
+                    bridge.path_to   - 2, 0
+                ) - 1.5;
+            },
+
+            draw(bridge, ctx) {
+                const { geo, pushImgUV, drawImg } = ctx;
+
+                let path_min = Math.min(bridge.path_from, bridge.path_to);
+                let path_max = Math.max(bridge.path_from, bridge.path_to);
+
+
+                /* add poles to each end of the bridge */
+                for (let x = 0; x < 2; x += 1)
+                    for (let y = -1; y <= 2; y += 2)
+                        drawImg(
+                            /* axis */ AXIS_SPRITE,
+                            /* x, y */ lerp(path_min-1.5, path_max+0.5, x), 1.8*y,
+                            /* size */ 1,
+                            /* img  */ ATLAS_THREAD
+                        );
+
+                /* draw the planks */
+                {
+                    let last;
+                    for (const p of this.plank_points(bridge)) {
+                        if (!last) {
+                            last = p;
+                            continue;
+                        }
+                        pushImgUV(ATLAS_DOOR);
+
+                        const size = 2.5;
+
+                        let x0 = last[0];
+                        let z0 = last[1];
+                        let x1 = p   [0];
+                        let z1 = p   [1];
+
+                        /* we need to "expand" the vector that goes from x0,z0 to z1,x1 because
+                         * the image doesn't fill 100% of the square. (the UVs aren't "tight") */
+                        {
+                            let dx = x1 - x0;
+                            let dz = z1 - z0;
+                            const d_len = Math.sqrt(dx*dx + dz*dz);
+                            dx /= d_len;
+                            dz /= d_len;
+
+                            x0 -= dx;
+                            z0 -= dz;
+                            x1 += dx;
+                            z1 += dz;
+                        }
+
+                        geo.pos.push(x0, -size, z0 + 1.0);
+                        geo.pos.push(x1, -size, z1 + 1.0);
+                        geo.pos.push(x1,  size, z1 + 1.0);
+                        geo.pos.push(x0,  size, z0 + 1.0);
+                        geo.layer.push(-1e6 - (z0 + z1));
+                        geo.layer.push(-1e6 - (z0 + z1));
+
+                        last[0] = p[0];
+                        last[1] = p[1];
+                    }
+                }
+            }
+        },
+
+        update() {
+            let i = 0;
+            this.for_enemies((x, y) => {
+                const t = ~~(last_timestamp / delta_time) % 70;
+
+                if (t == 0) {
+                    const dx = save.player.pos.x - x;
+                    const dy = save.player.pos.y - y;
+                    const angle = Math.atan2(dy, dx);
+                    save.bullets.push({
+                        pos: { x, y },
+                        /* using "sign" instead of "sin" here makes them slightly bad
+                         * at aiming -- good for tutorial */
+                        dir: { x: Math.cos(angle), y: Math.sign(angle) },
+                        range: 25,
+                        speed: 7,
+                        sprite: ATLAS_KNIFE
+                    });
+                }
+            });
+
+            if (!this.pickup_get) {
+                const dx = save.player.pos.x - this.PICKUP_X;
+                const dy = save.player.pos.y - this.PICKUP_Y;
+                const dist = Math.sqrt(dx*dx + dy*dy);
+                if (dist < 0.5) {
+                    this.pickup_get = true;
+                    save.player.wep = true;
+                }
+            }
+        }
+    },
+};
+
+requestAnimationFrame(function frame(timestamp) {
+    requestAnimationFrame(frame);
+
+    timestamp *= 0.001;
+    last_timestamp ??= timestamp;
+    delta_time = timestamp - last_timestamp;
+    last_timestamp = timestamp;
+
+    save.player.controls_movement();
+    save.player.controls_aiming();
+
+    /* click and drag camera controls */
+    if (CAMERA_CONTROLS_ACTIVE) input.camera_controls()
+
+    input.camera_construct();
+
+    /* rendering */
     const geo = {
         idx: [],
         pos: [],
@@ -881,20 +1080,26 @@ requestAnimationFrame(function frame(timestamp) {
         layer: []
     };
 
+    /* filling the geo buffers */
     {
         /* don't use this without also pushing a pos; see drawImg */
-        function pushImgUV(atlas_index, flag=0) {
+        function pushImgUV(atlas_index, flag=0, opacity=1, flip_x=0, flip_y=0) {
 
             /* generate UVs from atlas_index */
             {
                 const u = (           atlas_index % ATLAS_SIZE );
                 const v = (Math.floor(atlas_index / ATLAS_SIZE));
 
+                let min_x = (flip_x) ? 0.99 : 0.01;
+                let max_x = (flip_x) ? 0.01 : 0.99;
+                let min_y = (flip_y) ? 0.99 : 0.01;
+                let max_y = (flip_y) ? 0.01 : 0.99;
+
                 geo.uv.push(
-                    -(u+0.99)/ATLAS_SIZE, -(v+0.99)/ATLAS_SIZE, flag,
-                    -(u+0.01)/ATLAS_SIZE, -(v+0.99)/ATLAS_SIZE, flag,
-                    -(u+0.01)/ATLAS_SIZE, -(v+0.01)/ATLAS_SIZE, flag,
-                    -(u+0.99)/ATLAS_SIZE, -(v+0.01)/ATLAS_SIZE, flag
+                    -(u+max_x)/ATLAS_SIZE, -(v+max_y)/ATLAS_SIZE, flag, opacity,
+                    -(u+min_x)/ATLAS_SIZE, -(v+max_y)/ATLAS_SIZE, flag, opacity,
+                    -(u+min_x)/ATLAS_SIZE, -(v+min_y)/ATLAS_SIZE, flag, opacity,
+                    -(u+max_x)/ATLAS_SIZE, -(v+min_y)/ATLAS_SIZE, flag, opacity
                 );
             }
 
@@ -913,13 +1118,28 @@ requestAnimationFrame(function frame(timestamp) {
             }
         }
 
-        function pushSpriteXYZ(axis, x, y, z, size) {
-            const back_x = Math.cos(Math.PI*0.25); /* hard-coded yaw */
-            const back_y = Math.sin(Math.PI*0.25); /* hard-coded yaw */
-            geo.pos.push(x+size, y            , z);
-            geo.pos.push(x-size, y            , z);
-            geo.pos.push(x-size, y-back_x*size, z + size + back_y*size);
-            geo.pos.push(x+size, y-back_x*size, z + size + back_y*size);
+        function pushFlatXYZ(x, y, z, size, rot) {
+            const rot_x = Math.cos(rot) * size;
+            const rot_z = Math.sin(rot) * size;
+
+            geo.pos.push(x+rot_x, y + rot_z, z);
+            geo.pos.push(x+rot_z, y - rot_x, z);
+            geo.pos.push(x-rot_x, y - rot_z, z);
+            geo.pos.push(x-rot_z, y + rot_x, z);
+
+            geo.layer.push(y);
+            geo.layer.push(y);
+        }
+
+        const back = Math.cos(Math.PI*0.25);
+        function pushSpriteXYZ(x, y, z, size, rot=-Math.PI*0.25) {
+            const center_x = x;
+            const center_z = z + back*size;
+
+            geo.pos.push(center_x+size, y          , center_z - back*size);
+            geo.pos.push(center_x-size, y          , center_z - back*size);
+            geo.pos.push(center_x-size, y-back*size, center_z + back*size);
+            geo.pos.push(center_x+size, y-back*size, center_z + back*size);
 
             geo.layer.push(y);
             geo.layer.push(y);
@@ -940,26 +1160,61 @@ requestAnimationFrame(function frame(timestamp) {
                 }; break;
 
                 case (AXIS_SPRITE): {
-                    pushSpriteXYZ(axis, x, y, 0, size);
+                    pushSpriteXYZ(x, y, 0, size);
                 }; break;
             }
 
         }
 
+        save.bullet.update(save.bullets);
+        save.platform.update();
 
-        do_platform('draw', { geo, pushImgUV, drawImg });
-        const z = do_platform('heightmap', save.player);
-        pushImgUV(ATLAS_NINJA);
-        pushSpriteXYZ(
-            AXIS_SPRITE,
-            save.player.x,
-            save.player.y,
-            z,
-            1,
-        );
+        const ctx = { geo, pushFlatXYZ, pushSpriteXYZ, pushImgUV, drawImg };
+        save.bullets.forEach(b => save.bullet.draw(ctx, b));
+        save.platform.draw(ctx);
+
+        {
+            const z = save.platform.heightmap(save.player.pos);
+            pushImgUV(ATLAS_NINJA);
+            pushSpriteXYZ(
+                save.player.pos.x,
+                save.player.pos.y,
+                z,
+                1,
+            );
+
+            if (save.player.wep) {
+                /* speed is the length of velocity */
+                const vl = Math.sqrt(save.player.vel.x*save.player.vel.x +
+                                     save.player.vel.y*save.player.vel.y);
+                const drag = Math.min(0.07, vl);
+                const breathe = Math.sin(last_timestamp * 80 / 35.0) / 30;
+                const jog = Math.sin(last_timestamp * 80 / 6.85) * Math.min(vl, 0.175);
+
+                const wep_x = 0.55 * + breathe / 3.2 + jog * 1.5 * + drag;
+                const wep_y = (breathe + jog) / 2.8 + drag * 0.5;
+
+                //pushImgUV(ATLAS_KNIFE, 0, 1, 1, 1);
+                pushImgUV(ATLAS_CARROT, 0, 1, 0, 1);
+                // pushSpriteXYZ(
+                //      -0.6 + save.player_pos.x + wep_x,
+                //       0.3 + save.player_pos.y,
+                //       0.9 + z + wep_y,
+                //      -0.4,
+                // );
+
+                pushSpriteXYZ(
+                     save.player.pos.x - 0.5 + wep_x,
+                     save.player.pos.y + 0.1 + wep_y,
+                     z + 0.2,
+                     0.4,
+                );
+            }
+        }
     }
 
-    /* there are probably very trivial ways to optimize this */
+    /* sorting triangles for order-dependent transparency
+     * there are probably very trivial ways to optimize this */
     {
         const tris = [];
 
@@ -979,6 +1234,7 @@ requestAnimationFrame(function frame(timestamp) {
         geo.idx = tris.map(x => x[0]).flat();
     }
 
+    /* submitting geometry to the GPU */
     {
         /* no point in enabling depth since things need to be sorted anyway :thinking: */
         // gl.enable(gl.DEPTH_TEST);
@@ -998,7 +1254,7 @@ requestAnimationFrame(function frame(timestamp) {
             gl.enableVertexAttribArray(shaders.skydome.a_pos);
             gl.enableVertexAttribArray(shaders.skydome.a_uv);
 
-            gl.uniformMatrix4fv(shaders.skydome.u_matrix, false, vp_skydome);
+            gl.uniformMatrix4fv(shaders.skydome.u_matrix, false, input.vp_skydome);
 
             /* bind tex_skydome */
             {
@@ -1027,7 +1283,7 @@ requestAnimationFrame(function frame(timestamp) {
             gl.enableVertexAttribArray(shaders.geo.a_pos);
             gl.enableVertexAttribArray(shaders.geo.a_uv);
 
-            gl.uniformMatrix4fv(shaders.geo.u_matrix, false, vp);
+            gl.uniformMatrix4fv(shaders.geo.u_matrix, false, input.vp);
 
             /* upload/bind atlas */
             {
@@ -1044,7 +1300,7 @@ requestAnimationFrame(function frame(timestamp) {
 
                 gl.bindBuffer(gl.ARRAY_BUFFER, buf.geo_v_uv);
                 gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(geo.uv), gl.STATIC_DRAW);
-                gl.vertexAttribPointer(shaders.geo.a_uv, 3, gl.FLOAT, false, 0, 0);
+                gl.vertexAttribPointer(shaders.geo.a_uv, 4, gl.FLOAT, false, 0, 0);
 
                 gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, buf.geo_i);
                 gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, new Uint16Array(geo.idx), gl.STATIC_DRAW);
@@ -1054,6 +1310,10 @@ requestAnimationFrame(function frame(timestamp) {
         }
     }
 })
+
+/* math utils */
+
+const mat4_scratch = mat4_create();
 
 function mat4_create() {
     let out = new Float32Array(16);
@@ -1312,11 +1572,11 @@ function catmull_uniformly_spaced(catmull_args, desired_spacing) {
     const TABLE_SEGMENTS = 100;
 
     const arc_len_table = Array.from({ length: TABLE_SEGMENTS }, _ => 0);
-    let last = catmull(p0, p1, p2, p3, 0);
+    let last = catmull(p0, p1, p2, p3, 0, alpha);
     for (let last_len = 0, i = 0; i < (TABLE_SEGMENTS + 1); i++) {
         const t = i / TABLE_SEGMENTS;
 
-        const p = catmull(p0, p1, p2, p3, t);
+        const p = catmull(p0, p1, p2, p3, t, alpha);
         const len = Math.sqrt((p[0] - last[0])*(p[0] - last[0]) +
                               (p[1] - last[1])*(p[1] - last[1]));
         arc_len_table[i] = last_len + len;
@@ -1383,7 +1643,10 @@ function sd_segment(p, a_x, a_y, b_x, b_y) {
 }
 
 /* 
- * I somehow translated this to JS wrong.
+ * I somehow translated this from GLSL to JS wrong.
+ *
+ * could debug it by using it in a nested for loop to rasterize an image,
+ * comparing results to the shader.
  *
  * function sd_oriented_box(p, a_x, a_y, b_x, b_y, th) {
  *     const l = Math.sqrt((b_x - a_x)*(b_x - a_x) +
@@ -1409,6 +1672,36 @@ function sd_segment(p, a_x, a_y, b_x, b_y) {
  * }
  */
 
+function ray_hit_plane(
+    out,
+
+    ray_origin_x, ray_origin_y, ray_origin_z,
+    ray_vector_x, ray_vector_y, ray_vector_z,
+
+    plane_origin_x, plane_origin_y, plane_origin_z,
+    plane_vector_x, plane_vector_y, plane_vector_z
+) {
+    const delta_x = plane_origin_x - ray_origin_x;
+    const delta_y = plane_origin_y - ray_origin_y;
+    const delta_z = plane_origin_z - ray_origin_z;
+
+    const ldot = delta_x*plane_vector_x +
+                 delta_y*plane_vector_y +
+                 delta_z*plane_vector_z ;
+
+    const rdot = ray_vector_x*plane_vector_x +
+                 ray_vector_y*plane_vector_y +
+                 ray_vector_z*plane_vector_z ;
+
+    const d = ldot / rdot;
+    out[0] = ray_origin_x + ray_vector_x * d;
+    out[1] = ray_origin_y + ray_vector_y * d;
+    out[2] = ray_origin_z + ray_vector_z * d;
+
+    return out;
+}
+
+function unit_clamp(p) { return Math.max(0, Math.min(1, p)); }
 function inv_lerp(min, max, p) { return (p - min) / (max - min); }
 function lerp(v0, v1, t) { return (1 - t) * v0 + t * v1; }
 function lerp_rads(a, b, t) {
