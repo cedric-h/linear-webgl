@@ -202,7 +202,7 @@ let input = {
         }
     },
 
-    mouse_to_ground(vec=[0, 0, 0, 1]) {
+    mouse_to_ground(height = 0, vec=[0, 0, 0, 1]) {
         const eye = input.eye;
         vec[0] = -1 + (input.mouse_x / canvas.width )*2;
         vec[1] = +1 - (input.mouse_y / canvas.height)*2;
@@ -219,8 +219,8 @@ let input = {
                      eye[0],          eye[1],          eye[2], /* ray origin */
             vec[0] - eye[0], vec[1] - eye[1], vec[2] - eye[2], /* ray vector */
 
-            0, 0, 0, /* plane origin */
-            0, 0, 1  /* plane vector */
+            0, 0, height, /* plane origin */
+            0, 0,      1  /* plane vector */
         );
 
         return vec;
@@ -489,8 +489,8 @@ let atlas = gl.createTexture();
 
     const ctx = canvas.getContext("2d");
 
-    let X_FUDGE = 0;
-    if (navigator.userAgentData?.platform == "Windows") X_FUDGE = -0.1*EMOJI_SIZE;
+    let X_FUDGE = -0.1*EMOJI_SIZE;
+    if (navigator.platform.indexOf("Mac") === 0 || navigator.platform === "iPhone") X_FUDGE = 0;
 
     {
         const PAD = EMOJI_SIZE*0.1;
@@ -688,7 +688,7 @@ const save = {
             if (!input.lmb_down) return;
             if ((last_timestamp - this.last_shot_timestamp) < 0.5) return;
 
-            const mouse = input.mouse_to_ground();
+            const mouse = input.mouse_to_ground(1);
 
             this.last_shot_timestamp = last_timestamp;
             const dx = mouse[0] - save.player.pos.x;
