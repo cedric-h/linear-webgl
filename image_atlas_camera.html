@@ -11,6 +11,8 @@
   <body>
     <canvas id="glcanvas"></canvas>
     <script>
+"use strict";
+
 const canvas = document.getElementById('glcanvas');
 const gl = canvas.getContext('webgl2', {antialias: true});
 const gl_anisotropy =
@@ -69,6 +71,7 @@ const LAST_ACTION_MOUSE = 1;
 
 const DEFAULT_PITCH =  Math.PI*0.50;
 const DEFAULT_YAW   = -Math.PI*0.25;
+const DEFAULT_ZOOM  = 25;
 let input = {
     /* mousewheel input is damped here before ending up in "zoom" */ 
     scroll: 0,
@@ -77,7 +80,7 @@ let input = {
     keysdown:    new Map(),
     last_action: LAST_ACTION_MOUSE,
 
-    zoom: 25,
+    zoom: DEFAULT_ZOOM,
 
     pitch: DEFAULT_PITCH,
     yaw:   DEFAULT_YAW,
@@ -101,7 +104,7 @@ let input = {
     camera_construct() {
         const FIELD_OF_VIEW = 50 / 180 * Math.PI;
         const ar = window.innerWidth / window.innerHeight;
-        const projection = mat4_perspective(mat4_create(), FIELD_OF_VIEW, ar, 0.01, 100.0);
+        const projection = mat4_perspective(mat4_create(), FIELD_OF_VIEW, ar, 0.01, 1000.0);
 
         const view_skydome = mat4_create();
         {
@@ -677,6 +680,8 @@ let last_timestamp;
 
 const save = {
 
+    cutscene_active: false,
+
     player: {
         pos: { x: 0, y: 0 },
         vel: { x: 0, y: 0 },
@@ -827,6 +832,11 @@ const save = {
         PICKUP_X: -65.8,
         PICKUP_Y: 0,
         pickup_get: false,
+        pickup_get_timestamp: null,
+
+        CUTSCENE_CENTER_X: -30,
+        CUTSCENE_CENTER_Y: 0,
+        move_earth_t: 0,
 
         for_circles(circle) {
             /*      x,  y,  size */
@@ -838,18 +848,65 @@ const save = {
             circle(-65.8,   0.0,     6.5);
 
             /* enemy platforms */
-            circle(-25.0, -15.0,     6.5);
-            circle(-45.0,  12.5,     6.5);
+            this.for_enemies((x, y) => circle(x, y, 6.5));
         },
 
         for_enemies(enemy) {
-            enemy(-25.0, -15.0);
-            enemy(-45.0,  12.5);
+            const t = this.move_earth_t;
+            enemy(lerp(-25.0, -34.5, t), lerp(-15.0, -6.5, t));
+            enemy(lerp(-45.0, -37.5, t), lerp( 12.5,  6.5, t));
         },
 
         for_bridges(bridge) {
             bridge({ path_from: -10, path_to: -30 });
             bridge({ path_from: -40, path_to: -60 });
+        },
+
+        camera_animate() {
+            if (this.pickup_get_timestamp == null) return;
+
+            /* we bite off bits of t and assign them to our animations */
+            let t = last_timestamp - this.pickup_get_timestamp;
+            let out_t = 0, back_t = 0;
+            {
+                /* one little pause right after they get the pickup */
+                t -= 1.5;
+
+                const OUT_DURATION = 1;
+                out_t = unit_clamp(t / OUT_DURATION); t -= OUT_DURATION;
+
+                /* small pauses before and after MOVE_EARTH */
+                {
+                    t -= 0.75;
+
+                    const MOVE_EARTH_DURATION = 2;
+                    this.move_earth_t = unit_clamp(t / MOVE_EARTH_DURATION); t -= MOVE_EARTH_DURATION;
+
+                    t -= 2;
+                }
+
+                const BACK_DURATION = 1;
+                back_t = unit_clamp(t / BACK_DURATION); t -= BACK_DURATION;
+
+                /* pause at the end */
+                t -= 0.75;
+            }
+
+            if (out_t > 0) {
+                save.cutscene_active = true;
+
+                input.zoom = lerp(DEFAULT_ZOOM,           70,  out_t);
+                input.zoom = lerp(  input.zoom, DEFAULT_ZOOM, back_t);
+
+                input.cam_pivot_x = lerp(save.player.pos.x, this.CUTSCENE_CENTER_X,  out_t);
+                input.cam_pivot_y = lerp(save.player.pos.y, this.CUTSCENE_CENTER_Y,  out_t);
+                input.cam_pivot_x = lerp(input.cam_pivot_x,      save.player.pos.x, back_t);
+                input.cam_pivot_y = lerp(input.cam_pivot_y,      save.player.pos.y, back_t);
+            }
+
+            if (t > 0) {
+                this.pickup_get_timestamp = null;
+            }
         },
 
         draw(ctx) {
@@ -1021,6 +1078,9 @@ const save = {
 
         update() {
             let i = 0;
+
+            if (save.cutscene_active) return;
+
             this.for_enemies((x, y) => {
                 const t = ~~(last_timestamp / delta_time) % 70;
 
@@ -1047,6 +1107,7 @@ const save = {
                 if (dist < 0.5) {
                     this.pickup_get = true;
                     save.player.wep = true;
+                    this.pickup_get_timestamp = last_timestamp;
                 }
             }
         }
@@ -1061,8 +1122,13 @@ requestAnimationFrame(function frame(timestamp) {
     delta_time = timestamp - last_timestamp;
     last_timestamp = timestamp;
 
-    save.player.controls_movement();
-    save.player.controls_aiming();
+    save.cutscene_active = false; /* if platform sets this to true in camera_animate, no e.g. movement or enemy AI occurs */
+    save.platform.camera_animate();
+
+    if (!save.cutscene_active) {
+        save.player.controls_movement();
+        save.player.controls_aiming();
+    }
 
     /* click and drag camera controls */
     if (CAMERA_CONTROLS_ACTIVE) input.camera_controls()
@@ -1166,8 +1232,8 @@ requestAnimationFrame(function frame(timestamp) {
 
         }
 
-        save.bullet.update(save.bullets);
         save.platform.update();
+        save.bullet.update(save.bullets);
 
         const ctx = { geo, pushFlatXYZ, pushSpriteXYZ, pushImgUV, drawImg };
         save.bullets.forEach(b => save.bullet.draw(ctx, b));
