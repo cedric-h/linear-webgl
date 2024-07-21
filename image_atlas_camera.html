@@ -749,6 +749,9 @@ const map_util = {
     },
 };
 
+const MAP_TUTORIAL = 0;
+const MAP_CAVE     = 1;
+
 const save = {
 
     cutscene_active: false,
@@ -769,7 +772,7 @@ const save = {
         damped_cam_pivot_y: 0,
 
         pos_z() {
-            return this.z_boost + save.map.height_at(save.player.pos);
+            return this.z_boost + save.map().height_at(save.player.pos);
         },
 
         update() {
@@ -879,7 +882,7 @@ const save = {
                                                (save.player.pos.y - o.y)*(save.player.pos.y - o.y));
 
                     /* how far you can go w/o hitting something */
-                    let max_dist = save.map.distance_at(o);
+                    let max_dist = save.map().distance_at(o);
 
                     const min = Math.min(-max_dist, moved_dist);
 
@@ -896,7 +899,7 @@ const save = {
                                 y: save.player.pos.y - (perp.y - save.player.pos.y)
                             };
                             for (const p of [perp, perp_backwards]) {
-                                const dist = save.map.distance_at(p);
+                                const dist = save.map().distance_at(p);
                                 if (dist < best_vec_dist) {
                                     best_vec_dist = dist;
                                     best_vec = p;
@@ -928,14 +931,17 @@ const save = {
                 save.player.pos.y = next_p_y;
             }
 
-            if (input.last_action == LAST_ACTION_KEY) {
-                const t = Math.pow(1 - 0.95, 60*delta_time);
-                this.damped_cam_pivot_x = input.cam_pivot_x = lerp(this.damped_cam_pivot_x, save.player.pos.x, t);
-                this.damped_cam_pivot_y = input.cam_pivot_y = lerp(this.damped_cam_pivot_y, save.player.pos.y, t);
+            if (input.last_action == LAST_ACTION_KEY)
+                this.damp_camera();
+        },
 
-                input.pitch = lerp(input.pitch, DEFAULT_PITCH, t);
-                input.yaw   = lerp(input.yaw  , DEFAULT_YAW,   t);
-            }
+        damp_camera() {
+            const t = Math.pow(1 - 0.95, 60*delta_time);
+            this.damped_cam_pivot_x = input.cam_pivot_x = lerp(this.damped_cam_pivot_x, save.player.pos.x, t);
+            this.damped_cam_pivot_y = input.cam_pivot_y = lerp(this.damped_cam_pivot_y, save.player.pos.y, t);
+
+            input.pitch = lerp(input.pitch, DEFAULT_PITCH, t);
+            input.yaw   = lerp(input.yaw  , DEFAULT_YAW,   t);
         }
     },
 
@@ -1116,30 +1122,38 @@ const save = {
         },
     },
 
-    map: {
-        for_circles(circle) {
-            circle(0.0, 0.0, 8.0);
-        },
+    map_key: MAP_CAVE,
+    map() { return this.maps[this.map_key]; },
 
-        hole_step_timestamp: null,
-        hole_stepped_idx:    null,
-        for_holes(hole) {
-            hole(0,  3, 2,  save.maps.tutorial);
-        },
+    hole: {
+        /* used to prevent infinite loops; you come out of the hole with some velocity,
+         * so it should be impossible to get sucked right back in. */
+        last_transition_timestamp: null,
+        TRANSITION_DEBOUNCE_SECS: 1,
 
-        camera_animate() {
-            if (this.hole_step_timestamp == null) return;
+        /* transitions to the next map at the end; don't call this fn to block that if needed.
+         * 
+         * returns true if it's doing anything; observe this to prevent simultaneous cutscenes */
+        leaving_cutscene(hole_transition, for_holes) {
+            if (hole_transition.step_timestamp == null) return false;
 
-            this.for_holes((idx, hole_x, hole_y, to_map) => {
-                if (idx != this.hole_stepped_idx) return;
+            for_holes((idx, hole_x, hole_y, to_map) => {
+                if (idx != hole_transition.stepped_idx) return;
+
+                /* incorporate the player's previous velocity a little bit */
+                save.player.vel.x *= 0.85;
+                save.player.vel.y *= 0.85;
+                save.player.pos.x += save.player.vel.x*2;
+                save.player.pos.y += save.player.vel.y*2;
 
                 /* we bite off bits of t and assign them to our animations */
-                let t = last_timestamp - this.hole_step_timestamp;
+                let t = last_timestamp - hole_transition.step_timestamp;
                 let up_t, suck_t = 0;
                 {
                     if (t > 0) save.cutscene_active = true;
 
-                    t -= 0.05; /* pause before */
+                    t -= 0.1; /* pause before */
+                    if (t < 0) save.player.damp_camera();
 
                     const UP_DURATION = 0.45;
                     up_t = unit_clamp(t / UP_DURATION); t -= UP_DURATION;
@@ -1154,23 +1168,27 @@ const save = {
 
                 /* the animation is done, time has run over */
                 if (t > 0) {
+                    this.last_transition_timestamp = last_timestamp;
+
                     input.zoom = DEFAULT_ZOOM;
                     input.cam_pivot_x = save.player.damped_cam_pivot_x;
                     input.cam_pivot_y = save.player.damped_cam_pivot_y;
 
-                    save.player.pos.x   = 0;
-                    save.player.pos.y   = 0;
-                    save.player.vel.x   = 0.12; /* he slides into the next level */
-                    save.player.vel.y   = 0.12; /* he slides into the next level */
-                    input.cam_pivot_x   = -5;
-                    input.cam_pivot_y   = -5;
+                    save.player.pos.x   = save.maps[to_map].PLAYER_SPAWN_POS_X ?? 0;
+                    save.player.pos.y   = save.maps[to_map].PLAYER_SPAWN_POS_Y ?? 0;
+                    save.player.vel.x   = 0.25 * (save.maps[to_map].PLAYER_SPAWN_DIR_X ?? 1); /* he slides into the next level */
+                    save.player.vel.y   = 0.25 * (save.maps[to_map].PLAYER_SPAWN_DIR_Y ?? 1); /* he slides into the next level */
+                    input.cam_pivot_x   = save.player.pos.x-5;
+                    input.cam_pivot_y   = save.player.pos.y-5;
                     save.player.scale   = 1;
                     save.player.z_boost = 0;
                     save.player.opacity = 1;
 
+                    save.bullets = [];
+
                     save.cutscene_active = false;
-                    save.map = to_map;
-                    this.hole_step_timestamp = null;
+                    save.map_key = to_map;
+                    hole_transition.step_timestamp = null;
                     return;
                 }
 
@@ -1183,7 +1201,7 @@ const save = {
 
                     /* player -> hole */
                     /* have to damp here or store position when animation starts */
-                    const damp_t = Math.pow(1 - 0.75, 60*delta_time);
+                    const damp_t = Math.pow(1 - 0.85, 60*delta_time);
                     save.player.pos.x = lerp(save.player.pos.x, hole_x, damp_t);
                     save.player.pos.y = lerp(save.player.pos.y, hole_y, damp_t);
 
@@ -1204,38 +1222,28 @@ const save = {
                     save.player.opacity = lerp(                 1.0,    0.0, 1 - ease_out_circ(1 - suck_t));
                 }
             });
+
+            return true;
         },
 
-        update() {
-            let i = 0;
-
-            if (save.cutscene_active) return;
-
-            this.for_holes((idx, hole_x, hole_y, _map) => {
+        detect_step(hole_transition, for_holes) {
+            if (this.last_transition_timestamp != null) {
+                const elapsed = last_timestamp - this.last_transition_timestamp;
+                if (elapsed < this.TRANSITION_DEBOUNCE_SECS) return;
+            }
+            for_holes((idx, hole_x, hole_y, _map) => {
                 const dx = save.player.pos.x - hole_x;
                 const dy = save.player.pos.y - hole_y;
                 const dist = Math.sqrt(dx*dx + dy*dy);
-                if (dist < 0.7) {
-                    this.hole_step_timestamp = last_timestamp;
-                    this.hole_stepped_idx = idx;
+                if (dist < 1.0) {
+                    hole_transition.step_timestamp = last_timestamp;
+                    hole_transition.stepped_idx = idx;
                 }
             });
         },
 
-        draw(ctx) {
-            const { pushSpriteXYZ, pushImgUV, drawImg } = ctx;
-
-            this.for_circles((x, y, size) => {
-                drawImg(
-                    AXIS_FLAT,
-                    x, y,
-                    size * 0.9,
-                    ATLAS_MOON,
-                    SHADER_FLAG_GREENIFY
-                );
-            });
-
-            this.for_holes((_idx, hole_x, hole_y, _map) => {
+        draw(hole_transition, for_holes, { drawImg, pushImgUV, pushSpriteXYZ }) {
+            for_holes((_idx, hole_x, hole_y, _map) => {
 
                 const bob = Math.sin(5*last_timestamp);
                 pushImgUV(ATLAS_ARW_DOWN, 0, 0.5 + 0.05*(1.0 - bob));
@@ -1243,30 +1251,74 @@ const save = {
 
                 drawImg(AXIS_FLAT, hole_x, hole_y, 1, ATLAS_HOLE);
             });
-        },
-
-        distance_at(pos) {
-            let min_dist = Infinity;
-
-            this.for_circles((x, y, size) => {
-                const dx = pos.x - x;
-                const dy = pos.y - y;
-                min_dist = Math.min(min_dist, Math.sqrt(dx*dx + dy*dy) - size*0.65);
-            });
-
-            return min_dist;
-        },
-
-        height_at(p) {
-            let height = 0;
-
-            return height;
-        },
+        }
     },
 
     maps: {
-        tutorial: {
-            PICKUP_X: -65.8,
+        [MAP_CAVE]: {
+            PLAYER_SPAWN_POS_X: 3,
+            PLAYER_SPAWN_POS_Y: 2,
+            PLAYER_SPAWN_DIR_X: -1,
+            PLAYER_SPAWN_DIR_Y: -1,
+
+            for_circles(circle) {
+                circle(0.0, 0.0, 8.0);
+            },
+
+            hole_transition: { step_timestamp: null, stepped_idx: null },
+            for_holes(hole) {
+                hole(0,  3, 2,  MAP_TUTORIAL);
+            },
+
+            camera_animate() {
+                save.hole.leaving_cutscene(this.hole_transition, this.for_holes.bind(this));
+            },
+
+            update() {
+                let i = 0;
+
+                if (save.cutscene_active) return;
+
+                save.hole.detect_step(this.hole_transition, this.for_holes.bind(this));
+            },
+
+            draw(ctx) {
+                const { pushSpriteXYZ, pushImgUV, drawImg } = ctx;
+
+                this.for_circles((x, y, size) => {
+                    drawImg(
+                        AXIS_FLAT,
+                        x, y,
+                        size * 0.9,
+                        ATLAS_MOON,
+                        SHADER_FLAG_GREENIFY
+                    );
+                });
+
+                save.hole.draw(this.hole_transition, this.for_holes.bind(this), ctx);
+            },
+
+            distance_at(pos) {
+                let min_dist = Infinity;
+
+                this.for_circles((x, y, size) => {
+                    const dx = pos.x - x;
+                    const dy = pos.y - y;
+                    min_dist = Math.min(min_dist, Math.sqrt(dx*dx + dy*dy) - size*0.65);
+                });
+
+                return min_dist;
+            },
+
+            height_at(p) {
+                let height = 0;
+
+                return height;
+            },
+        },
+
+        [MAP_TUTORIAL]: {
+            PICKUP_X: 4,// -65.8,
             PICKUP_Y:   0.0,
             pickup_get: false,
             pickup_get_timestamp: null,
@@ -1277,6 +1329,12 @@ const save = {
             pickup_get_t: 0,
 
             enemies_died_timestamp: [null, null],
+            enemies_died_direction: [{ x: 0, y: 0 }, { x: 0, y: 0 }],
+
+            hole_transition: { step_timestamp: null, stepped_idx: null },
+            for_holes(hole) {
+                hole(0,  0, 0,  MAP_CAVE);
+            },
 
             for_circles(circle) {
                 /*      x,  y,  size */
@@ -1311,6 +1369,9 @@ const save = {
             },
 
             camera_animate() {
+                const leaving = save.hole.leaving_cutscene(this.hole_transition, this.for_holes.bind(this));
+                if (leaving) return;
+
                 if (this.pickup_get_timestamp == null) return;
 
                 /* we bite off bits of t and assign them to our animations */
@@ -1380,16 +1441,20 @@ const save = {
                     );
                 });
 
+                save.hole.draw(this.hole_transition, this.for_holes.bind(this), ctx);
+
                 this.for_enemies((idx, enemy_x, enemy_y) => {
                     let opacity = 1;
                     let push = 0;
                     if (this.enemies_died_timestamp[idx] != null) {
                         const elapsed = last_timestamp - this.enemies_died_timestamp[idx];
                         opacity = 1 - ease_out_circ(unit_clamp((elapsed - 0.1) / 0.25));
-                        push = 0.3 * ease_out_circ(unit_clamp((elapsed - 0.0) / 0.2));
+                        push = 0.5 * ease_out_circ(unit_clamp((elapsed - 0.0) / 0.2));
                     }
+                    const push_x = push*this.enemies_died_direction[idx].x;
+                    const push_y = push*this.enemies_died_direction[idx].y;
                     pushImgUV(ATLAS_NINJA, 0, opacity);
-                    pushSpriteXYZ(enemy_x, enemy_y + push, 0, 1);
+                    pushSpriteXYZ(enemy_x + push_x, enemy_y + push_y, 0, 1);
                 });
 
                 drawImg(AXIS_SPRITE, -5, -3,  2.0, ATLAS_TREE);
@@ -1470,6 +1535,8 @@ const save = {
 
                 if (save.cutscene_active) return;
 
+                save.hole.detect_step(this.hole_transition, this.for_holes.bind(this));
+
                 this.for_enemies_living((idx, x, y) => {
                     const pos = { x, y };
 
@@ -1500,7 +1567,9 @@ const save = {
                         bullet => {
                             const direction = Math.atan2(bullet.dir.y, bullet.dir.x);
                             save.particle.blood(save.particles, direction, pos, 1);
-                            this.enemies_died_timestamp[idx] = last_timestamp;
+                            this.enemies_died_timestamp[idx]   = last_timestamp;
+                            this.enemies_died_direction[idx].x = bullet.dir.x;
+                            this.enemies_died_direction[idx].y = bullet.dir.y;
                             return true;
                         }
                     );
@@ -1528,7 +1597,7 @@ requestAnimationFrame(function frame(timestamp) {
     last_timestamp = timestamp;
 
     save.cutscene_active = false; /* if map sets this to true in camera_animate, no e.g. movement or enemy AI occurs */
-    save.map.camera_animate();
+    save.map().camera_animate();
 
     if (!save.cutscene_active) {
         save.player.controls_movement();
@@ -1640,7 +1709,7 @@ requestAnimationFrame(function frame(timestamp) {
 
         }
 
-        save.map     .update();
+        save.map()   .update();
         save.player  .update();
         save.bullet  .update(save.bullets  );
         save.particle.update(save.particles);
@@ -1649,7 +1718,7 @@ requestAnimationFrame(function frame(timestamp) {
         save.flinch.draw(ctx);
         save.bullets  .forEach(b => save.bullet  .draw(ctx, b));
         save.particles.forEach(b => save.particle.draw(ctx, b));
-        save.map.draw(ctx);
+        save.map().draw(ctx);
 
         save.player.draw(ctx);
     }
