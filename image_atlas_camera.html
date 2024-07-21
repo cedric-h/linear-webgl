@@ -44,6 +44,9 @@ if (!gl) { alert('Failed to initialize WebGL'); }
 const SHADER_FLAG_NONE     = 0;
 const SHADER_FLAG_GREENIFY = 1;
 
+const LAYER_PLAYER  = 1;
+const LAYER_ENEMIES = 2;
+
 
 /* used especially in the rendering functions */
 const AXIS_FLAT   = 0;
@@ -52,6 +55,7 @@ const AXIS_SPRITE = 1; /* up, but tilted back slightly to face camera */
 
 const ATLAS_CHARS = [];
 const ATLAS_NINJA   = (ATLAS_CHARS.push('🥷'), ATLAS_CHARS.length - 1);
+const ATLAS_BLOOD   = (ATLAS_CHARS.push('🩸'), ATLAS_CHARS.length - 1);
 const ATLAS_MOON    = (ATLAS_CHARS.push('🌕'), ATLAS_CHARS.length - 1);
 const ATLAS_CLOVER  = (ATLAS_CHARS.push('☘️'),  ATLAS_CHARS.length - 1);
 const ATLAS_BAMBOO  = (ATLAS_CHARS.push('🎋'), ATLAS_CHARS.length - 1);
@@ -394,7 +398,8 @@ let shaders;
 
         'varying vec2 v_uv;' +
 
-        'void main() {' + 'gl_FragColor = 0.4 * texture2D(u_texture, v_uv);' +
+        'void main() {' +
+            'gl_FragColor = 0.4 * texture2D(u_texture, v_uv);' +
         '}';
 
     const vs_geo = `
@@ -686,7 +691,8 @@ const save = {
     cutscene_active: false,
 
     player: {
-        pos: { x: 0, y: 0 },
+        // pos: { x: 0, y: 0 },
+        pos: { x: -70, y: 0 },
         vel: { x: 0, y: 0 },
         wep: false,
         last_shot_timestamp: 0,
@@ -698,6 +704,24 @@ const save = {
 
         pos_z() {
             return save.platform.height_at(save.player.pos);
+        },
+
+        update() {
+            save.bullet.for_collisions(
+                save.bullets,
+                LAYER_PLAYER,
+                this.pos,
+                0.95,
+                bullet => {
+                    const angle = Math.atan2(bullet.dir.y, bullet.dir.x);
+                    save.flinch.trigger(angle);
+
+                    save.player.vel.x += 0.18*bullet.dir.x;
+                    save.player.vel.y += 0.18*bullet.dir.y;
+
+                    return true;
+                }
+            );
         },
 
         draw({ pushImgUV, pushSpriteXYZ }) {
@@ -745,7 +769,8 @@ const save = {
             const dy = mouse[1] - save.player.pos.y;
             const angle = Math.atan2(dy, dx);
             save.bullets.push({
-                z: this.pos_z(),
+                layer: LAYER_ENEMIES,
+                z: 1 + this.pos_z(),
                 pos: { x: this.pos.x, y: this.pos.y },
                 dir: { x: Math.cos(angle), y: Math.sin(angle) },
                 range: 10,
@@ -869,9 +894,160 @@ const save = {
                 bullet.pos.y,
                 bullet.z,
                 1,
+                /* spin x10/second */
                 (-last_timestamp * 10) % (Math.PI*2)
             );
+        },
+        
+        for_collisions(bullets, layer, pos, radius, callback) {
+            for (let i = 0; i < bullets.length; i++) {
+                const bullet = bullets[i];
+                if (!(bullet.layer & layer)) continue;
+
+                const dx = bullet.pos.x - pos.x;
+                const dy = bullet.pos.y - pos.y;
+                const dist = Math.sqrt(dx*dx + dy*dy);
+
+                if (dist > radius) continue;
+
+                if (callback(bullet)) {
+                    bullets.splice(i--, 1);
+                }
+            }
         }
+    },
+
+    particles: [],
+    particle: {
+        update(particles) {
+            for (let i = 0; i < particles.length; i++) {
+                const particle = particles[i];
+
+                particle.pos.x += particle.speed * particle.dir.x * delta_time;
+                particle.pos.y += particle.speed * particle.dir.y * delta_time;
+                particle.range -= particle.speed * delta_time;
+
+                particle.pos.z -= 2.0*delta_time;
+
+                if (particle.range < 0) particles.splice(i--, 1);
+            }
+        },
+        
+        draw({ pushImgUV, pushSpriteXYZ }, particle) {
+            pushImgUV(particle.sprite, 0, unit_clamp(inv_lerp(0.0, 1.5, particle.range)));
+            pushSpriteXYZ(
+                particle.pos.x,
+                particle.pos.y,
+                particle.z,
+                particle.size,
+            );
+        },
+
+        blood(particles, dir, pos, z = 0) {
+            for (let i = 0; i < 15; i++) {
+                const t = i / 15;
+                const edge = 1 - 2 * Math.abs(t - 0.5);
+
+                const randomness = 0.2 * edge;
+                const base_range = Math.PI*0.8;
+                const half = (randomness + base_range)*0.5;
+                const angle = dir + (Math.random()*randomness + base_range*t) - half;
+                particles.push({
+                    z: 1 + z,
+                    pos: {
+                        x: pos.x - Math.cos(angle) * 0.2,
+                        y: pos.y - Math.sin(angle) * 0.2
+                    },
+                    dir: {
+                        x: Math.cos(angle),
+                        y: Math.sin(angle)
+                    },
+                    range: (3 + 0.5*Math.random()) * lerp(1.0, 1.6, edge),
+                    speed: (3 + 4.0*Math.random()) * lerp(1.0, 1.8, edge),
+                    size: (0.1 + 0.1*Math.random()) * lerp(0.2, 1.0, edge),
+                    sprite: ATLAS_BLOOD
+                });
+            }
+        }
+    },
+
+    flinch: {
+        timestamp: null,
+        dir_x: 0,
+        dir_y: 0,
+
+        trigger(direction) {
+            this.timestamp = last_timestamp;
+            const angle = Math.random() * Math.PI * 2;
+            this.dir_x = Math.cos(angle);
+            this.dir_y = Math.sin(angle);
+
+            save.particle.blood(
+                save.particles,
+                direction,
+                save.player.pos,
+                save.player.pos_z()
+            );
+        },
+
+        t() {
+            if (this.timestamp == null) return 0;
+            let t = (last_timestamp - this.timestamp) / 1;
+
+            if (t > 1.0) t = 0;
+
+            return t;
+        },
+
+        camera() {
+            let t = this.t();
+            t = ease_out_circ(unit_clamp(t / 0.6));
+            if (t == 0) return;
+
+            input.pitch = lerp(DEFAULT_PITCH + 0.09*this.dir_x, DEFAULT_PITCH, t);
+            input.yaw   = lerp(DEFAULT_YAW   + 0.09*this.dir_y,   DEFAULT_YAW, t);
+        },
+
+        draw({ geo }) {
+            const t = this.t();
+            if (t == 0) return;
+
+            const size = 10000;
+            const x = 0;
+            const y = 0;
+            const z = 0;
+
+            {
+                const rot_x = 1 * size;
+                const rot_z = 0 * size;
+
+                const vbuf_i = geo.pos.length / 3;
+
+                geo.pos.push(x+rot_x, y + rot_z, z);
+                geo.pos.push(x+rot_z, y - rot_x, z);
+                geo.pos.push(x-rot_x, y - rot_z, z);
+                geo.pos.push(x-rot_z, y + rot_x, z);
+
+                geo.layer.push(1e6);
+                geo.layer.push(1e6);
+
+                geo.idx.push(vbuf_i + 0, vbuf_i + 1, vbuf_i + 2,
+                             vbuf_i + 2, vbuf_i + 3, vbuf_i + 0);
+            }
+
+            {
+                const opacity = 0.4 * (1 - t);
+                const r = 1.0;
+                const g = 0.1;
+                const b = 0.1;
+                geo.uv.push(
+                    r*opacity, g*opacity, b*opacity, opacity,
+                    r*opacity, g*opacity, b*opacity, opacity,
+                    r*opacity, g*opacity, b*opacity, opacity,
+                    r*opacity, g*opacity, b*opacity, opacity
+                );
+            }
+        },
     },
 
     platform: {
@@ -885,6 +1061,8 @@ const save = {
         move_earth_t: 0,
         pickup_get_t: 0,
 
+        enemies_living: [true, true],
+
         for_circles(circle) {
             /*      x,  y,  size */
             circle(  2.0,   3.0,     7.0);
@@ -895,13 +1073,13 @@ const save = {
             circle(-66.8,   0.0,     6.5);
 
             /* enemy platforms */
-            this.for_enemies((x, y) => circle(x, y, 6.5));
+            this.for_enemies((_, x, y) => circle(x, y, 6.5), false);
         },
 
-        for_enemies(enemy) {
+        for_enemies(enemy, only_living = true) {
             const t = this.move_earth_t;
-            enemy(lerp(-25.0, -34.5, t), lerp(-15.0, -6.5, t));
-            enemy(lerp(-45.0, -37.5, t), lerp( 12.5,  6.5, t));
+            if (!only_living || this.enemies_living[0]) enemy(0, lerp(-25.0, -34.5, t), lerp(-15.0, -6.5, t));
+            if (!only_living || this.enemies_living[1]) enemy(1, lerp(-45.0, -37.5, t), lerp( 12.5,  6.5, t));
         },
 
         for_bridges(bridge) {
@@ -979,7 +1157,7 @@ const save = {
                 );
             });
 
-            this.for_enemies((enemy_x, enemy_y) => {
+            this.for_enemies((_, enemy_x, enemy_y) => {
                 drawImg(AXIS_SPRITE, enemy_x, enemy_y, 1, ATLAS_NINJA);
             });
 
@@ -1146,12 +1324,16 @@ const save = {
                             z1 += dz;
                         }
 
+                        const vbuf_i = geo.pos.length / 3;
                         geo.pos.push(x0, -size, z0 + 1.0);
                         geo.pos.push(x1, -size, z1 + 1.0);
                         geo.pos.push(x1,  size, z1 + 1.0);
                         geo.pos.push(x0,  size, z0 + 1.0);
                         geo.layer.push(-1e6 - (z0 + z1));
                         geo.layer.push(-1e6 - (z0 + z1));
+
+                        geo.idx.push(vbuf_i + 0, vbuf_i + 1, vbuf_i + 2,
+                                     vbuf_i + 2, vbuf_i + 3, vbuf_i + 0);
 
                         last[0] = p[0];
                         last[1] = p[1];
@@ -1165,16 +1347,19 @@ const save = {
 
             if (save.cutscene_active) return;
 
-            this.for_enemies((x, y) => {
+            this.for_enemies((idx, x, y) => {
+                const pos = { x, y };
+
                 const t = ~~(last_timestamp / delta_time) % 70;
 
                 if (t == 0) {
-                    const dx = save.player.pos.x - x;
-                    const dy = save.player.pos.y - y;
+                    const dx = save.player.pos.x - pos.x;
+                    const dy = save.player.pos.y - pos.y;
                     const angle = Math.atan2(dy, dx);
                     save.bullets.push({
-                        z: 0,
-                        pos: { x, y },
+                        layer: LAYER_PLAYER,
+                        z: 1,
+                        pos,
                         /* using "sign" instead of "sin" here makes them slightly bad
                          * at aiming -- good for tutorial */
                         dir: { x: Math.cos(angle), y: Math.sign(angle) },
@@ -1183,6 +1368,19 @@ const save = {
                         sprite: ATLAS_KNIFE
                     });
                 }
+
+                save.bullet.for_collisions(
+                    save.bullets,
+                    LAYER_ENEMIES,
+                    pos,
+                    0.95,
+                    bullet => {
+                        const direction = Math.atan2(bullet.dir.y, bullet.dir.x);
+                        save.particle.blood(save.particles, direction, pos, 1);
+                        this.enemies_living[idx] = false;
+                        return true;
+                    }
+                );
             });
 
             if (this.pickup_get_timestamp == null) {
@@ -1211,6 +1409,8 @@ requestAnimationFrame(function frame(timestamp) {
     if (!save.cutscene_active) {
         save.player.controls_movement();
         save.player.controls_aiming();
+
+        save.flinch.camera();
     }
 
     /* click and drag camera controls */
@@ -1251,25 +1451,13 @@ requestAnimationFrame(function frame(timestamp) {
                     -(u+max_x)/ATLAS_SIZE, -(v+min_y)/ATLAS_SIZE, flag, opacity
                 );
             }
-
-            /* generate position + index */
-            {
-                const vbuf_i = geo.pos.length / 3;
-
-                geo.idx.push(
-                    vbuf_i + 0,
-                    vbuf_i + 1,
-                    vbuf_i + 2,
-                    vbuf_i + 2,
-                    vbuf_i + 3,
-                    vbuf_i + 0
-                );
-            }
         }
 
-        function pushFlatXYZ(x, y, z, size, rot) {
+        function pushFlatXYZ(x, y, z, size, rot=0) {
             const rot_x = Math.cos(rot) * size;
             const rot_z = Math.sin(rot) * size;
+
+            const vbuf_i = geo.pos.length / 3;
 
             geo.pos.push(x+rot_x, y + rot_z, z);
             geo.pos.push(x+rot_z, y - rot_x, z);
@@ -1278,6 +1466,9 @@ requestAnimationFrame(function frame(timestamp) {
 
             geo.layer.push(y);
             geo.layer.push(y);
+
+            geo.idx.push(vbuf_i + 0, vbuf_i + 1, vbuf_i + 2,
+                         vbuf_i + 2, vbuf_i + 3, vbuf_i + 0);
         }
 
         const back = Math.cos(Math.PI*0.25);
@@ -1285,10 +1476,15 @@ requestAnimationFrame(function frame(timestamp) {
             const center_x = x;
             const center_z = z + back*size;
 
+            const vbuf_i = geo.pos.length / 3;
+
             geo.pos.push(center_x+size, y          , center_z - back*size);
             geo.pos.push(center_x-size, y          , center_z - back*size);
             geo.pos.push(center_x-size, y-back*size, center_z + back*size);
             geo.pos.push(center_x+size, y-back*size, center_z + back*size);
+
+            geo.idx.push(vbuf_i + 0, vbuf_i + 1, vbuf_i + 2,
+                         vbuf_i + 2, vbuf_i + 3, vbuf_i + 0);
 
             geo.layer.push(y);
             geo.layer.push(y);
@@ -1299,10 +1495,15 @@ requestAnimationFrame(function frame(timestamp) {
 
             switch (axis) {
                 case (AXIS_FLAT): {
+                    const vbuf_i = geo.pos.length / 3;
+
                     geo.pos.push(x+size, y-size, 0.0);
                     geo.pos.push(x-size, y-size, 0.0);
                     geo.pos.push(x-size, y+size, 0.0);
                     geo.pos.push(x+size, y+size, 0.0);
+
+                    geo.idx.push(vbuf_i + 0, vbuf_i + 1, vbuf_i + 2,
+                                 vbuf_i + 2, vbuf_i + 3, vbuf_i + 0);
 
                     geo.layer.push(-1e6);
                     geo.layer.push(-1e6);
@@ -1316,10 +1517,14 @@ requestAnimationFrame(function frame(timestamp) {
         }
 
         save.platform.update();
-        save.bullet.update(save.bullets);
+        save.player  .update();
+        save.bullet  .update(save.bullets  );
+        save.particle.update(save.particles);
 
         const ctx = { geo, pushFlatXYZ, pushSpriteXYZ, pushImgUV, drawImg };
-        save.bullets.forEach(b => save.bullet.draw(ctx, b));
+        save.flinch.draw(ctx);
+        save.bullets  .forEach(b => save.bullet  .draw(ctx, b));
+        save.particles.forEach(b => save.particle.draw(ctx, b));
         save.platform.draw(ctx);
 
         save.player.draw(ctx);
@@ -1813,6 +2018,7 @@ function ray_hit_plane(
     return out;
 }
 
+function ease_out_circ(x) { return Math.sqrt(1 - Math.pow(x - 1, 2)); }
 function unit_clamp(p) { return Math.max(0, Math.min(1, p)); }
 function inv_lerp(min, max, p) { return (p - min) / (max - min); }
 function lerp(v0, v1, t) { return (1 - t) * v0 + t * v1; }
