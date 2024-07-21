@@ -86,10 +86,13 @@ let input = {
     yaw:   DEFAULT_YAW,
     eye: [0, 0, 0, 1],
 
+    /* protip:
+     * if you want to keep animations fluid and retain the ability to
+     * switch between cutscenes, avoid reading from cam_pivot, only write into it.
+     * treat it as an output which will be the position of the camera for this frame. */
     cam_pivot_x: 0,
     cam_pivot_y: 0,
     cam_pivot_z: 0,
-
 
     lmb_down: false, /* lmb =  left mouse button */
     rmb_down: false, /* rmb = right mouse button */
@@ -688,6 +691,48 @@ const save = {
         wep: false,
         last_shot_timestamp: 0,
 
+        /* player has its own copy of this data (also found in input) so that cutscene
+         * taking over doesn't have to interfere with the player controller. */
+        damped_cam_pivot_x: 0,
+        damped_cam_pivot_y: 0,
+
+        pos_z() {
+            return save.platform.height_at(save.player.pos);
+        },
+
+        draw({ pushImgUV, pushSpriteXYZ }) {
+            const z = this.pos_z();
+            pushImgUV(ATLAS_NINJA);
+            pushSpriteXYZ(
+                save.player.pos.x,
+                save.player.pos.y,
+                z,
+                1,
+            );
+
+            if (save.player.wep) {
+                /* speed is the length of velocity */
+                const vl = Math.sqrt(save.player.vel.x*save.player.vel.x +
+                                     save.player.vel.y*save.player.vel.y) * (!save.cutscene_active);
+                const drag = Math.min(0.07, vl);
+                const breathe = Math.sin(last_timestamp * 80 / 35.0) / 30;
+                const jog = Math.sin(last_timestamp * 80 / 6.85) * Math.min(vl, 0.175);
+
+                const wep_x = 0.55 * + breathe / 3.2 + jog * 1.5 * + drag;
+                const wep_y = (breathe + jog) / 2.8 + drag * 0.5;
+
+                //pushImgUV(ATLAS_KNIFE, 0, 1, 1, 1);
+                pushImgUV(ATLAS_CARROT, 0, 1, 0, 1);
+
+                pushSpriteXYZ(
+                     save.player.pos.x - 0.5 + wep_x,
+                     save.player.pos.y + 0.1 + wep_y,
+                     z + 0.2,
+                     0.4,
+                );
+            }
+        },
+
         controls_aiming() {
             if (!save.player.wep) return;
             if (!input.lmb_down) return;
@@ -700,6 +745,7 @@ const save = {
             const dy = mouse[1] - save.player.pos.y;
             const angle = Math.atan2(dy, dx);
             save.bullets.push({
+                z: this.pos_z(),
                 pos: { x: this.pos.x, y: this.pos.y },
                 dir: { x: Math.cos(angle), y: Math.sin(angle) },
                 range: 10,
@@ -793,8 +839,8 @@ const save = {
 
             if (input.last_action == LAST_ACTION_KEY) {
                 const t = Math.pow(1 - 0.95, 60*delta_time);
-                input.cam_pivot_x = lerp(input.cam_pivot_x, save.player.pos.x, t);
-                input.cam_pivot_y = lerp(input.cam_pivot_y, save.player.pos.y, t);
+                this.damped_cam_pivot_x = input.cam_pivot_x = lerp(this.damped_cam_pivot_x, save.player.pos.x, t);
+                this.damped_cam_pivot_y = input.cam_pivot_y = lerp(this.damped_cam_pivot_y, save.player.pos.y, t);
 
                 input.pitch = lerp(input.pitch, DEFAULT_PITCH, t);
                 input.yaw   = lerp(input.yaw  , DEFAULT_YAW,   t);
@@ -821,7 +867,7 @@ const save = {
             pushFlatXYZ(
                 bullet.pos.x,
                 bullet.pos.y,
-                1,
+                bullet.z,
                 1,
                 (-last_timestamp * 10) % (Math.PI*2)
             );
@@ -830,22 +876,23 @@ const save = {
 
     platform: {
         PICKUP_X: -65.8,
-        PICKUP_Y: 0,
+        PICKUP_Y:   0.0,
         pickup_get: false,
         pickup_get_timestamp: null,
 
         CUTSCENE_CENTER_X: -30,
         CUTSCENE_CENTER_Y: 0,
         move_earth_t: 0,
+        pickup_get_t: 0,
 
         for_circles(circle) {
             /*      x,  y,  size */
             circle(  2.0,   3.0,     7.0);
-            circle( -4.0,   0.0,     8.5);
-            circle(  2.0,  -3.0,     9.0);
+            circle( -4.0,   0.0,     9.0);
+            circle(  2.0,  -3.0,     9.5);
 
             circle(-35.8,   0.0,     6.5);
-            circle(-65.8,   0.0,     6.5);
+            circle(-66.8,   0.0,     6.5);
 
             /* enemy platforms */
             this.for_enemies((x, y) => circle(x, y, 6.5));
@@ -858,7 +905,7 @@ const save = {
         },
 
         for_bridges(bridge) {
-            bridge({ path_from: -10, path_to: -30 });
+            bridge({ path_from: -10, path_to: -29 });
             bridge({ path_from: -40, path_to: -60 });
         },
 
@@ -869,8 +916,13 @@ const save = {
             let t = last_timestamp - this.pickup_get_timestamp;
             let out_t = 0, back_t = 0;
             {
+                if (t > 0) save.cutscene_active = true;
+
                 /* one little pause right after they get the pickup */
-                t -= 1.5;
+                const PICKUP_GET_DURATION = 2.0;
+                this.pickup_get_t = unit_clamp(t / PICKUP_GET_DURATION); t -= PICKUP_GET_DURATION;
+
+                t -= 1;
 
                 const OUT_DURATION = 1;
                 out_t = unit_clamp(t / OUT_DURATION); t -= OUT_DURATION;
@@ -882,7 +934,7 @@ const save = {
                     const MOVE_EARTH_DURATION = 2;
                     this.move_earth_t = unit_clamp(t / MOVE_EARTH_DURATION); t -= MOVE_EARTH_DURATION;
 
-                    t -= 2;
+                    t -= 1.75;
                 }
 
                 const BACK_DURATION = 1;
@@ -892,25 +944,30 @@ const save = {
                 t -= 0.75;
             }
 
-            if (out_t > 0) {
-                save.cutscene_active = true;
+            if (t > 0) {
+                save.cutscene_active = false;
+                return;
+            }
 
+            if (this.pickup_get_t >= 1) {
+                save.player.wep = true;
+                this.pickup_get = true;
+            }
+
+            if (out_t > 0) {
                 input.zoom = lerp(DEFAULT_ZOOM,           70,  out_t);
                 input.zoom = lerp(  input.zoom, DEFAULT_ZOOM, back_t);
 
-                input.cam_pivot_x = lerp(save.player.pos.x, this.CUTSCENE_CENTER_X,  out_t);
-                input.cam_pivot_y = lerp(save.player.pos.y, this.CUTSCENE_CENTER_Y,  out_t);
-                input.cam_pivot_x = lerp(input.cam_pivot_x,      save.player.pos.x, back_t);
-                input.cam_pivot_y = lerp(input.cam_pivot_y,      save.player.pos.y, back_t);
-            }
-
-            if (t > 0) {
-                this.pickup_get_timestamp = null;
+                const p = save.player;
+                input.cam_pivot_x = lerp(p.damped_cam_pivot_x, this.CUTSCENE_CENTER_X,  out_t);
+                input.cam_pivot_y = lerp(p.damped_cam_pivot_y, this.CUTSCENE_CENTER_Y,  out_t);
+                input.cam_pivot_x = lerp(   input.cam_pivot_x,   p.damped_cam_pivot_x, back_t);
+                input.cam_pivot_y = lerp(   input.cam_pivot_y,   p.damped_cam_pivot_y, back_t);
             }
         },
 
         draw(ctx) {
-            const { drawImg } = ctx;
+            const { pushSpriteXYZ, pushImgUV, drawImg } = ctx;
 
             this.for_circles((x, y, size) => {
                 drawImg(
@@ -931,14 +988,41 @@ const save = {
             drawImg(AXIS_SPRITE,  2,  7,  1.0, ATLAS_BAMBOO);
             drawImg(AXIS_SPRITE,  4,  5,  1.2, ATLAS_BAMBOO);
 
-            if (!this.pickup_get)
-                drawImg(
-                    AXIS_SPRITE,
-                    this.PICKUP_X,
-                    this.PICKUP_Y + 0.2 + 0.2*Math.sin(last_timestamp*3),
-                    1.2,
-                    ATLAS_CARROT
-                );
+            if (!this.pickup_get) {
+                let x = this.PICKUP_X;
+                let y = this.PICKUP_Y + 0.2 + 0.2*Math.sin(last_timestamp*3);
+                let z = 0;
+                let opacity = 1;
+                let scale = 1.0;
+
+                {
+                    let t = this.pickup_get_t;
+
+                    const UP_DURATION = 0.2;
+                    const up_t = unit_clamp(t / UP_DURATION); t -= UP_DURATION;
+
+                    t -= 0.1;
+
+                    const JUMP_DURATION = 0.4;
+                    const jump_t = unit_clamp(t / JUMP_DURATION); t -= JUMP_DURATION;
+
+                    x = lerp(x, save.player.pos.x, up_t);
+                    y = lerp(y, save.player.pos.y, up_t);
+
+                    z = 1.6*up_t;
+
+                    const jump_saw_t = 1 - Math.abs(jump_t - 0.5)*2;
+                    z = lerp(z, z+0.25, jump_saw_t);
+                    scale *= 1 + jump_saw_t*0.2;
+
+                    t -= 0.2;
+
+                    if (t > 0) opacity = 1 - t / 0.1;
+                }
+
+                pushImgUV(ATLAS_CARROT, 0, opacity);
+                pushSpriteXYZ(x, y, z, scale);
+            }
 
             this.for_bridges((bridge) => {
                 this.bridge.draw(bridge, ctx);
@@ -951,7 +1035,7 @@ const save = {
             this.for_circles((x, y, size) => {
                 const dx = pos.x - x;
                 const dy = pos.y - y;
-                min_dist = Math.min(min_dist, Math.sqrt(dx*dx + dy*dy) - size*0.7);
+                min_dist = Math.min(min_dist, Math.sqrt(dx*dx + dy*dy) - size*0.65);
             });
 
             this.for_bridges((bridge) => {
@@ -961,7 +1045,7 @@ const save = {
             return min_dist;
         },
 
-        heightmap(p) {
+        height_at(p) {
             let height = Infinity;
 
             this.for_bridges((bridge) => {
@@ -1008,8 +1092,8 @@ const save = {
             distance(bridge, p) {
                 return sd_segment(
                     p,
-                    bridge.path_from + 0, 0,
-                    bridge.path_to   - 2, 0
+                    bridge.path_from + 3, 0,
+                    bridge.path_to   - 3, 0
                 ) - 1.5;
             },
 
@@ -1089,6 +1173,7 @@ const save = {
                     const dy = save.player.pos.y - y;
                     const angle = Math.atan2(dy, dx);
                     save.bullets.push({
+                        z: 0,
                         pos: { x, y },
                         /* using "sign" instead of "sin" here makes them slightly bad
                          * at aiming -- good for tutorial */
@@ -1100,13 +1185,11 @@ const save = {
                 }
             });
 
-            if (!this.pickup_get) {
+            if (this.pickup_get_timestamp == null) {
                 const dx = save.player.pos.x - this.PICKUP_X;
                 const dy = save.player.pos.y - this.PICKUP_Y;
                 const dist = Math.sqrt(dx*dx + dy*dy);
-                if (dist < 0.5) {
-                    this.pickup_get = true;
-                    save.player.wep = true;
+                if (dist < 0.7) {
                     this.pickup_get_timestamp = last_timestamp;
                 }
             }
@@ -1156,10 +1239,10 @@ requestAnimationFrame(function frame(timestamp) {
                 const u = (           atlas_index % ATLAS_SIZE );
                 const v = (Math.floor(atlas_index / ATLAS_SIZE));
 
-                let min_x = (flip_x) ? 0.99 : 0.01;
-                let max_x = (flip_x) ? 0.01 : 0.99;
-                let min_y = (flip_y) ? 0.99 : 0.01;
-                let max_y = (flip_y) ? 0.01 : 0.99;
+                let min_x = (flip_x) ? 0.98 : 0.02;
+                let max_x = (flip_x) ? 0.02 : 0.98;
+                let min_y = (flip_y) ? 0.98 : 0.02;
+                let max_y = (flip_y) ? 0.02 : 0.98;
 
                 geo.uv.push(
                     -(u+max_x)/ATLAS_SIZE, -(v+max_y)/ATLAS_SIZE, flag, opacity,
@@ -1239,44 +1322,7 @@ requestAnimationFrame(function frame(timestamp) {
         save.bullets.forEach(b => save.bullet.draw(ctx, b));
         save.platform.draw(ctx);
 
-        {
-            const z = save.platform.heightmap(save.player.pos);
-            pushImgUV(ATLAS_NINJA);
-            pushSpriteXYZ(
-                save.player.pos.x,
-                save.player.pos.y,
-                z,
-                1,
-            );
-
-            if (save.player.wep) {
-                /* speed is the length of velocity */
-                const vl = Math.sqrt(save.player.vel.x*save.player.vel.x +
-                                     save.player.vel.y*save.player.vel.y);
-                const drag = Math.min(0.07, vl);
-                const breathe = Math.sin(last_timestamp * 80 / 35.0) / 30;
-                const jog = Math.sin(last_timestamp * 80 / 6.85) * Math.min(vl, 0.175);
-
-                const wep_x = 0.55 * + breathe / 3.2 + jog * 1.5 * + drag;
-                const wep_y = (breathe + jog) / 2.8 + drag * 0.5;
-
-                //pushImgUV(ATLAS_KNIFE, 0, 1, 1, 1);
-                pushImgUV(ATLAS_CARROT, 0, 1, 0, 1);
-                // pushSpriteXYZ(
-                //      -0.6 + save.player_pos.x + wep_x,
-                //       0.3 + save.player_pos.y,
-                //       0.9 + z + wep_y,
-                //      -0.4,
-                // );
-
-                pushSpriteXYZ(
-                     save.player.pos.x - 0.5 + wep_x,
-                     save.player.pos.y + 0.1 + wep_y,
-                     z + 0.2,
-                     0.4,
-                );
-            }
-        }
+        save.player.draw(ctx);
     }
 
     /* sorting triangles for order-dependent transparency
