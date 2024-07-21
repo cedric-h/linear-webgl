@@ -54,16 +54,17 @@ const AXIS_SPRITE = 1; /* up, but tilted back slightly to face camera */
 
 
 const ATLAS_CHARS = [];
-const ATLAS_NINJA   = (ATLAS_CHARS.push('🥷'), ATLAS_CHARS.length - 1);
-const ATLAS_BLOOD   = (ATLAS_CHARS.push('🩸'), ATLAS_CHARS.length - 1);
-const ATLAS_MOON    = (ATLAS_CHARS.push('🌕'), ATLAS_CHARS.length - 1);
-const ATLAS_CLOVER  = (ATLAS_CHARS.push('☘️'),  ATLAS_CHARS.length - 1);
-const ATLAS_BAMBOO  = (ATLAS_CHARS.push('🎋'), ATLAS_CHARS.length - 1);
-const ATLAS_TREE    = (ATLAS_CHARS.push('🌳'), ATLAS_CHARS.length - 1);
-const ATLAS_KNIFE   = (ATLAS_CHARS.push('🔪'), ATLAS_CHARS.length - 1);
-const ATLAS_CARROT  = (ATLAS_CHARS.push('🥕'), ATLAS_CHARS.length - 1);
-const ATLAS_THREAD  = (ATLAS_CHARS.push('🧵'), ATLAS_CHARS.length - 1);
-const ATLAS_DOOR    = (ATLAS_CHARS.push('🚪'), ATLAS_CHARS.length - 1);
+const ATLAS_NINJA    = (ATLAS_CHARS.push('🥷'), ATLAS_CHARS.length - 1);
+const ATLAS_BLOOD    = (ATLAS_CHARS.push('🩸'), ATLAS_CHARS.length - 1);
+const ATLAS_MOON     = (ATLAS_CHARS.push('🌕'), ATLAS_CHARS.length - 1);
+const ATLAS_HOLE     = (ATLAS_CHARS.push('🕳️'), ATLAS_CHARS.length - 1);
+const ATLAS_ARW_DOWN = (ATLAS_CHARS.push('⬇️'), ATLAS_CHARS.length - 1);
+const ATLAS_BAMBOO   = (ATLAS_CHARS.push('🎋'), ATLAS_CHARS.length - 1);
+const ATLAS_TREE     = (ATLAS_CHARS.push('🌳'), ATLAS_CHARS.length - 1);
+const ATLAS_KNIFE    = (ATLAS_CHARS.push('🔪'), ATLAS_CHARS.length - 1);
+const ATLAS_CARROT   = (ATLAS_CHARS.push('🥕'), ATLAS_CHARS.length - 1);
+const ATLAS_THREAD   = (ATLAS_CHARS.push('🧵'), ATLAS_CHARS.length - 1);
+const ATLAS_DOOR     = (ATLAS_CHARS.push('🚪'), ATLAS_CHARS.length - 1);
 
 
 const ATLAS_SIZE = Math.ceil(Math.sqrt(ATLAS_CHARS.length)); /* in emoji */
@@ -638,6 +639,116 @@ let tex_skydome = gl.createTexture();
 let delta_time;
 let last_timestamp;
 
+const map_util = {
+    bridge: {
+        PLANK_SPACING: 3.6,
+        BENDYNESS    : 0.4,
+
+        plank_points(bridge) {
+            let planks_min = Math.min(bridge.path_from, bridge.path_to)-3.5;
+            let planks_max = Math.max(bridge.path_from, bridge.path_to)+2.5;
+            let player_t = inv_lerp(planks_min+1, planks_max-1, save.player.pos.x);
+            player_t = Math.min(1, Math.max(0, player_t));
+
+            const control0 = [planks_min - 5, 5 + 30*(0 + player_t)];
+            const control1 = [planks_max + 5, 5 + 30*(1 - player_t)];
+            const start = [planks_min, 0];
+            const end   = [planks_max, 0];
+            const arg = { p0: control0, p1: start, p2: end, p3: control1, alpha: this.BENDYNESS };
+
+            return catmull_uniformly_spaced(arg, this.PLANK_SPACING);
+        },
+
+        height_at(bridge, p) {
+            let planks_min = Math.min(bridge.path_from, bridge.path_to)-3.5;
+            let planks_max = Math.max(bridge.path_from, bridge.path_to)+2.5;
+            let player_t = inv_lerp(planks_min+1, planks_max-1, p.x);
+            player_t = Math.min(1, Math.max(0, player_t));
+
+            const control0 = [planks_min - 5, 5 + 30*(0 + player_t)];
+            const control1 = [planks_max + 5, 5 + 30*(1 - player_t)];
+            const start = [planks_min, 0];
+            const end   = [planks_max, 0];
+            return catmull(control0, start, end, control1, player_t, this.BENDYNESS)[1];
+        },
+
+        /* distance from point to bridge */
+        distance(bridge, p) {
+            return sd_segment(
+                p,
+                bridge.path_from + 3, 0,
+                bridge.path_to   - 3, 0
+            ) - 1.5;
+        },
+
+        draw(bridge, ctx) {
+            const { geo, pushImgUV, drawImg } = ctx;
+
+            let path_min = Math.min(bridge.path_from, bridge.path_to);
+            let path_max = Math.max(bridge.path_from, bridge.path_to);
+
+
+            /* add poles to each end of the bridge */
+            for (let x = 0; x < 2; x += 1)
+                for (let y = -1; y <= 2; y += 2)
+                    drawImg(
+                        /* axis */ AXIS_SPRITE,
+                        /* x, y */ lerp(path_min-1.5, path_max+0.5, x), 1.8*y,
+                        /* size */ 1,
+                        /* img  */ ATLAS_THREAD
+                    );
+
+            /* draw the planks */
+            {
+                let last;
+                for (const p of this.plank_points(bridge)) {
+                    if (!last) {
+                        last = p;
+                        continue;
+                    }
+                    pushImgUV(ATLAS_DOOR);
+
+                    const size = 2.5;
+
+                    let x0 = last[0];
+                    let z0 = last[1];
+                    let x1 = p   [0];
+                    let z1 = p   [1];
+
+                    /* we need to "expand" the vector that goes from x0,z0 to z1,x1 because
+                     * the image doesn't fill 100% of the square. (the UVs aren't "tight") */
+                    {
+                        let dx = x1 - x0;
+                        let dz = z1 - z0;
+                        const d_len = Math.sqrt(dx*dx + dz*dz);
+                        dx /= d_len;
+                        dz /= d_len;
+
+                        x0 -= dx;
+                        z0 -= dz;
+                        x1 += dx;
+                        z1 += dz;
+                    }
+
+                    const vbuf_i = geo.pos.length / 3;
+                    geo.pos.push(x0, -size, z0 + 1.0);
+                    geo.pos.push(x1, -size, z1 + 1.0);
+                    geo.pos.push(x1,  size, z1 + 1.0);
+                    geo.pos.push(x0,  size, z0 + 1.0);
+                    geo.layer.push(-1e6 - (z0 + z1));
+                    geo.layer.push(-1e6 - (z0 + z1));
+
+                    geo.idx.push(vbuf_i + 0, vbuf_i + 1, vbuf_i + 2,
+                                 vbuf_i + 2, vbuf_i + 3, vbuf_i + 0);
+
+                    last[0] = p[0];
+                    last[1] = p[1];
+                }
+            }
+        }
+    },
+};
+
 const save = {
 
     cutscene_active: false,
@@ -645,6 +756,10 @@ const save = {
     player: {
         pos: { x: 0, y: 0 }, // pos: { x: -70, y: 0 },
         vel: { x: 0, y: 0 },
+        scale  : 1,
+        z_boost: 0, /* jump! */
+        opacity: 1,
+
         wep: false,
         last_shot_timestamp: 0,
 
@@ -654,7 +769,7 @@ const save = {
         damped_cam_pivot_y: 0,
 
         pos_z() {
-            return save.platform.height_at(save.player.pos);
+            return this.z_boost + save.map.height_at(save.player.pos);
         },
 
         update() {
@@ -677,12 +792,12 @@ const save = {
 
         draw({ pushImgUV, pushSpriteXYZ }) {
             const z = this.pos_z();
-            pushImgUV(ATLAS_NINJA);
+            pushImgUV(ATLAS_NINJA, 0, this.opacity);
             pushSpriteXYZ(
                 save.player.pos.x,
                 save.player.pos.y,
                 z,
-                1,
+                this.scale,
             );
 
             if (save.player.wep) {
@@ -697,13 +812,13 @@ const save = {
                 const wep_y = (breathe + jog) / 2.8 + drag * 0.5;
 
                 //pushImgUV(ATLAS_KNIFE, 0, 1, 1, 1);
-                pushImgUV(ATLAS_CARROT, 0, 1, 0, 1);
+                pushImgUV(ATLAS_CARROT, 0, this.opacity, 0, 1);
 
                 pushSpriteXYZ(
-                     save.player.pos.x - 0.5 + wep_x,
-                     save.player.pos.y + 0.1 + wep_y,
-                     z + 0.2,
-                     0.4,
+                     save.player.pos.x - (0.5 + wep_x)*this.scale,
+                     save.player.pos.y + (0.1 + wep_y)*this.scale,
+                     z + 0.2*this.scale,
+                     0.4*this.scale,
                 );
             }
         },
@@ -750,7 +865,7 @@ const save = {
             p.x += movement_x*SPEED + save.player.vel.x;
             p.y += movement_y*SPEED + save.player.vel.y;
 
-            /* platform collision
+            /* map collision
              * - weird combination of SAT and SDFs */
             {
                 let next_p_x = save.player.pos.x;
@@ -764,7 +879,7 @@ const save = {
                                                (save.player.pos.y - o.y)*(save.player.pos.y - o.y));
 
                     /* how far you can go w/o hitting something */
-                    let max_dist = save.platform.collision(o);
+                    let max_dist = save.map.distance_at(o);
 
                     const min = Math.min(-max_dist, moved_dist);
 
@@ -781,7 +896,7 @@ const save = {
                                 y: save.player.pos.y - (perp.y - save.player.pos.y)
                             };
                             for (const p of [perp, perp_backwards]) {
-                                const dist = save.platform.collision(p);
+                                const dist = save.map.distance_at(p);
                                 if (dist < best_vec_dist) {
                                     best_vec_dist = dist;
                                     best_vec = p;
@@ -1001,98 +1116,110 @@ const save = {
         },
     },
 
-    platform: {
-        PICKUP_X: -65.8,
-        PICKUP_Y:   0.0,
-        pickup_get: false,
-        pickup_get_timestamp: null,
-
-        CUTSCENE_CENTER_X: -31.5,
-        CUTSCENE_CENTER_Y: 0,
-        move_earth_t: 0,
-        pickup_get_t: 0,
-
-        enemies_living: [true, true],
-
+    map: {
         for_circles(circle) {
-            /*      x,  y,  size */
-            circle(  2.0,   3.0,     7.0);
-            circle( -4.0,   0.0,     9.0);
-            circle(  2.0,  -3.0,     9.5);
-
-            circle(-35.8,   0.0,     6.5);
-            circle(-66.8,   0.0,     6.5);
-
-            /* enemy platforms */
-            this.for_enemies((_, x, y) => circle(x, y, 6.5), false);
+            circle(0.0, 0.0, 8.0);
         },
 
-        for_enemies(enemy, only_living = true) {
-            const t = this.move_earth_t;
-            if (!only_living || this.enemies_living[0]) enemy(0, lerp(-25.0, -34.5, t), lerp(-15.0, -6.5, t));
-            if (!only_living || this.enemies_living[1]) enemy(1, lerp(-45.0, -37.5, t), lerp( 12.5,  6.5, t));
-        },
-
-        for_bridges(bridge) {
-            bridge({ path_from: -10, path_to: -29 });
-            bridge({ path_from: -40, path_to: -60 });
+        hole_step_timestamp: null,
+        hole_stepped_idx:    null,
+        for_holes(hole) {
+            hole(0,  3, 2,  save.maps.tutorial);
         },
 
         camera_animate() {
-            if (this.pickup_get_timestamp == null) return;
+            if (this.hole_step_timestamp == null) return;
 
-            /* we bite off bits of t and assign them to our animations */
-            let t = last_timestamp - this.pickup_get_timestamp;
-            let out_t = 0, back_t = 0;
-            {
-                if (t > 0) save.cutscene_active = true;
+            this.for_holes((idx, hole_x, hole_y, to_map) => {
+                if (idx != this.hole_stepped_idx) return;
 
-                /* one little pause right after they get the pickup */
-                const PICKUP_GET_DURATION = 2.0;
-                this.pickup_get_t = unit_clamp(t / PICKUP_GET_DURATION); t -= PICKUP_GET_DURATION;
-
-                t -= 1;
-
-                const OUT_DURATION = 1;
-                out_t = unit_clamp(t / OUT_DURATION); t -= OUT_DURATION;
-
-                /* small pauses before and after MOVE_EARTH */
+                /* we bite off bits of t and assign them to our animations */
+                let t = last_timestamp - this.hole_step_timestamp;
+                let up_t, suck_t = 0;
                 {
-                    t -= 0.75;
+                    if (t > 0) save.cutscene_active = true;
 
-                    const MOVE_EARTH_DURATION = 2;
-                    this.move_earth_t = unit_clamp(t / MOVE_EARTH_DURATION); t -= MOVE_EARTH_DURATION;
+                    t -= 0.05; /* pause before */
 
-                    t -= 1.75;
+                    const UP_DURATION = 0.45;
+                    up_t = unit_clamp(t / UP_DURATION); t -= UP_DURATION;
+
+                    // t -= 0.05; /* pause between up and suck */
+
+                    const SUCK_DURATION = 0.35;
+                    suck_t = unit_clamp(t / SUCK_DURATION); t -= SUCK_DURATION;
+
+                    t -= 0.75; /* pause after */
                 }
 
-                const BACK_DURATION = 1;
-                back_t = unit_clamp(t / BACK_DURATION); t -= BACK_DURATION;
+                /* the animation is done, time has run over */
+                if (t > 0) {
+                    input.zoom = DEFAULT_ZOOM;
+                    input.cam_pivot_x = save.player.damped_cam_pivot_x;
+                    input.cam_pivot_y = save.player.damped_cam_pivot_y;
 
-                /* pause at the end */
-                t -= 0.75;
-            }
+                    save.player.pos.x   = 0;
+                    save.player.pos.y   = 0;
+                    save.player.vel.x   = 0.12; /* he slides into the next level */
+                    save.player.vel.y   = 0.12; /* he slides into the next level */
+                    input.cam_pivot_x   = -5;
+                    input.cam_pivot_y   = -5;
+                    save.player.scale   = 1;
+                    save.player.z_boost = 0;
+                    save.player.opacity = 1;
 
-            if (t > 0) {
-                save.cutscene_active = false;
-                return;
-            }
+                    save.cutscene_active = false;
+                    save.map = to_map;
+                    this.hole_step_timestamp = null;
+                    return;
+                }
 
-            if (this.pickup_get_t >= 1) {
-                save.player.wep = true;
-                this.pickup_get = true;
-            }
+                save.player.z_boost = 0;
+                save.player.scale   = 1;
+                input.zoom = DEFAULT_ZOOM;
 
-            if (out_t > 0) {
-                input.zoom = lerp(DEFAULT_ZOOM,           70,  out_t);
-                input.zoom = lerp(  input.zoom, DEFAULT_ZOOM, back_t);
+                if (up_t > 0) {
+                    input.zoom = lerp(input.zoom, input.zoom-2, up_t);
 
-                const p = save.player;
-                input.cam_pivot_x = lerp(p.damped_cam_pivot_x, this.CUTSCENE_CENTER_X,  out_t);
-                input.cam_pivot_y = lerp(p.damped_cam_pivot_y, this.CUTSCENE_CENTER_Y,  out_t);
-                input.cam_pivot_x = lerp(   input.cam_pivot_x,   p.damped_cam_pivot_x, back_t);
-                input.cam_pivot_y = lerp(   input.cam_pivot_y,   p.damped_cam_pivot_y, back_t);
-            }
+                    /* player -> hole */
+                    /* have to damp here or store position when animation starts */
+                    const damp_t = Math.pow(1 - 0.75, 60*delta_time);
+                    save.player.pos.x = lerp(save.player.pos.x, hole_x, damp_t);
+                    save.player.pos.y = lerp(save.player.pos.y, hole_y, damp_t);
+
+                    /* camera -> hole */
+                    const p = save.player;
+                    input.cam_pivot_x   = lerp(p.damped_cam_pivot_x, hole_x, up_t);
+                    input.cam_pivot_y   = lerp(p.damped_cam_pivot_y, hole_y, up_t);
+
+                    save.player.z_boost = lerp(save.player.z_boost, 2.8, ease_out_circ(up_t));
+                    save.player.scale   = lerp(  save.player.scale, 0.7, ease_out_circ(up_t));
+                }
+
+                if (suck_t > 0) {
+                    input.zoom = lerp(input.zoom, input.zoom-2, suck_t);
+
+                    save.player.scale   = lerp(   save.player.scale,    0.2, suck_t);
+                    save.player.z_boost = lerp( save.player.z_boost,    0.0, suck_t);
+                    save.player.opacity = lerp(                 1.0,    0.0, 1 - ease_out_circ(1 - suck_t));
+                }
+            });
+        },
+
+        update() {
+            let i = 0;
+
+            if (save.cutscene_active) return;
+
+            this.for_holes((idx, hole_x, hole_y, _map) => {
+                const dx = save.player.pos.x - hole_x;
+                const dy = save.player.pos.y - hole_y;
+                const dist = Math.sqrt(dx*dx + dy*dy);
+                if (dist < 0.7) {
+                    this.hole_step_timestamp = last_timestamp;
+                    this.hole_stepped_idx = idx;
+                }
+            });
         },
 
         draw(ctx) {
@@ -1108,57 +1235,17 @@ const save = {
                 );
             });
 
-            this.for_enemies((_, enemy_x, enemy_y) => {
-                drawImg(AXIS_SPRITE, enemy_x, enemy_y, 1, ATLAS_NINJA);
-            });
+            this.for_holes((_idx, hole_x, hole_y, _map) => {
 
-            drawImg(AXIS_SPRITE, -5, -3,  2.0, ATLAS_TREE);
-            drawImg(AXIS_SPRITE,  2, -5,  4.0, ATLAS_TREE);
-            drawImg(AXIS_SPRITE,  2,  7,  1.0, ATLAS_BAMBOO);
-            drawImg(AXIS_SPRITE,  4,  5,  1.2, ATLAS_BAMBOO);
+                const bob = Math.sin(5*last_timestamp);
+                pushImgUV(ATLAS_ARW_DOWN, 0, 0.5 + 0.05*(1.0 - bob));
+                pushSpriteXYZ(hole_x, hole_y - 0.5, 0.8 + 0.1*bob, 0.6);
 
-            if (!this.pickup_get) {
-                let x = this.PICKUP_X;
-                let y = this.PICKUP_Y + 0.2 + 0.2*Math.sin(last_timestamp*3);
-                let z = 0;
-                let opacity = 1;
-                let scale = 1.0;
-
-                {
-                    let t = this.pickup_get_t;
-
-                    const UP_DURATION = 0.2;
-                    const up_t = unit_clamp(t / UP_DURATION); t -= UP_DURATION;
-
-                    t -= 0.1;
-
-                    const JUMP_DURATION = 0.4;
-                    const jump_t = unit_clamp(t / JUMP_DURATION); t -= JUMP_DURATION;
-
-                    x = lerp(x, save.player.pos.x, up_t);
-                    y = lerp(y, save.player.pos.y, up_t);
-
-                    z = 1.6*up_t;
-
-                    const jump_saw_t = 1 - Math.abs(jump_t - 0.5)*2;
-                    z = lerp(z, z+0.25, jump_saw_t);
-                    scale *= 1 + jump_saw_t*0.2;
-
-                    t -= 0.2;
-
-                    if (t > 0) opacity = 1 - t / 0.1;
-                }
-
-                pushImgUV(ATLAS_CARROT, 0, opacity);
-                pushSpriteXYZ(x, y, z, scale);
-            }
-
-            this.for_bridges((bridge) => {
-                this.bridge.draw(bridge, ctx);
+                drawImg(AXIS_FLAT, hole_x, hole_y, 1, ATLAS_HOLE);
             });
         },
 
-        collision(pos) {
+        distance_at(pos) {
             let min_dist = Infinity;
 
             this.for_circles((x, y, size) => {
@@ -1167,183 +1254,269 @@ const save = {
                 min_dist = Math.min(min_dist, Math.sqrt(dx*dx + dy*dy) - size*0.65);
             });
 
-            this.for_bridges((bridge) => {
-                min_dist = Math.min(min_dist, this.bridge.distance(bridge, pos));
-            });
-
             return min_dist;
         },
 
         height_at(p) {
-            let height = Infinity;
-
-            this.for_bridges((bridge) => {
-                const bridge_height = Math.min(0, 0.5 + this.bridge.height_at(bridge, p));
-                height = Math.min(height, bridge_height);
-            });
+            let height = 0;
 
             return height;
         },
-
-        bridge: {
-            PLANK_SPACING: 3.6,
-            BENDYNESS    : 0.4,
-
-            plank_points(bridge) {
-                let planks_min = Math.min(bridge.path_from, bridge.path_to)-3.5;
-                let planks_max = Math.max(bridge.path_from, bridge.path_to)+2.5;
-                let player_t = inv_lerp(planks_min+1, planks_max-1, save.player.pos.x);
-                player_t = Math.min(1, Math.max(0, player_t));
-
-                const control0 = [planks_min - 5, 5 + 30*(0 + player_t)];
-                const control1 = [planks_max + 5, 5 + 30*(1 - player_t)];
-                const start = [planks_min, 0];
-                const end   = [planks_max, 0];
-                const arg = { p0: control0, p1: start, p2: end, p3: control1, alpha: this.BENDYNESS };
-
-                return catmull_uniformly_spaced(arg, this.PLANK_SPACING);
-            },
-
-            height_at(bridge, p) {
-                let planks_min = Math.min(bridge.path_from, bridge.path_to)-3.5;
-                let planks_max = Math.max(bridge.path_from, bridge.path_to)+2.5;
-                let player_t = inv_lerp(planks_min+1, planks_max-1, p.x);
-                player_t = Math.min(1, Math.max(0, player_t));
-
-                const control0 = [planks_min - 5, 5 + 30*(0 + player_t)];
-                const control1 = [planks_max + 5, 5 + 30*(1 - player_t)];
-                const start = [planks_min, 0];
-                const end   = [planks_max, 0];
-                return catmull(control0, start, end, control1, player_t, this.BENDYNESS)[1];
-            },
-
-            /* distance from point to bridge */
-            distance(bridge, p) {
-                return sd_segment(
-                    p,
-                    bridge.path_from + 3, 0,
-                    bridge.path_to   - 3, 0
-                ) - 1.5;
-            },
-
-            draw(bridge, ctx) {
-                const { geo, pushImgUV, drawImg } = ctx;
-
-                let path_min = Math.min(bridge.path_from, bridge.path_to);
-                let path_max = Math.max(bridge.path_from, bridge.path_to);
-
-
-                /* add poles to each end of the bridge */
-                for (let x = 0; x < 2; x += 1)
-                    for (let y = -1; y <= 2; y += 2)
-                        drawImg(
-                            /* axis */ AXIS_SPRITE,
-                            /* x, y */ lerp(path_min-1.5, path_max+0.5, x), 1.8*y,
-                            /* size */ 1,
-                            /* img  */ ATLAS_THREAD
-                        );
-
-                /* draw the planks */
-                {
-                    let last;
-                    for (const p of this.plank_points(bridge)) {
-                        if (!last) {
-                            last = p;
-                            continue;
-                        }
-                        pushImgUV(ATLAS_DOOR);
-
-                        const size = 2.5;
-
-                        let x0 = last[0];
-                        let z0 = last[1];
-                        let x1 = p   [0];
-                        let z1 = p   [1];
-
-                        /* we need to "expand" the vector that goes from x0,z0 to z1,x1 because
-                         * the image doesn't fill 100% of the square. (the UVs aren't "tight") */
-                        {
-                            let dx = x1 - x0;
-                            let dz = z1 - z0;
-                            const d_len = Math.sqrt(dx*dx + dz*dz);
-                            dx /= d_len;
-                            dz /= d_len;
-
-                            x0 -= dx;
-                            z0 -= dz;
-                            x1 += dx;
-                            z1 += dz;
-                        }
-
-                        const vbuf_i = geo.pos.length / 3;
-                        geo.pos.push(x0, -size, z0 + 1.0);
-                        geo.pos.push(x1, -size, z1 + 1.0);
-                        geo.pos.push(x1,  size, z1 + 1.0);
-                        geo.pos.push(x0,  size, z0 + 1.0);
-                        geo.layer.push(-1e6 - (z0 + z1));
-                        geo.layer.push(-1e6 - (z0 + z1));
-
-                        geo.idx.push(vbuf_i + 0, vbuf_i + 1, vbuf_i + 2,
-                                     vbuf_i + 2, vbuf_i + 3, vbuf_i + 0);
-
-                        last[0] = p[0];
-                        last[1] = p[1];
-                    }
-                }
-            }
-        },
-
-        update() {
-            let i = 0;
-
-            if (save.cutscene_active) return;
-
-            this.for_enemies((idx, x, y) => {
-                const pos = { x, y };
-
-                const t = ~~(last_timestamp / delta_time) % 70;
-
-                if (t == 0) {
-                    const dx = save.player.pos.x - pos.x;
-                    const dy = save.player.pos.y - pos.y;
-                    const angle = Math.atan2(dy, dx);
-                    save.bullets.push({
-                        layer: LAYER_PLAYER,
-                        z: 1,
-                        pos,
-                        /* using "sign" instead of "sin" here makes them slightly bad
-                         * at aiming -- good for tutorial */
-                        dir: { x: Math.cos(angle), y: Math.sign(angle) },
-                        range: 25,
-                        speed: 7,
-                        sprite: ATLAS_KNIFE
-                    });
-                }
-
-                save.bullet.for_collisions(
-                    save.bullets,
-                    LAYER_ENEMIES,
-                    pos,
-                    0.95,
-                    bullet => {
-                        const direction = Math.atan2(bullet.dir.y, bullet.dir.x);
-                        save.particle.blood(save.particles, direction, pos, 1);
-                        this.enemies_living[idx] = false;
-                        return true;
-                    }
-                );
-            });
-
-            if (this.pickup_get_timestamp == null) {
-                const dx = save.player.pos.x - this.PICKUP_X;
-                const dy = save.player.pos.y - this.PICKUP_Y;
-                const dist = Math.sqrt(dx*dx + dy*dy);
-                if (dist < 0.7) {
-                    this.pickup_get_timestamp = last_timestamp;
-                }
-            }
-        }
     },
+
+    maps: {
+        tutorial: {
+            PICKUP_X: -65.8,
+            PICKUP_Y:   0.0,
+            pickup_get: false,
+            pickup_get_timestamp: null,
+
+            CUTSCENE_CENTER_X: -31.5,
+            CUTSCENE_CENTER_Y: 0,
+            move_earth_t: 0,
+            pickup_get_t: 0,
+
+            enemies_died_timestamp: [null, null],
+
+            for_circles(circle) {
+                /*      x,  y,  size */
+                circle(  2.0,   3.0,     7.0);
+                circle( -4.0,   0.0,     9.0);
+                circle(  2.0,  -3.0,     9.5);
+
+                circle(-35.8,   0.0,     6.5);
+                circle(-66.8,   0.0,     6.5);
+
+                /* enemy platforms */
+                this.for_enemies((_, x, y) => circle(x, y, 6.5));
+            },
+
+            for_enemies(enemy) {
+                const t = this.move_earth_t;
+
+                enemy(0, lerp(-25.0, -34.5, t), lerp(-15.0, -6.5, t));
+                enemy(1, lerp(-45.0, -37.5, t), lerp( 12.5,  6.5, t));
+            },
+
+            for_enemies_living(enemy) {
+                const died_ts = this.enemies_died_timestamp;
+                this.for_enemies((idx, x, y) => {
+                    if (died_ts[idx] == null) enemy(idx, x, y);
+                });
+            },
+
+            for_bridges(bridge) {
+                bridge({ path_from: -10, path_to: -29 });
+                bridge({ path_from: -40, path_to: -60 });
+            },
+
+            camera_animate() {
+                if (this.pickup_get_timestamp == null) return;
+
+                /* we bite off bits of t and assign them to our animations */
+                let t = last_timestamp - this.pickup_get_timestamp;
+                let out_t = 0, back_t = 0;
+                {
+                    if (t > 0) save.cutscene_active = true;
+
+                    /* one little pause right after they get the pickup */
+                    const PICKUP_GET_DURATION = 2.0;
+                    this.pickup_get_t = unit_clamp(t / PICKUP_GET_DURATION); t -= PICKUP_GET_DURATION;
+
+                    t -= 1;
+
+                    const OUT_DURATION = 1;
+                    out_t = unit_clamp(t / OUT_DURATION); t -= OUT_DURATION;
+
+                    /* small pauses before and after MOVE_EARTH */
+                    {
+                        t -= 0.75;
+
+                        const MOVE_EARTH_DURATION = 2;
+                        this.move_earth_t = unit_clamp(t / MOVE_EARTH_DURATION); t -= MOVE_EARTH_DURATION;
+
+                        t -= 1.75;
+                    }
+
+                    const BACK_DURATION = 1;
+                    back_t = unit_clamp(t / BACK_DURATION); t -= BACK_DURATION;
+
+                    /* pause at the end */
+                    t -= 0.75;
+                }
+
+                if (t > 0) {
+                    save.cutscene_active = false;
+                    return;
+                }
+
+                if (this.pickup_get_t >= 1) {
+                    save.player.wep = true;
+                    this.pickup_get = true;
+                }
+
+                if (out_t > 0) {
+                    input.zoom = lerp(DEFAULT_ZOOM,           70,  out_t);
+                    input.zoom = lerp(  input.zoom, DEFAULT_ZOOM, back_t);
+
+                    const p = save.player;
+                    input.cam_pivot_x = lerp(p.damped_cam_pivot_x, this.CUTSCENE_CENTER_X,  out_t);
+                    input.cam_pivot_y = lerp(p.damped_cam_pivot_y, this.CUTSCENE_CENTER_Y,  out_t);
+                    input.cam_pivot_x = lerp(   input.cam_pivot_x,   p.damped_cam_pivot_x, back_t);
+                    input.cam_pivot_y = lerp(   input.cam_pivot_y,   p.damped_cam_pivot_y, back_t);
+                }
+            },
+
+            draw(ctx) {
+                const { pushSpriteXYZ, pushImgUV, drawImg } = ctx;
+
+                this.for_circles((x, y, size) => {
+                    drawImg(
+                        AXIS_FLAT,
+                        x, y,
+                        size * 0.9,
+                        ATLAS_MOON,
+                        SHADER_FLAG_GREENIFY
+                    );
+                });
+
+                this.for_enemies((idx, enemy_x, enemy_y) => {
+                    let opacity = 1;
+                    let push = 0;
+                    if (this.enemies_died_timestamp[idx] != null) {
+                        const elapsed = last_timestamp - this.enemies_died_timestamp[idx];
+                        opacity = 1 - ease_out_circ(unit_clamp((elapsed - 0.1) / 0.25));
+                        push = 0.3 * ease_out_circ(unit_clamp((elapsed - 0.0) / 0.2));
+                    }
+                    pushImgUV(ATLAS_NINJA, 0, opacity);
+                    pushSpriteXYZ(enemy_x, enemy_y + push, 0, 1);
+                });
+
+                drawImg(AXIS_SPRITE, -5, -3,  2.0, ATLAS_TREE);
+                drawImg(AXIS_SPRITE,  2, -5,  4.0, ATLAS_TREE);
+                drawImg(AXIS_SPRITE,  2,  7,  1.0, ATLAS_BAMBOO);
+                drawImg(AXIS_SPRITE,  4,  5,  1.2, ATLAS_BAMBOO);
+
+                if (!this.pickup_get) {
+                    let x = this.PICKUP_X;
+                    let y = this.PICKUP_Y + 0.2 + 0.2*Math.sin(last_timestamp*3);
+                    let z = 0;
+                    let opacity = 1;
+                    let scale = 1.0;
+
+                    {
+                        let t = this.pickup_get_t;
+
+                        const UP_DURATION = 0.2;
+                        const up_t = unit_clamp(t / UP_DURATION); t -= UP_DURATION;
+
+                        t -= 0.1;
+
+                        const JUMP_DURATION = 0.4;
+                        const jump_t = unit_clamp(t / JUMP_DURATION); t -= JUMP_DURATION;
+
+                        x = lerp(x, save.player.pos.x, up_t);
+                        y = lerp(y, save.player.pos.y, up_t);
+
+                        z = 1.6*up_t;
+
+                        const jump_saw_t = 1 - Math.abs(jump_t - 0.5)*2;
+                        z = lerp(z, z+0.25, jump_saw_t);
+                        scale *= 1 + jump_saw_t*0.2;
+
+                        t -= 0.2;
+
+                        if (t > 0) opacity = 1 - t / 0.1;
+                    }
+
+                    pushImgUV(ATLAS_CARROT, 0, opacity);
+                    pushSpriteXYZ(x, y, z, scale);
+                }
+
+                this.for_bridges((bridge) => map_util.bridge.draw(bridge, ctx));
+            },
+
+            distance_at(pos) {
+                let min_dist = Infinity;
+
+                this.for_circles((x, y, size) => {
+                    const dx = pos.x - x;
+                    const dy = pos.y - y;
+                    min_dist = Math.min(min_dist, Math.sqrt(dx*dx + dy*dy) - size*0.65);
+                });
+
+                this.for_bridges((bridge) => {
+                    const dist = map_util.bridge.distance(bridge, pos);
+                    min_dist = Math.min(min_dist, dist);
+                });
+
+                return min_dist;
+            },
+
+            height_at(p) {
+                let height = Infinity;
+
+                this.for_bridges((bridge) => {
+                    let bridge_height = map_util.bridge.height_at(bridge, p);
+                    bridge_height = Math.min(0, 0.5 + bridge_height);
+                    height = Math.min(height, bridge_height);
+                });
+
+                return height;
+            },
+
+            update() {
+                let i = 0;
+
+                if (save.cutscene_active) return;
+
+                this.for_enemies_living((idx, x, y) => {
+                    const pos = { x, y };
+
+                    const t = ~~(last_timestamp / delta_time) % 70;
+
+                    if (t == 0) {
+                        const dx = save.player.pos.x - pos.x;
+                        const dy = save.player.pos.y - pos.y;
+                        const angle = Math.atan2(dy, dx);
+                        save.bullets.push({
+                            layer: LAYER_PLAYER,
+                            z: 1,
+                            pos,
+                            /* using "sign" instead of "sin" here makes them slightly bad
+                             * at aiming -- good for tutorial */
+                            dir: { x: Math.cos(angle), y: Math.sign(angle) },
+                            range: 25,
+                            speed: 7,
+                            sprite: ATLAS_KNIFE
+                        });
+                    }
+
+                    save.bullet.for_collisions(
+                        save.bullets,
+                        LAYER_ENEMIES,
+                        pos,
+                        0.95,
+                        bullet => {
+                            const direction = Math.atan2(bullet.dir.y, bullet.dir.x);
+                            save.particle.blood(save.particles, direction, pos, 1);
+                            this.enemies_died_timestamp[idx] = last_timestamp;
+                            return true;
+                        }
+                    );
+                });
+
+                if (this.pickup_get_timestamp == null) {
+                    const dx = save.player.pos.x - this.PICKUP_X;
+                    const dy = save.player.pos.y - this.PICKUP_Y;
+                    const dist = Math.sqrt(dx*dx + dy*dy);
+                    if (dist < 0.7) {
+                        this.pickup_get_timestamp = last_timestamp;
+                    }
+                }
+            },
+        },
+    }
 };
 
 requestAnimationFrame(function frame(timestamp) {
@@ -1354,8 +1527,8 @@ requestAnimationFrame(function frame(timestamp) {
     delta_time = timestamp - last_timestamp;
     last_timestamp = timestamp;
 
-    save.cutscene_active = false; /* if platform sets this to true in camera_animate, no e.g. movement or enemy AI occurs */
-    save.platform.camera_animate();
+    save.cutscene_active = false; /* if map sets this to true in camera_animate, no e.g. movement or enemy AI occurs */
+    save.map.camera_animate();
 
     if (!save.cutscene_active) {
         save.player.controls_movement();
@@ -1467,7 +1640,7 @@ requestAnimationFrame(function frame(timestamp) {
 
         }
 
-        save.platform.update();
+        save.map     .update();
         save.player  .update();
         save.bullet  .update(save.bullets  );
         save.particle.update(save.particles);
@@ -1476,7 +1649,7 @@ requestAnimationFrame(function frame(timestamp) {
         save.flinch.draw(ctx);
         save.bullets  .forEach(b => save.bullet  .draw(ctx, b));
         save.particles.forEach(b => save.particle.draw(ctx, b));
-        save.platform.draw(ctx);
+        save.map.draw(ctx);
 
         save.player.draw(ctx);
     }
