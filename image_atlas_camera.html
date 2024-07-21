@@ -335,49 +335,6 @@ const buf = {
 let shaders;
 /* compile shaders */
 {
-    const vs_blur = `#version 300 es
-        precision mediump float;
-
-        out vec2 v_texcoord;
-
-        void main(void) {
-            float x = float((gl_VertexID & 1) << 2);
-            float y = float((gl_VertexID & 2) << 1);
-            v_texcoord.x = x * 0.5;
-            v_texcoord.y = y * 0.5;
-            gl_Position = vec4(x - 1.0, y - 1.0, 0, 1);
-        }
-    `;
-
-    const fs_blur = `#version 300 es
-        precision mediump float;
-
-        uniform sampler2D u_texture;
-        uniform vec2 u_direction;
-
-        in vec2 v_texcoord;
-
-        out vec4 frag_color;
-
-        void main(void) {
-            vec2 one_pixel = u_direction*(vec2(1) / vec2(textureSize(u_texture, 0)));
-
-            frag_color = texture(u_texture, v_texcoord) * 0.2270270270;
-
-            frag_color += texture(u_texture, v_texcoord + one_pixel    ) * 0.1945945946;
-            frag_color += texture(u_texture, v_texcoord - one_pixel    ) * 0.1945945946;
-
-            frag_color += texture(u_texture, v_texcoord + one_pixel*2.0) * 0.1216216216;
-            frag_color += texture(u_texture, v_texcoord - one_pixel*2.0) * 0.1216216216;
-
-            frag_color += texture(u_texture, v_texcoord + one_pixel*3.0) * 0.0540540541;
-            frag_color += texture(u_texture, v_texcoord - one_pixel*3.0) * 0.0540540541;
-
-            frag_color += texture(u_texture, v_texcoord + one_pixel*4.0) * 0.0162162162;
-            frag_color += texture(u_texture, v_texcoord - one_pixel*4.0) * 0.0162162162;
-        }
-    `;
-
     const vs_skydome = 
         'attribute vec3 a_pos;' +
         'attribute vec2 a_uv;' +
@@ -487,7 +444,6 @@ let shaders;
     shaders = {
         geo:     createProgram(gl, vs_geo    , fs_geo    ),
         skydome: createProgram(gl, vs_skydome, fs_skydome),
-        blur:    createProgram(gl, vs_blur   , fs_blur   )
     }
 }
 
@@ -550,8 +506,6 @@ let atlas = gl.createTexture();
 /* uploading skydome texture to GPU
  * TODO: blur it */
 let tex_skydome = gl.createTexture();
-let tex_skydome_loaded  = false;
-let tex_skydome_blurred = false;
 (async () => {
     const img = new Image();
     img.src = 'garden_hdri.jpg';
@@ -617,8 +571,6 @@ let tex_skydome_blurred = false;
         gl.deleteTexture(    target.tex);
         gl.deleteFramebuffer(target.fb );
     }
-
-    tex_skydome_loaded = true;
 })();
 
 /* generate skydome geometry */
