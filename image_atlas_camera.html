@@ -1860,10 +1860,12 @@ requestAnimationFrame(function frame(timestamp) {
     };
     {
         const geo = ui_geo;
+        /* could probably pass a matrix to this render pass instead of doing this,
+         * but it works :shrug: */
         const ar = gl.canvas.width / gl.canvas.height;
 
+        /* this should probably be a circle, but, meh */
         function drawQuad(x, y, size, opacity) {
-            /* generate UVs from atlas_index */
             geo.uv.push(
                 opacity, opacity, opacity, opacity,
                 opacity, opacity, opacity, opacity,
@@ -1886,8 +1888,10 @@ requestAnimationFrame(function frame(timestamp) {
         const bottom = -0.98 + size*ar;
         const left   = -0.98 + size;
         const right  =  0.98 - size;
-        drawQuad( left, bottom, size, 0.3);
-        drawQuad(right, bottom, size, 0.3);
+        drawQuad( left, bottom, size    , 0.3);
+        drawQuad(right, bottom, size    , 0.3);
+        drawQuad( left, bottom, size*0.7, 0.3);
+        drawQuad(right, bottom, size*0.7, 0.3);
     }
 
     /* submitting geometry to the GPU */
