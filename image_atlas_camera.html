@@ -536,45 +536,6 @@ let tex_skydome = gl.createTexture();
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-
-    return;
-    {
-        let render_targets = [
-            { tex: null, fb: null },
-            { tex: null, fb: null },
-        ];
-
-        /* create scene-sized render-target for post-processing fx (like shadows) */
-        for (const target of render_targets) {
-            target.tex = gl.createTexture();
-            gl.bindTexture(gl.TEXTURE_2D, target.tex);
-
-            // define size and format of level 0
-            gl.texImage2D(
-                gl.TEXTURE_2D,
-                /* level,          */ 0,
-                /* internalFormat, */ gl.RGBA,
-                /* width,          */ canvas.width,
-                /* height,         */ canvas.height,
-                /* border,         */ 0,
-                /* format,         */ gl.RGBA,
-                /* type,           */ gl.UNSIGNED_BYTE,
-                /* data            */ null
-            );
-
-            // set the filtering so we don't need mips
-            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-
-            target.fb = gl.createFramebuffer();
-            gl.bindFramebuffer(gl.FRAMEBUFFER, target.fb);
-            gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, target.tex, 0);
-        }
-
-        gl.deleteTexture(    target.tex);
-        gl.deleteFramebuffer(target.fb );
-    }
 })();
 
 /* generate skydome geometry */
