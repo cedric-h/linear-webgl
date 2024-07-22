@@ -1852,6 +1852,44 @@ requestAnimationFrame(function frame(timestamp) {
         geo.idx = tris.map(x => x[0]).flat();
     }
 
+    /* rendering ui */
+    const ui_geo = {
+        idx: [],
+        pos: [],
+        uv : [],
+    };
+    {
+        const geo = ui_geo;
+        const ar = gl.canvas.width / gl.canvas.height;
+
+        function drawQuad(x, y, size, opacity) {
+            /* generate UVs from atlas_index */
+            geo.uv.push(
+                opacity, opacity, opacity, opacity,
+                opacity, opacity, opacity, opacity,
+                opacity, opacity, opacity, opacity,
+                opacity, opacity, opacity, opacity
+            );
+
+            const vbuf_i = geo.pos.length / 3;
+
+            geo.pos.push(x+size, y-size*ar, 0);
+            geo.pos.push(x-size, y-size*ar, 0);
+            geo.pos.push(x-size, y+size*ar, 0);
+            geo.pos.push(x+size, y+size*ar, 0);
+
+            geo.idx.push(vbuf_i + 0, vbuf_i + 1, vbuf_i + 2,
+                         vbuf_i + 2, vbuf_i + 3, vbuf_i + 0);
+        }
+
+        const size = 0.1;
+        const bottom = -0.98 + size*ar;
+        const left   = -0.98 + size;
+        const right  =  0.98 - size;
+        drawQuad( left, bottom, size, 0.3);
+        drawQuad(right, bottom, size, 0.3);
+    }
+
     /* submitting geometry to the GPU */
     {
         /* no point in enabling depth since things need to be sorted anyway :thinking: */
@@ -1912,6 +1950,30 @@ requestAnimationFrame(function frame(timestamp) {
 
             /* upload/bind geometry */
             {
+                gl.bindBuffer(gl.ARRAY_BUFFER, buf.geo_v_pos);
+                gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(geo.pos), gl.STATIC_DRAW);
+                gl.vertexAttribPointer(shaders.geo.a_pos, 3, gl.FLOAT, false, 0, 0);
+
+                gl.bindBuffer(gl.ARRAY_BUFFER, buf.geo_v_uv);
+                gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(geo.uv), gl.STATIC_DRAW);
+                gl.vertexAttribPointer(shaders.geo.a_uv, 4, gl.FLOAT, false, 0, 0);
+
+                gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, buf.geo_i);
+                gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, new Uint16Array(geo.idx), gl.STATIC_DRAW);
+            }
+
+            gl.drawElements(gl.TRIANGLES, geo.idx.length, gl.UNSIGNED_SHORT, 0);
+        }
+
+        /* UI geo pass */
+        {
+            const geo = ui_geo;
+
+            gl.uniformMatrix4fv(shaders.geo.u_matrix, false, mat4_create());
+
+            /* upload/bind geometry */
+            {
+
                 gl.bindBuffer(gl.ARRAY_BUFFER, buf.geo_v_pos);
                 gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(geo.pos), gl.STATIC_DRAW);
                 gl.vertexAttribPointer(shaders.geo.a_pos, 3, gl.FLOAT, false, 0, 0);
