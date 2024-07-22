@@ -57,6 +57,7 @@ const AXIS_SPRITE = 1; /* up, but tilted back slightly to face camera */
 
 const ATLAS_CHARS = [];
 const ATLAS_NINJA    = (ATLAS_CHARS.push('🥷'), ATLAS_CHARS.length - 1);
+const ATLAS_ROCK     = (ATLAS_CHARS.push('🪨'), ATLAS_CHARS.length - 1);
 const ATLAS_BLOOD    = (ATLAS_CHARS.push('🩸'), ATLAS_CHARS.length - 1);
 const ATLAS_MOON     = (ATLAS_CHARS.push('🌕'), ATLAS_CHARS.length - 1);
 const ATLAS_HOLE     = (ATLAS_CHARS.push('🕳️'), ATLAS_CHARS.length - 1);
@@ -751,8 +752,13 @@ const map_util = {
     },
 
     enemies: {
+        ENEMY: {
+            TUTORIAL_NINJA: 0,
+            ROCK: 1,
+        },
+
         draw(enemies, for_enemies, { pushImgUV, pushSpriteXYZ }) {
-            for_enemies((idx, enemy_x, enemy_y) => {
+            for_enemies((idx, kind, enemy_x, enemy_y) => {
                 let opacity = 1;
                 let push = 0;
                 if (enemies.died_timestamps[idx] != null) {
@@ -762,35 +768,51 @@ const map_util = {
                 }
                 const push_x = push*enemies.died_directions[idx].x;
                 const push_y = push*enemies.died_directions[idx].y;
-                pushImgUV(ATLAS_NINJA, 0, opacity);
+
+                let sprite;
+                if (kind == this.ENEMY.TUTORIAL_NINJA) sprite = ATLAS_NINJA;
+                if (kind == this.ENEMY.ROCK          ) sprite = ATLAS_ROCK;
+
+                pushImgUV(sprite, 0, opacity);
                 pushSpriteXYZ(enemy_x + push_x, enemy_y + push_y, 0, 1);
             });
         },
 
         update(enemies, for_enemies) {
-            for_enemies((idx, x, y) => {
+            for_enemies((idx, kind, x, y) => {
                 /* dead guys don't get updates */
                 if (enemies.died_timestamps[idx] != null) return;
 
                 const pos = { x, y };
 
-                const t = ~~(last_timestamp / delta_time) % 70;
+                let shoots = true;
+                if (kind == this.ENEMY.ROCK) shoots = false;
+                if (shoots) {
+                    const t = ~~(last_timestamp / delta_time) % 70;
 
-                if (t == 0) {
-                    const dx = save.player.pos.x - pos.x;
-                    const dy = save.player.pos.y - pos.y;
-                    const angle = Math.atan2(dy, dx);
-                    save.bullets.push({
-                        layer: LAYER_PLAYER,
-                        z: 1,
-                        pos,
-                        /* using "sign" instead of "sin" here makes them slightly bad
-                         * at aiming -- good for tutorial */
-                        dir: { x: Math.cos(angle), y: Math.sign(angle) },
-                        range: 25,
-                        speed: 7,
-                        sprite: ATLAS_KNIFE
-                    });
+                    if (t == 0) {
+                        const dx = save.player.pos.x - pos.x;
+                        const dy = save.player.pos.y - pos.y;
+                        const angle = Math.atan2(dy, dx);
+                        const dir = { x: 0, y: 0 };
+
+                        if (kind == this.ENEMY.TUTORIAL_NINJA)
+                            /* using "sign" instead of "sin" here makes them slightly bad
+                             * at aiming -- good for tutorial */
+                            dir.x = Math.cos(angle), dir.y = Math.sign(angle);
+                        else
+                            dir.x = Math.cos(angle), dir.y = Math.sin(angle);
+
+                        save.bullets.push({
+                            layer: LAYER_PLAYER,
+                            z: 1,
+                            pos,
+                            dir: dir,
+                            range: 25,
+                            speed: 7,
+                            sprite: ATLAS_KNIFE
+                        });
+                    }
                 }
 
                 save.bullet.for_collisions(
@@ -800,7 +822,17 @@ const map_util = {
                     0.95,
                     bullet => {
                         const direction = Math.atan2(bullet.dir.y, bullet.dir.x);
-                        save.particle.blood(save.particles, direction, pos, 1);
+                        
+                        switch (kind) {
+                            case (this.ENEMY.ROCK): {
+                                save.particle.break(save.particles, direction, pos, 1);
+                            } break;
+
+                            case (this.ENEMY.TUTORIAL_NINJA): {
+                                save.particle.blood(save.particles, direction, pos, 1);
+                            } break;
+                        }
+
                         enemies.died_timestamps[idx]   = last_timestamp;
                         enemies.died_directions[idx].x = bullet.dir.x;
                         enemies.died_directions[idx].y = bullet.dir.y;
@@ -1247,6 +1279,33 @@ const save = {
                     sprite: ATLAS_BLOOD
                 });
             }
+        },
+
+        break(particles, dir, pos, z = 0) {
+            for (let i = 0; i < 15; i++) {
+                const t = i / 15;
+                const edge = 1 - 2 * Math.abs(t - 0.5);
+
+                const randomness = 0.2 * edge;
+                const base_range = Math.PI*0.8;
+                const half = (randomness + base_range)*0.5;
+                const angle = dir + (Math.random()*randomness + base_range*t) - half;
+                particles.push({
+                    z: 1 + z,
+                    pos: {
+                        x: pos.x - Math.cos(angle) * 0.2,
+                        y: pos.y - Math.sin(angle) * 0.2
+                    },
+                    dir: {
+                        x: Math.cos(angle),
+                        y: Math.sin(angle)
+                    },
+                    range: (3 + 0.5*Math.random()) * lerp(1.0, 1.6, edge),
+                    speed: (3 + 4.0*Math.random()) * lerp(1.0, 1.8, edge),
+                    size: (0.1 + 0.1*Math.random()) * lerp(0.2, 1.0, edge),
+                    sprite: ATLAS_ROCK
+                });
+            }
         }
     },
 
@@ -1343,18 +1402,24 @@ const save = {
 
             enemies: {
                 died_timestamps: [null, null],
-                died_directions: [{ x: 0, y: 0 }, { x: 0, y: 0 }],
+                died_directions: Array.from({ length: 20 }, () => ({ x: 0, y: 0 }))
             },
 
             for_circles(circle) {
-                circle( 0.0, 0.0, 8.0);
-                circle(-8.0, 0.0, 10.0);
+                circle(  0.0,  0.0,  8.0);
+                circle(-13.0,  6.0,  4.0);
+                circle( -8.0,  0.0, 10.0);
+                circle(-18.0, 11.0,  8.0);
             },
             for_enemies(enemy) {
-                enemy(0, -12, 0);
+                const rock = map_util.enemies.ENEMY.ROCK;
+                enemy(0, rock, -13.0,  6.0);
+                enemy(1, rock, -13.0,  8.0);
+                enemy(2, rock, -11.0,  6.5);
+                enemy(3, rock, -15.0,  7.0);
             },
 
-            hole_transition: { step_timestamp: null, stepped_idx: null, appeared_timestamp: [] },
+            hole_transition: { step_timestamp: null, stepped_idx: null },
             for_holes(hole) {
                 map_util.hole.for_spawn(hole, this.PLAYER_SPAWN, MAP_TUTORIAL, 0);
             },
@@ -1443,14 +1508,15 @@ const save = {
                 circle(-66.8,   0.0,     6.5);
 
                 /* enemy platforms */
-                this.for_enemies((_, x, y) => circle(x, y, 6.5));
+                this.for_enemies((_idx, _kind, x, y) => circle(x, y, 6.5));
             },
 
             for_enemies(enemy) {
                 const t = this.move_earth_t;
 
-                enemy(0, lerp(-25.0, -34.5, t), lerp(-15.0, -6.5, t));
-                enemy(1, lerp(-45.0, -37.5, t), lerp( 12.5,  6.5, t));
+                const ninja = map_util.enemies.ENEMY.TUTORIAL_NINJA;
+                enemy(0, ninja, lerp(-25.0, -34.5, t), lerp(-15.0, -6.5, t));
+                enemy(1, ninja, lerp(-45.0, -37.5, t), lerp( 12.5,  6.5, t));
             },
 
             for_bridges(bridge) {
