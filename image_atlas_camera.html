@@ -4,7 +4,8 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <title>WebGL Demo</title>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🥷</text></svg>">
+    <title>postmodern gamedev shitpost</title>
     <style> document, body { margin: 0px; padding: 0px; overflow: hidden; } </style>
   </head>
 
@@ -44,6 +45,7 @@ if (!gl) { alert('Failed to initialize WebGL'); }
 const SHADER_FLAG_NONE     = 0;
 const SHADER_FLAG_GREENIFY = 1;
 const SHADER_FLAG_GREYIFY  = 2;
+const SHADER_FLAG_BROWNIFY = 3;
 
 const DEBUG = 0;
 
@@ -71,6 +73,7 @@ const ATLAS_KNIFE    = (ATLAS_CHARS.push('🔪'), ATLAS_CHARS.length - 1);
 const ATLAS_CARROT   = (ATLAS_CHARS.push('🥕'), ATLAS_CHARS.length - 1);
 const ATLAS_THREAD   = (ATLAS_CHARS.push('🧵'), ATLAS_CHARS.length - 1);
 const ATLAS_DOOR     = (ATLAS_CHARS.push('🚪'), ATLAS_CHARS.length - 1);
+const ATLAS_CANE     = (ATLAS_CHARS.push('🦯'), ATLAS_CHARS.length - 1);
 
 
 const ATLAS_SIZE = Math.ceil(Math.sqrt(ATLAS_CHARS.length)); /* in emoji */
@@ -405,6 +408,12 @@ let shaders;
                     color.xyz = 0.4*vec3(grey);
                     color.xyz *= color.w;
                 }
+                if (abs(v_uv.z - ${SHADER_FLAG_BROWNIFY.toFixed(2)}) < 0.2) {
+                    color.xyz /= color.w;
+                    float grey = 0.21 * color.r + 0.71 * color.g + 0.07 * color.b;
+                    color.xyz = (0.5 + 0.5*grey)*vec3(0.51, 0.41, 0.32)*1.2;
+                    color.xyz *= color.w;
+                }
                 
                 if (color.w == 0.0) discard;
             } else {
@@ -624,6 +633,7 @@ const map_util = {
             let planks_min = Math.min(bridge.path_from, bridge.path_to)-3.5;
             let planks_max = Math.max(bridge.path_from, bridge.path_to)+2.5;
             let player_t = inv_lerp(planks_min+1, planks_max-1, save.player.pos.x);
+            // if (this.distance(bridge, save.player.pos) > 0.2) player_t = 0.5;
             player_t = Math.min(1, Math.max(0, player_t));
 
             const control0 = [planks_min - 5, 5 + 30*(0 + player_t)];
@@ -639,6 +649,7 @@ const map_util = {
             let planks_min = Math.min(bridge.path_from, bridge.path_to)-3.5;
             let planks_max = Math.max(bridge.path_from, bridge.path_to)+2.5;
             let player_t = inv_lerp(planks_min+1, planks_max-1, p.x);
+            // if (this.distance(bridge, save.player.pos) > 0.2) return 0;
             player_t = Math.min(1, Math.max(0, player_t));
 
             const control0 = [planks_min - 5, 5 + 30*(0 + player_t)];
@@ -652,8 +663,8 @@ const map_util = {
         distance(bridge, p) {
             return sd_segment(
                 p,
-                bridge.path_from + 3, 0,
-                bridge.path_to   - 3, 0
+                bridge.path_from + 3, bridge.y,
+                bridge.path_to   - 3, bridge.y
             ) - 1.5;
         },
 
@@ -669,7 +680,7 @@ const map_util = {
                 for (let y = -1; y <= 2; y += 2)
                     drawImg(
                         /* axis */ AXIS_SPRITE,
-                        /* x, y */ lerp(path_min-1.5, path_max+0.5, x), 1.8*y,
+                        /* x, y */ lerp(path_min-1.5, path_max+0.5, x), 1.8*y + bridge.y,
                         /* size */ 1,
                         /* img  */ ATLAS_THREAD
                     );
@@ -707,10 +718,10 @@ const map_util = {
                     }
 
                     const vbuf_i = geo.pos.length / 3;
-                    geo.pos.push(x0, -size, z0 + 1.0);
-                    geo.pos.push(x1, -size, z1 + 1.0);
-                    geo.pos.push(x1,  size, z1 + 1.0);
-                    geo.pos.push(x0,  size, z0 + 1.0);
+                    geo.pos.push(x0, bridge.y-size, z0 + 1.0);
+                    geo.pos.push(x1, bridge.y-size, z1 + 1.0);
+                    geo.pos.push(x1, bridge.y+size, z1 + 1.0);
+                    geo.pos.push(x0, bridge.y+size, z0 + 1.0);
                     geo.layer.push(-1e6 - (z0 + z1));
                     geo.layer.push(-1e6 - (z0 + z1));
 
@@ -994,8 +1005,10 @@ const map_util = {
 
 };
 
-const MAP_TUTORIAL = 0;
-const MAP_CAVE     = 1;
+const MAP_BASIC      = -1;
+const MAP_TUTORIAL   =  0;
+const MAP_CAVE       =  1;
+const MAP_DRAWBRIDGE =  2;
 
 const save = {
 
@@ -1416,10 +1429,225 @@ const save = {
         },
     },
 
-    map_key: DEBUG ? MAP_CAVE : MAP_TUTORIAL,
+    map_key: DEBUG ? MAP_DRAWBRIDGE : MAP_TUTORIAL,
     map() { return this.maps[this.map_key]; },
 
     maps: {
+
+        [MAP_BASIC]: {
+            PLAYER_SPAWN: {},
+            BULLETS_HIT_WALLS: true,
+
+
+            for_circles(circle) {
+                circle(  0.0,  0.0,  8.0);
+            },
+
+            hole_transition: { step_timestamp: null, stepped_idx: null },
+            for_holes(hole) {
+                // map_util.hole.for_spawn(hole, this.PLAYER_SPAWN, MAP_TUTORIAL, 0);
+            },
+
+            camera_animate() {
+                map_util.hole.leaving_cutscene(this.hole_transition, this.for_holes.bind(this));
+            },
+
+            update() {
+                let i = 0;
+
+                if (save.cutscene_active) return;
+
+                map_util.hole.detect_step(this.hole_transition, this.for_holes.bind(this));
+            },
+
+            draw(ctx) {
+                const { pushSpriteXYZ, pushImgUV, drawImg } = ctx;
+
+                this.for_circles((x, y, size) => {
+                    drawImg(
+                        AXIS_FLAT,
+                        x + size*MOON_NUDGE, y,
+                        size * 0.9,
+                        ATLAS_MOON,
+                        SHADER_FLAG_GREENIFY
+                    );
+                });
+
+                drawImg(AXIS_SPRITE, 3, 1,  0.8, ATLAS_THREAD);
+                
+                map_util.hole.draw(this.hole_transition, this.for_holes.bind(this), ctx);
+            },
+
+            distance_at(pos) {
+                let circ_min_dist = Infinity;
+
+                this.for_circles((x, y, size) => {
+                    const dx = pos.x - x;
+                    const dy = pos.y - y;
+                    const dist = Math.sqrt(dx*dx + dy*dy) - size*0.65;
+                    circ_min_dist = Math.min(circ_min_dist, dist);
+                });
+
+                return circ_min_dist;
+            },
+
+            height_at(p) {
+                let height = 0;
+
+                return height;
+            },
+        },
+
+        [MAP_DRAWBRIDGE]: {
+            PLAYER_SPAWN: {},
+            BULLETS_HIT_WALLS: true,
+
+            crank_progress: 0,
+            crank_angle_vel: 0,
+            crank_angle: 0,
+            CRANK_X: 3,
+            CRANK_Y: 3,
+
+            for_circles(circle) {
+                circle(   0.6,   5.4,  4.5);
+                circle(   0.0,   0.0,  8.0);
+                circle(   4.4,   3.7,  7.0);
+
+                circle( -15.6, -15.4,  5.5);
+                circle(  13.2, -14.4,  5.5);
+            },
+
+            for_bridges(bridge) {
+                bridge({ y: -15, path_from: -10, path_to: lerp(-10, 10, unit_clamp(this.crank_progress)) });
+            },
+
+            hole_transition: { step_timestamp: null, stepped_idx: null },
+            for_holes(hole) {
+                // map_util.hole.for_spawn(hole, this.PLAYER_SPAWN, MAP_TUTORIAL, 0);
+            },
+
+            camera_animate() {
+                map_util.hole.leaving_cutscene(this.hole_transition, this.for_holes.bind(this));
+            },
+
+            update() {
+                let i = 0;
+
+                if (save.cutscene_active) return;
+
+                /* crankin' */
+                {
+                    let dx = this.CRANK_X - save.player.pos.x;
+                    let dy = this.CRANK_Y - save.player.pos.y;
+                    const dlen = Math.sqrt(dx*dx + dy*dy);
+                    if (dlen > 2) {
+                        dx /= dlen;
+                        dy /= dlen;
+
+                        const px = Math.cos(this.crank_angle);
+                        const py = Math.sin(this.crank_angle);
+                        const ccw = ((-dy)*px + dx*py) < 0;
+                        const close = (dx*px + dy*py) > 0.85;
+
+                        if (!ccw && close) {
+                            const goal_angle = Math.atan2(dy, dx);
+                            const t = Math.pow(1 - 0.4, Math.round(target_fps)*delta_time);
+                            this.crank_angle_vel += 0.7*(this.crank_angle - lerp_rads(this.crank_angle, goal_angle, t));
+                        }
+                    }
+
+                    /* frame-independent multiplicative drag */
+                    {
+                        const fraction_remaining_after_one_second = 0.002;
+                        const new_vel_angle = this.crank_angle_vel * Math.pow(fraction_remaining_after_one_second, delta_time);
+
+                        let delta = (new_vel_angle - this.crank_angle_vel) / Math.log(fraction_remaining_after_one_second);
+
+                        delta *= 0.1;
+                        const new_crank_progress = Math.min(1, this.crank_progress + delta);
+                        const progress_capped_delta = (new_crank_progress - this.crank_progress);
+                        this.crank_angle += progress_capped_delta*10;
+                        this.crank_progress += progress_capped_delta;
+
+                        this.crank_angle_vel = new_vel_angle;
+                    }
+                }
+
+                map_util.hole.detect_step(this.hole_transition, this.for_holes.bind(this));
+            },
+
+            draw(ctx) {
+                const { pushSpriteXYZ, pushFlatXYZ, geo, pushImgUV, drawImg } = ctx;
+
+                this.for_circles((x, y, size) => {
+                    drawImg(
+                        AXIS_FLAT,
+                        x + size*MOON_NUDGE, y,
+                        size * 0.9,
+                        ATLAS_MOON,
+                        SHADER_FLAG_GREENIFY
+                    );
+                });
+
+                this.for_bridges((bridge) => map_util.bridge.draw(bridge, ctx));
+
+                const { CRANK_X, CRANK_Y } = this;
+                const CRANK_HEIGHT = 0.8;
+                drawImg(AXIS_SPRITE, CRANK_X, CRANK_Y, CRANK_HEIGHT, ATLAS_THREAD, SHADER_FLAG_BROWNIFY);
+
+                pushImgUV(ATLAS_CANE, SHADER_FLAG_BROWNIFY);
+                const rot = this.crank_angle - Math.PI*0.57;
+                const end_x = 2.25*Math.cos(rot - 0.525*Math.PI);
+                const end_y = 2.25*Math.sin(rot - 0.525*Math.PI);
+                const stick_x = CRANK_X + -0.10 + end_x;
+                const stick_y = CRANK_Y + -0.27 + end_y;
+                const stick_z = CRANK_HEIGHT + 0.2;
+                pushFlatXYZ(stick_x, stick_y, stick_z, 3, rot);
+                geo.layer[geo.layer.length - 1] = stick_y + stick_z + 2;
+                geo.layer[geo.layer.length - 2] = stick_y + stick_z + 2;
+
+                // pushImgUV(ATLAS_THREAD);
+                // pushSpriteXYZ(
+                //     stick_x + 0.8*end_x,//+0.3,
+                //     stick_y + 0.8*end_y,//+0.3,
+                //     stick_z,
+                //     0.8
+                // );
+
+                map_util.hole.draw(this.hole_transition, this.for_holes.bind(this), ctx);
+            },
+
+            distance_at(pos) {
+                let min_dist = Infinity;
+
+                this.for_circles((x, y, size) => {
+                    const dx = pos.x - x;
+                    const dy = pos.y - y;
+                    const dist = Math.sqrt(dx*dx + dy*dy) - size*0.65;
+                    min_dist = Math.min(min_dist, dist);
+                });
+
+                this.for_bridges((bridge) => {
+                    const dist = map_util.bridge.distance(bridge, pos);
+                    min_dist = Math.min(min_dist, dist);
+                });
+
+                return min_dist;
+            },
+
+            height_at(p) {
+                let height = Infinity;
+
+                this.for_bridges((bridge) => {
+                    let bridge_height = map_util.bridge.height_at(bridge, p);
+                    bridge_height = Math.min(0, 0.5 + bridge_height);
+                    height = Math.min(height, bridge_height);
+                });
+
+                return height;
+            },
+        },
+
         [MAP_CAVE]: {
             PLAYER_SPAWN: {
                 [MAP_TUTORIAL]: {
@@ -1508,7 +1736,6 @@ const save = {
                 drawImg(AXIS_FLAT,    -3, -3,  1.2, ATLAS_BONE);
                 drawImg(AXIS_SPRITE,   2, -2,  2.4, ATLAS_MOAI);
                 
-                let rock_max_dist = -Infinity;
                 this.for_enemies((idx, kind, x, y) => {
                     const rock = map_util.enemies.ENEMY.ROCK;
                     if (kind != rock) return;
@@ -1603,8 +1830,8 @@ const save = {
             },
 
             for_bridges(bridge) {
-                bridge({ path_from: -10, path_to: -29 });
-                bridge({ path_from: -40, path_to: -60 });
+                bridge({ y: 0, path_from: -10, path_to: -29 });
+                bridge({ y: 0, path_from: -40, path_to: -60 });
             },
 
             camera_animate() {
@@ -2409,9 +2636,10 @@ function unit_clamp(p) { return Math.max(0, Math.min(1, p)); }
 function inv_lerp(min, max, p) { return (p - min) / (max - min); }
 function lerp(v0, v1, t) { return (1 - t) * v0 + t * v1; }
 function lerp_rads(a, b, t) {
-  let difference = fmodf(b - a, Math.PI*2.0),
-        distance = fmodf(2.0 * difference, Math.PI*2.0) - difference;
-  return a + distance * t;
+    const fmodf = (l, r) => l % r;
+    let difference = fmodf(b - a, Math.PI*2.0),
+          distance = fmodf(2.0 * difference, Math.PI*2.0) - difference;
+    return a + distance * t;
 }
 
     </script>
