@@ -207,14 +207,14 @@ let input = {
             input.cam_pivot_z += unit[2] * input.zoom/20;
         }
 
-        ev.movementX *= Math.pow(1 - 0.17, 60*delta_time);
-        ev.movementY *= Math.pow(1 - 0.17, 60*delta_time);
+        ev.movementX *= Math.pow(1 - 0.17, Math.round(target_fps)*delta_time);
+        ev.movementY *= Math.pow(1 - 0.17, Math.round(target_fps)*delta_time);
 
         {
             const t = Math.cbrt(Math.abs(input.scroll)) * Math.sign(input.scroll);
 
             input.zoom += 0.005*t*input.zoom;
-            input.scroll *= Math.pow(1 - 0.5, 60*delta_time);
+            input.scroll *= Math.pow(1 - 0.5, Math.round(target_fps)*delta_time);
             input.zoom = Math.min(200, input.zoom);
         }
     },
@@ -611,6 +611,7 @@ let tex_skydome = gl.createTexture();
     buf.skydome_i_count = geo_idx.length;
 }
 
+let target_fps = 60;
 let delta_time;
 let last_timestamp;
 
@@ -865,10 +866,17 @@ const map_util = {
                 if (idx != hole_transition.stepped_idx) return;
 
                 /* incorporate the player's previous velocity a little bit */
-                save.player.vel.x *= 0.85;
-                save.player.vel.y *= 0.85;
-                save.player.pos.x += save.player.vel.x*2;
-                save.player.pos.y += save.player.vel.y*2;
+                {
+                    const fraction_remaining_after_one_second = 0.01;
+                    const new_vel_x = save.player.vel.x * Math.pow(fraction_remaining_after_one_second, delta_time);
+                    const new_vel_y = save.player.vel.y * Math.pow(fraction_remaining_after_one_second, delta_time);
+
+                    save.player.pos.x += (new_vel_x - save.player.vel.x) / Math.log(fraction_remaining_after_one_second);
+                    save.player.pos.y += (new_vel_y - save.player.vel.y) / Math.log(fraction_remaining_after_one_second);
+
+                    save.player.vel.x = new_vel_x;
+                    save.player.vel.y = new_vel_y;
+                }
 
                 /* we bite off bits of t and assign them to our animations */
                 let t = last_timestamp - hole_transition.step_timestamp;
@@ -901,8 +909,8 @@ const map_util = {
                     const spawn_info = save.maps[to_map].PLAYER_SPAWN[save.map_key];
                     save.player.pos.x   = spawn_info.pos?.x ?? 0;
                     save.player.pos.y   = spawn_info.pos?.y ?? 0;
-                    save.player.vel.x   = 0.25 * (spawn_info.dir?.x ?? 1); /* he slides into the next level */
-                    save.player.vel.y   = 0.25 * (spawn_info.dir?.y ?? 1); /* he slides into the next level */
+                    save.player.vel.x   = 3.5 * (spawn_info.dir?.x ?? 1); /* he slides into the next level */
+                    save.player.vel.y   = 3.5 * (spawn_info.dir?.y ?? 1); /* he slides into the next level */
                     save.player.damped_cam_pivot_x = input.cam_pivot_x = save.player.pos.x + 5*(spawn_info.dir?.x ?? 1);
                     save.player.damped_cam_pivot_y = input.cam_pivot_y = save.player.pos.y + 5*(spawn_info.dir?.y ?? 1);
                     save.player.scale   = 1;
@@ -926,7 +934,7 @@ const map_util = {
 
                     /* player -> hole */
                     /* have to damp here or store position when animation starts */
-                    const damp_t = Math.pow(1 - 0.85, 60*delta_time);
+                    const damp_t = Math.pow(1 - 0.85, Math.round(target_fps)*delta_time);
                     save.player.pos.x = lerp(save.player.pos.x, hole_x, damp_t);
                     save.player.pos.y = lerp(save.player.pos.y, hole_y, damp_t);
 
@@ -1043,7 +1051,7 @@ const save = {
             if (save.player.wep) {
                 /* speed is the length of velocity */
                 const vl = Math.sqrt(save.player.vel.x*save.player.vel.x +
-                                     save.player.vel.y*save.player.vel.y) * (!save.cutscene_active);
+                                     save.player.vel.y*save.player.vel.y) * (!save.cutscene_active) * 0.1;
                 const drag = Math.min(0.07, vl);
                 const breathe = Math.sin(last_timestamp * 80 / 35.0) / 30;
                 const jog = Math.sin(last_timestamp * 80 / 6.85) * Math.min(vl, 0.175);
@@ -1094,16 +1102,30 @@ const save = {
                 movement_y /= movement_len;
             }
 
-            save.player.vel.x += movement_x*0.03;
-            save.player.vel.y += movement_y*0.03;
-            save.player.vel.x *= 0.85;
-            save.player.vel.y *= 0.85;
-
             const p = { x: save.player.pos.x, y: save.player.pos.y };
 
-            const SPEED = 0.02;
-            p.x += movement_x*SPEED + save.player.vel.x;
-            p.y += movement_y*SPEED + save.player.vel.y;
+            const accel_x = 24*movement_x;
+            const accel_y = 24*movement_y;
+            p.x += save.player.vel.x*delta_time + 0.5*accel_x*delta_time*delta_time;
+            p.y += save.player.vel.y*delta_time + 0.5*accel_y*delta_time*delta_time;
+            save.player.vel.x += accel_x * delta_time;
+            save.player.vel.y += accel_y * delta_time;
+
+            {
+                const fraction_remaining_after_one_second = 0.01;
+                const new_vel_x = save.player.vel.x * Math.pow(fraction_remaining_after_one_second, delta_time);
+                const new_vel_y = save.player.vel.y * Math.pow(fraction_remaining_after_one_second, delta_time);
+
+                p.x += (new_vel_x - save.player.vel.x) / Math.log(fraction_remaining_after_one_second);
+                p.y += (new_vel_y - save.player.vel.y) / Math.log(fraction_remaining_after_one_second);
+
+                save.player.vel.x = new_vel_x;
+                save.player.vel.y = new_vel_y;
+            }
+
+            const SPEED = 2;
+            p.x += movement_x*SPEED*delta_time;
+            p.y += movement_y*SPEED*delta_time;
 
             /* map collision
              * - weird combination of SAT and SDFs */
@@ -1173,7 +1195,7 @@ const save = {
         },
 
         damp_camera() {
-            const t = Math.pow(1 - 0.95, 60*delta_time);
+            const t = Math.pow(1 - 0.95, Math.round(target_fps)*delta_time);
             this.damped_cam_pivot_x = input.cam_pivot_x = lerp(this.damped_cam_pivot_x, save.player.pos.x, t);
             this.damped_cam_pivot_y = input.cam_pivot_y = lerp(this.damped_cam_pivot_y, save.player.pos.y, t);
 
@@ -1764,6 +1786,8 @@ requestAnimationFrame(function frame(timestamp) {
     last_timestamp ??= timestamp;
     delta_time = timestamp - last_timestamp;
     last_timestamp = timestamp;
+
+    if (delta_time > 0) target_fps = 0.95*target_fps + 0.05*(1 / delta_time);
 
     save.cutscene_active = false; /* if map sets this to true in camera_animate, no e.g. movement or enemy AI occurs */
     save.map().camera_animate();
