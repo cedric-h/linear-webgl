@@ -43,6 +43,7 @@ if (!gl) { alert('Failed to initialize WebGL'); }
 
 const SHADER_FLAG_NONE     = 0;
 const SHADER_FLAG_GREENIFY = 1;
+const SHADER_FLAG_GREYIFY  = 2;
 
 const DEBUG = 0;
 
@@ -64,6 +65,8 @@ const ATLAS_HOLE     = (ATLAS_CHARS.push('🕳️'), ATLAS_CHARS.length - 1);
 const ATLAS_ARW_DOWN = (ATLAS_CHARS.push('⬇️'), ATLAS_CHARS.length - 1);
 const ATLAS_BAMBOO   = (ATLAS_CHARS.push('🎋'), ATLAS_CHARS.length - 1);
 const ATLAS_TREE     = (ATLAS_CHARS.push('🌳'), ATLAS_CHARS.length - 1);
+const ATLAS_MOAI     = (ATLAS_CHARS.push('🗿'), ATLAS_CHARS.length - 1);
+const ATLAS_BONE     = (ATLAS_CHARS.push('🦴'), ATLAS_CHARS.length - 1);
 const ATLAS_KNIFE    = (ATLAS_CHARS.push('🔪'), ATLAS_CHARS.length - 1);
 const ATLAS_CARROT   = (ATLAS_CHARS.push('🥕'), ATLAS_CHARS.length - 1);
 const ATLAS_THREAD   = (ATLAS_CHARS.push('🧵'), ATLAS_CHARS.length - 1);
@@ -391,8 +394,15 @@ let shaders;
                 
                 if (abs(v_uv.z - ${SHADER_FLAG_GREENIFY.toFixed(2)}) < 0.2) {
                     color.xyz /= color.w;
-                    float gray = 0.21 * color.r + 0.71 * color.g + 0.07 * color.b;
-                    color.xyz = 0.8*gray*vec3(0.58, 0.75, 0.35);
+                    float grey = 0.21 * color.r + 0.71 * color.g + 0.07 * color.b;
+                    color.xyz = 0.8*grey*vec3(0.58, 0.75, 0.35);
+                    color.xyz *= color.w;
+                }
+
+                if (abs(v_uv.z - ${SHADER_FLAG_GREYIFY.toFixed(2)}) < 0.2) {
+                    color.xyz /= color.w;
+                    float grey = 0.21 * color.r + 0.71 * color.g + 0.07 * color.b;
+                    color.xyz = 0.4*vec3(grey);
                     color.xyz *= color.w;
                 }
                 
@@ -452,6 +462,7 @@ let shaders;
 }
 
 /* creating spritesheet, uploading to GPU */
+const MOON_NUDGE = navigator.platform == "MacIntel" ? 0.085 : 0;
 let atlas = gl.createTexture();
 {
     const canvas = document.createElement("canvas");
@@ -1462,17 +1473,18 @@ const save = {
                 this.for_circles((x, y, size) => {
                     drawImg(
                         AXIS_FLAT,
-                        x, y,
+                        x + size*MOON_NUDGE, y,
                         size * 0.9,
                         ATLAS_MOON,
-                        SHADER_FLAG_GREENIFY
+                        SHADER_FLAG_GREYIFY
                     );
                 });
 
-                drawImg(AXIS_SPRITE, -12, -1,  2.0, ATLAS_TREE);
-                drawImg(AXIS_SPRITE,  -8, -3,  4.0, ATLAS_TREE);
-                drawImg(AXIS_SPRITE,  -3, -3,  1.2, ATLAS_BAMBOO);
-                drawImg(AXIS_SPRITE,   2, -2,  2.4, ATLAS_TREE);
+                drawImg(AXIS_SPRITE, -12, -1,  2.0, ATLAS_MOAI);
+                drawImg(AXIS_SPRITE,  -8, -3,  4.0, ATLAS_MOAI);
+                drawImg(AXIS_FLAT,    -3, -3, -1.2, ATLAS_BONE);
+                drawImg(AXIS_FLAT,    -3, -3,  1.2, ATLAS_BONE);
+                drawImg(AXIS_SPRITE,   2, -2,  2.4, ATLAS_MOAI);
                 
                 let rock_max_dist = -Infinity;
                 this.for_enemies((idx, kind, x, y) => {
@@ -1639,7 +1651,7 @@ const save = {
                 this.for_circles((x, y, size) => {
                     drawImg(
                         AXIS_FLAT,
-                        x, y,
+                        x + size*MOON_NUDGE, y,
                         size * 0.9,
                         ATLAS_MOON,
                         SHADER_FLAG_GREENIFY
@@ -1841,7 +1853,7 @@ requestAnimationFrame(function frame(timestamp) {
         }
 
         function drawImg(axis, x, y, size, atlas_index, flag=0) {
-            pushImgUV(atlas_index, flag);
+            pushImgUV(atlas_index, flag, 1, Math.sign(size) == -1);
 
             switch (axis) {
                 case (AXIS_FLAT): {
