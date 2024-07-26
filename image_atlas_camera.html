@@ -79,7 +79,7 @@ const ATLAS_CANE     = (ATLAS_CHARS.push('🦯'), ATLAS_CHARS.length - 1);
 const ATLAS_SIZE = Math.ceil(Math.sqrt(ATLAS_CHARS.length)); /* in emoji */
 const EMOJI_SIZE = 1 << 8;
 
-const CAMERA_CONTROLS_ACTIVE = false;
+const CAMERA_CONTROLS_ACTIVE = false && (!DEBUG);
 const LAST_ACTION_KEY   = 0;
 const LAST_ACTION_MOUSE = 1;
 
@@ -471,7 +471,8 @@ let shaders;
 }
 
 /* creating spritesheet, uploading to GPU */
-const MOON_NUDGE = navigator.platform == "MacIntel" ? 0.085 : 0;
+const MOON_NUDGE_X = navigator.platform != "MacIntel" ? -0.085 : 0;
+const MOON_NUDGE_Y = navigator.platform != "MacIntel" ? -0.005 : 0;
 let atlas = gl.createTexture();
 {
     const canvas = document.createElement("canvas");
@@ -633,11 +634,12 @@ const map_util = {
             let planks_min = Math.min(bridge.path_from, bridge.path_to)-3.5;
             let planks_max = Math.max(bridge.path_from, bridge.path_to)+2.5;
             let player_t = inv_lerp(planks_min+1, planks_max-1, save.player.pos.x);
-            // if (this.distance(bridge, save.player.pos) > 0.2) player_t = 0.5;
-            player_t = Math.min(1, Math.max(0, player_t));
+            player_t = unit_clamp(player_t);
+            if (this.distance(bridge, save.player.pos) > 0.2) player_t = 0;
+            let middle_t = 1 - 2*Math.abs(player_t - 0.5);
 
-            const control0 = [planks_min - 5, 5 + 30*(0 + player_t)];
-            const control1 = [planks_max + 5, 5 + 30*(1 - player_t)];
+            const control0 = [planks_min - 5, 25 + 40*(0 + player_t)*middle_t];
+            const control1 = [planks_max + 5, 25 + 40*(1 - player_t)*middle_t];
             const start = [planks_min, 0];
             const end   = [planks_max, 0];
             const arg = { p0: control0, p1: start, p2: end, p3: control1, alpha: this.BENDYNESS };
@@ -649,7 +651,7 @@ const map_util = {
             let planks_min = Math.min(bridge.path_from, bridge.path_to)-3.5;
             let planks_max = Math.max(bridge.path_from, bridge.path_to)+2.5;
             let player_t = inv_lerp(planks_min+1, planks_max-1, p.x);
-            // if (this.distance(bridge, save.player.pos) > 0.2) return 0;
+            if (this.distance(bridge, save.player.pos) > 0.2) return 0;
             player_t = Math.min(1, Math.max(0, player_t));
 
             const control0 = [planks_min - 5, 5 + 30*(0 + player_t)];
@@ -1466,7 +1468,7 @@ const save = {
                 this.for_circles((x, y, size) => {
                     drawImg(
                         AXIS_FLAT,
-                        x + size*MOON_NUDGE, y,
+                        x + size*MOON_NUDGE_X, y+size*MOON_NUDGE_Y,
                         size * 0.9,
                         ATLAS_MOON,
                         SHADER_FLAG_GREENIFY
@@ -1499,7 +1501,10 @@ const save = {
         },
 
         [MAP_DRAWBRIDGE]: {
-            PLAYER_SPAWN: {},
+            PLAYER_SPAWN: {
+                [MAP_CAVE]:     { pos: { x: -2, y: -3 } },
+                [MAP_TUTORIAL]: { pos: { x: -17.2, y: -15.0 } },
+            },
             BULLETS_HIT_WALLS: true,
 
             crank_progress: 0,
@@ -1507,27 +1512,45 @@ const save = {
             crank_angle: 0,
             CRANK_X: 3,
             CRANK_Y: 3,
+            CRANK_ANGLE_OFFSET: 0.525*Math.PI,
+
+            LOOKOUT_X: -15.6,
+            LOOKOUT_Y: - 5.6,
 
             for_circles(circle) {
                 circle(   0.6,   5.4,  4.5);
                 circle(   0.0,   0.0,  8.0);
                 circle(   4.4,   3.7,  7.0);
 
-                circle( -15.6, -15.4,  5.5);
-                circle(  13.2, -14.4,  5.5);
+                circle( -15.6, -14.8,  5.7);
+                circle( -16.6, - 9.6,  4.2);
+                circle( this.LOOKOUT_X, this.LOOKOUT_Y+1, 5.2);
+
+                circle(  14.8, -14.8,  5.5);
+            },
+
+            camera_animate() {
+                const player = save.player;
+                let dist = Math.sqrt((player.pos.x - (this.LOOKOUT_X + 0))*(player.pos.x - (this.LOOKOUT_X + 0)) +
+                                     (player.pos.y - (this.LOOKOUT_Y - 3))*(player.pos.y - (this.LOOKOUT_Y - 3)));
+                dist = 1 - Math.min(1, dist / 4);
+                input.zoom = lerp(DEFAULT_ZOOM, DEFAULT_ZOOM*1.5, dist);
+                player.damped_cam_pivot_x += dist;
+                player.damped_cam_pivot_y += dist*0.4;
+
+                map_util.hole.leaving_cutscene(this.hole_transition, this.for_holes.bind(this));
             },
 
             for_bridges(bridge) {
-                bridge({ y: -15, path_from: -10, path_to: lerp(-10, 10, unit_clamp(this.crank_progress)) });
+                bridge({ y: -15, path_from: -10, path_to: lerp(-10, 11, unit_clamp(this.crank_progress)) });
             },
 
             hole_transition: { step_timestamp: null, stepped_idx: null },
             for_holes(hole) {
-                // map_util.hole.for_spawn(hole, this.PLAYER_SPAWN, MAP_TUTORIAL, 0);
-            },
-
-            camera_animate() {
-                map_util.hole.leaving_cutscene(this.hole_transition, this.for_holes.bind(this));
+                let idx = 0;
+                map_util.hole.for_spawn(hole, this.PLAYER_SPAWN, MAP_CAVE    , idx++);
+                map_util.hole.for_spawn(hole, this.PLAYER_SPAWN, MAP_TUTORIAL, idx++);
+                hole(idx++, this.LOOKOUT_X, this.LOOKOUT_Y + 4, MAP_CAVE);
             },
 
             update() {
@@ -1582,7 +1605,7 @@ const save = {
                 this.for_circles((x, y, size) => {
                     drawImg(
                         AXIS_FLAT,
-                        x + size*MOON_NUDGE, y,
+                        x + size*MOON_NUDGE_X, y+size*MOON_NUDGE_Y,
                         size * 0.9,
                         ATLAS_MOON,
                         SHADER_FLAG_GREENIFY
@@ -1597,8 +1620,8 @@ const save = {
 
                 pushImgUV(ATLAS_CANE, SHADER_FLAG_BROWNIFY);
                 const rot = this.crank_angle - Math.PI*0.57;
-                const end_x = 2.25*Math.cos(rot - 0.525*Math.PI);
-                const end_y = 2.25*Math.sin(rot - 0.525*Math.PI);
+                const end_x = 2.25*Math.cos(rot - this.CRANK_ANGLE_OFFSET);
+                const end_y = 2.25*Math.sin(rot - this.CRANK_ANGLE_OFFSET);
                 const stick_x = CRANK_X + -0.10 + end_x;
                 const stick_y = CRANK_Y + -0.27 + end_y;
                 const stick_z = CRANK_HEIGHT + 0.2;
@@ -1632,7 +1655,30 @@ const save = {
                     min_dist = Math.min(min_dist, dist);
                 });
 
-                return min_dist;
+                let max_dist = -Infinity;
+                {
+                    /* hub */
+                    {
+                        const dx = pos.x - this.CRANK_X;
+                        const dy = pos.y - this.CRANK_Y;
+                        const size = 1.2;
+                        const dist = Math.sqrt(dx*dx + dy*dy);
+                        max_dist = Math.max(max_dist, size - dist);
+                    }
+
+                    /* shaft */
+                    {
+                        const angle = this.crank_angle - 3*(this.CRANK_ANGLE_OFFSET - Math.PI*0.5);
+                        const b_x = this.CRANK_X - Math.cos(angle) * 4.5;
+                        const b_y = this.CRANK_Y - Math.sin(angle) * 4.5;
+
+                        const size = 0.6;
+                        const dist = sd_segment(pos, this.CRANK_X, this.CRANK_Y, b_x, b_y);
+                        max_dist = Math.max(max_dist, size - dist);
+                    }
+                }
+
+                return Math.max(min_dist, max_dist);
             },
 
             height_at(p) {
@@ -1650,7 +1696,7 @@ const save = {
 
         [MAP_CAVE]: {
             PLAYER_SPAWN: {
-                [MAP_TUTORIAL]: {
+                [MAP_DRAWBRIDGE]: {
                     pos: { x:  3, y:  2 },
                     dir: { x: -1, y: -1 },
                 }
@@ -1664,9 +1710,9 @@ const save = {
 
             for_circles(circle) {
                 circle(  0.0,  0.0,  8.0);
-                circle(-13.0,  6.0,  4.0); /* bridge platform */
+                circle(-13.0,  6.0,  4.0); /* cluster */
                 circle( -8.0,  0.0, 10.0);
-                circle(-21.0,  6.0,  3.5); /* bridge platform */
+                circle(-21.0,  6.0,  3.5); /* cluster */
                 circle(-18.0, 11.0,  8.0);
                 circle(-25.0,  2.0,  7.0);
             },
@@ -1701,7 +1747,8 @@ const save = {
 
             hole_transition: { step_timestamp: null, stepped_idx: null },
             for_holes(hole) {
-                map_util.hole.for_spawn(hole, this.PLAYER_SPAWN, MAP_TUTORIAL, 0);
+                map_util.hole.for_spawn(hole, this.PLAYER_SPAWN, MAP_DRAWBRIDGE, 0);
+                hole(1, -25.0, -2.0, MAP_DRAWBRIDGE);
             },
 
             camera_animate() {
@@ -1723,7 +1770,7 @@ const save = {
                 this.for_circles((x, y, size) => {
                     drawImg(
                         AXIS_FLAT,
-                        x + size*MOON_NUDGE, y,
+                        x + size*MOON_NUDGE_X, y+size*MOON_NUDGE_Y,
                         size * 0.9,
                         ATLAS_MOON,
                         SHADER_FLAG_GREYIFY
@@ -1783,7 +1830,7 @@ const save = {
         },
 
         [MAP_TUTORIAL]: {
-            PLAYER_SPAWN: { [MAP_CAVE]: { pos: { x: -35.8, y: 0.0 } } },
+            PLAYER_SPAWN: { [MAP_DRAWBRIDGE]: { pos: { x: -35.8, y: 0.0 } } },
             BULLETS_HIT_WALLS: false,
 
             PICKUP_X: -65.8,
@@ -1805,17 +1852,19 @@ const save = {
             for_holes(hole) {
                 const all_dead = map_util.enemies.all_dead(this.enemies, this.for_enemies.bind(this));
 
-                if (all_dead) map_util.hole.for_spawn(hole, this.PLAYER_SPAWN, MAP_CAVE, 0);
+                if (all_dead) map_util.hole.for_spawn(hole, this.PLAYER_SPAWN, MAP_DRAWBRIDGE, 0);
+
+                if (DEBUG) hole(1, 0, -3, MAP_DRAWBRIDGE);
             },
 
             for_circles(circle) {
                 /*      x,  y,  size */
-                circle(  2.0,   3.0,     7.0);
-                circle( -4.0,   0.0,     9.0);
-                circle(  2.0,  -3.0,     9.5);
+                circle(  2.7,   3.0,     7.0);
+                circle( -3.7,   0.0,     9.0);
+                circle(  2.7,  -3.0,     9.5);
 
-                circle(-35.8,   0.0,     6.5);
-                circle(-66.8,   0.0,     6.5);
+                circle(-35.3,   0.0,     6.3);
+                circle(-66.3,   0.0,     6.5);
 
                 /* enemy platforms */
                 this.for_enemies((_idx, _kind, x, y) => circle(x, y, 6.5));
@@ -1900,7 +1949,7 @@ const save = {
                 this.for_circles((x, y, size) => {
                     drawImg(
                         AXIS_FLAT,
-                        x + size*MOON_NUDGE, y,
+                        x + size*MOON_NUDGE_X, y+size*MOON_NUDGE_Y,
                         size * 0.9,
                         ATLAS_MOON,
                         SHADER_FLAG_GREENIFY
