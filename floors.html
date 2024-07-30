@@ -1,0 +1,332 @@
+<!-- vim: sw=2 ts=2 expandtab smartindent ft=javascript
+-->
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>WebGL Demo</title>
+    <style> document, body { margin: 0px; padding: 0px; overflow: hidden; } </style>
+  </head>
+
+  <body>
+    <canvas id="glcanvas"></canvas>
+    <script>"use strict";
+
+const DEFAULT_FONT = "60px sans-serif";
+
+const canvas = document.getElementById("glcanvas");
+const ctx = canvas.getContext('2d');
+(window.onresize = () => {
+   canvas.width = window.innerWidth*window.devicePixelRatio,
+   canvas.height = window.innerHeight*window.devicePixelRatio
+   canvas.style.width = window.innerWidth + 'px';
+   canvas.style.height = window.innerHeight + 'px';
+})();
+
+let lmb_clicked = 0;
+let raw_mouse_x = 0;
+let raw_mouse_y = 0;
+window.onmousemove = e => {
+  raw_mouse_x = e.pageX*window.devicePixelRatio;
+  raw_mouse_y = e.pageY*window.devicePixelRatio;
+}
+window.onmousedown = e => {
+  lmb_clicked = 1;
+}
+
+let damped_zoom = 8;
+const boxes = [-2, -1, 0, 1, 2];
+
+const BEHAVIOR_DESC = {};
+const BEHAVIOR = {};
+BEHAVIOR.DEFAULT      = "default"  ;
+BEHAVIOR.PUSH_DOWN    = "push down";
+BEHAVIOR.PUSH_UP      = "push up"  ;
+BEHAVIOR.CENTRIC      = "centric"  ;
+BEHAVIOR.CENTRIC_HACK = "centric hack";
+let behavior = BEHAVIOR.CENTRIC;
+
+BEHAVIOR_DESC[BEHAVIOR.DEFAULT  ] = ['adding upward always pushes upward',
+                                     'adding downward always pushes downward',
+                                     'removing collapses toward center'];
+BEHAVIOR_DESC[BEHAVIOR.PUSH_DOWN] = ['useless in isolation, but 1/4 of centric'];                                                
+BEHAVIOR_DESC[BEHAVIOR.PUSH_UP  ] = ['useless in isolation, but 1/4 of centric'];                                                
+BEHAVIOR_DESC[BEHAVIOR.CENTRIC  ] = ['adding upward pushes down if below 0, downward otherwise',
+                                     'adding downward pushes up if above 0, downward otherwise',
+                                     'removing collapses toward center'];
+BEHAVIOR_DESC[BEHAVIOR.CENTRIC_HACK] = ['centric + hack so that the pluses',
+                                        'between 0/-1 and the ground grow outward',
+                                        'unless there\'s nothing on the other side'];
+
+let then = 0;
+let deltaTime = 0;
+requestAnimationFrame(function render(now) {
+  requestAnimationFrame(render);
+
+  now *= 0.001;
+  deltaTime = now - then;
+  then = now;
+
+  ctx.fillStyle = "white";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.font = DEFAULT_FONT;
+
+  {
+    ctx.beginPath();
+    ctx.moveTo(lerp(           0, canvas.width*0.5, 0.15), canvas.height*0.5);
+    ctx.lineTo(lerp(canvas.width, canvas.width*0.5, 0.15), canvas.height*0.5);
+    ctx.lineWidth = 5;
+    ctx.strokeStyle = "black";
+    ctx.stroke();
+
+    /* indexes on numberline */
+    ctx.textBaseline = "alphabetic";
+    ctx.fillStyle = "gray";
+    ctx.fillText("idx", 20, canvas.height*0.5 - 4);
+
+    /* modes */
+    let y = 0;
+    for (const key in BEHAVIOR) {
+      ctx.textBaseline = "alphabetic";
+      ctx.textAlign = 'right';
+      ctx.fillStyle = (BEHAVIOR[key] == behavior) ? "rgb(255, 100, 100)" : "rgb(100, 100, 100)";
+
+      const hover = (raw_mouse_x > (canvas.width - 500)) && (Math.abs(raw_mouse_y - y - 60) < 30);
+      if (hover) ctx.fillStyle = "blue";
+      if (hover && lmb_clicked) behavior = BEHAVIOR[key];
+
+      ctx.fillText(
+        BEHAVIOR[key],
+        canvas.width - 20,
+        y += 70
+      );
+    }
+    y += 50;
+
+    ctx.beginPath();
+    ctx.moveTo(canvas.width - 500, y);
+    ctx.lineTo(canvas.width      , y);
+    ctx.lineWidth = 5;
+    ctx.strokeStyle = "black";
+    ctx.stroke();
+
+    ctx.fillStyle = "black";
+    ctx.font = "30px sans-serif";
+    for (const line of BEHAVIOR_DESC[behavior]) {
+      ctx.fillText(line, canvas.width - 20, y += 40);
+    }
+    ctx.font = DEFAULT_FONT;
+
+    ctx.textAlign = 'left';
+  }
+
+  ctx.save();
+  let mouse_x, mouse_y;
+  {
+    let goal_zoom = 1.5*Math.max(4, boxes.length);
+    const t = 1 - Math.pow(1 - 0.05, 60*deltaTime);
+    damped_zoom = lerp(damped_zoom, goal_zoom, t);
+
+    const scale = 4 / damped_zoom;
+    const translate_x = canvas.width *(1 - scale)*0.5;
+    const translate_y = canvas.height*(1 - scale)*0.5;
+    ctx.translate(translate_x, translate_y);
+    ctx.scale(scale, scale);
+    mouse_x = (raw_mouse_x - translate_x)/scale;
+    mouse_y = (raw_mouse_y - translate_y)/scale;
+  }
+
+  const BOX_SIZE = 100;
+
+  for (let i = 0; i < boxes.length; i++) {
+    let y;
+    {
+      const space = BOX_SIZE*3.2;
+      y = boxes[i] * BOX_SIZE*2.75;
+    }
+
+    /* box */
+    ctx.fillStyle = "navy";
+    const box_x = canvas.width*0.1 + i*BOX_SIZE*1.25;
+    const box_y = canvas.height*0.5 - y;
+    ctx.fillRect(
+      box_x - BOX_SIZE*0.5,
+      box_y - BOX_SIZE*0.5,
+      BOX_SIZE, BOX_SIZE
+    );
+
+
+    /* indexes on numberline */
+    ctx.textBaseline = "alphabetic";
+    ctx.fillStyle = "gray";
+    ctx.fillText(i, box_x - 20, canvas.height*0.5 - 4);
+
+
+    function button(symbol, x, y) {
+      const hover = (Math.sqrt((x - mouse_x)*(x - mouse_x) +
+                               (y - mouse_y)*(y - mouse_y))) < 30;
+
+      if (symbol == "+"         ) ctx.fillStyle = "rgb(20, 20, 80)";
+      if (symbol == "+" && hover) ctx.fillStyle = "rgb(120, 120, 180)";
+
+      if (symbol == "x"         ) ctx.fillStyle = "rgb(200, 80, 80)";
+      if (symbol == "x" && hover) ctx.fillStyle = "rgb(100, 10, 10)";
+
+      ctx.fillText(symbol, x - 20 , y);
+
+      return hover && lmb_clicked;
+    }
+
+    ctx.textBaseline = 'middle';
+
+    ctx.fillStyle = "white";
+    if (boxes[i] < 0) ctx.fillText(boxes[i], box_x - 30, box_y + 5);
+    else              ctx.fillText(boxes[i], box_x - 15, box_y + 5);
+
+    switch (behavior) {
+      case (BEHAVIOR.DEFAULT): {
+        if (button("+", box_x, box_y - BOX_SIZE * 0.85)) {
+          const new_box = boxes[i] + 1;
+          for (let j = 0; j < boxes.length; j++) if (boxes[j] >= new_box) boxes[j]++;
+          boxes.splice(i++ + 1, 0, new_box);
+        }
+
+        if (button("+", box_x, box_y + BOX_SIZE * 0.80)) {
+          const new_box = boxes[i] - 1;
+          for (let j = 0; j < boxes.length; j++) if (boxes[j] <= new_box) boxes[j]--;
+          boxes.splice(i++, 0, new_box);
+        }
+
+        if (button("x", box_x + BOX_SIZE * 0.9, box_y)) {
+          if (boxes[i] >= 0) { for (let j = 0; j < boxes.length; j++) if (boxes[j] > boxes[i]) boxes[j]--; }
+          else               { for (let j = 0; j < boxes.length; j++) if (boxes[j] < boxes[i]) boxes[j]++; }
+          boxes.splice(i, 1);
+        }
+      } break;
+
+
+      case (BEHAVIOR.CENTRIC): {
+        if (button("+", box_x, box_y - BOX_SIZE * 0.85)) {
+          /* NOTE: if you use < 0 here, it's impossible to place anything aboveground if you whittle down to just a basement */
+          if (boxes[i] < -1) {
+            const new_box = boxes[i];
+            for (let j = 0; j < boxes.length; j++) if (boxes[j] <= new_box) boxes[j]--;
+            boxes.splice(i++ + 1, 0, new_box);
+          } else {
+            const new_box = boxes[i] + 1;
+            for (let j = 0; j < boxes.length; j++) if (boxes[j] >= new_box) boxes[j]++;
+            boxes.splice(i++ + 1, 0, new_box);
+          }
+        }
+
+        if (button("+", box_x, box_y + BOX_SIZE * 0.80)) {
+          /* NOTE: if you use < 0 here, it's impossible to place basements if you start with a 0 floor */
+          if (boxes[i] <= 0) {
+            const new_box = boxes[i] - 1;
+            for (let j = 0; j < boxes.length; j++) if (boxes[j] <= new_box) boxes[j]--;
+            boxes.splice(i++, 0, new_box);
+          } else {
+            const new_box = boxes[i];
+            for (let j = 0; j < boxes.length; j++) if (boxes[j] >= new_box) boxes[j]++;
+            boxes.splice(i++, 0, new_box);
+          }
+        }
+
+        if (button("x", box_x + BOX_SIZE * 0.9, box_y)) {
+          if      (boxes[i] == 0) { for (let j = 0; j < boxes.length; j++) if (boxes[j] >= boxes[i]) boxes[j]--; }
+          else if (boxes[i]  > 0) { for (let j = 0; j < boxes.length; j++) if (boxes[j] > boxes[i]) boxes[j]--; }
+          else              { for (let j = 0; j < boxes.length; j++) if (boxes[j] < boxes[i]) boxes[j]++; }
+          boxes.splice(i, 1);
+        }
+      } break;
+
+
+      case (BEHAVIOR.CENTRIC_HACK): {
+        if (button("+", box_x, box_y - BOX_SIZE * 0.85)) {
+          const any_above = boxes[boxes.length - 1] >= 0;
+
+          if (boxes[i] < 0 && (boxes[i] != -1 || any_above)) {
+            const new_box = boxes[i];
+            for (let j = 0; j < boxes.length; j++) if (boxes[j] <= new_box) boxes[j]--;
+            boxes.splice(i++ + 1, 0, new_box);
+          } else {
+            const new_box = boxes[i] + 1;
+            for (let j = 0; j < boxes.length; j++) if (boxes[j] >= new_box) boxes[j]++;
+            boxes.splice(i++ + 1, 0, new_box);
+          }
+        }
+
+        if (button("+", box_x, box_y + BOX_SIZE * 0.80)) {
+          const any_below = boxes[0] < 0;
+
+          if (boxes[i] < 0 || (boxes[i] == 0 && !any_below)) {
+            const new_box = boxes[i] - 1;
+            for (let j = 0; j < boxes.length; j++) if (boxes[j] <= new_box) boxes[j]--;
+            boxes.splice(i++, 0, new_box);
+          } else {
+            const new_box = boxes[i];
+            for (let j = 0; j < boxes.length; j++) if (boxes[j] >= new_box) boxes[j]++;
+            boxes.splice(i++, 0, new_box);
+          }
+        }
+
+        if (button("x", box_x + BOX_SIZE * 0.9, box_y)) {
+          if (boxes[i] >= 0) { for (let j = 0; j < boxes.length; j++) if (boxes[j] > boxes[i]) boxes[j]--; }
+          else               { for (let j = 0; j < boxes.length; j++) if (boxes[j] < boxes[i]) boxes[j]++; }
+          boxes.splice(i, 1);
+        }
+      } break;
+
+
+      case (BEHAVIOR.PUSH_DOWN): {
+        if (button("+", box_x, box_y - BOX_SIZE * 0.85)) {
+          const new_box = boxes[i];
+          for (let j = 0; j < boxes.length; j++) if (boxes[j] <= new_box) boxes[j]--;
+          boxes.splice(i++ + 1, 0, new_box);
+        }
+
+        if (button("+", box_x, box_y + BOX_SIZE * 0.80)) {
+          const new_box = boxes[i] - 1;
+          for (let j = 0; j < boxes.length; j++) if (boxes[j] <= new_box) boxes[j]--;
+          boxes.splice(i++, 0, new_box);
+        }
+
+        if (button("x", box_x + BOX_SIZE * 0.9, box_y)) {
+          for (let j = 0; j < boxes.length; j++) if (boxes[j] > boxes[i]) boxes[j]--;
+          boxes.splice(i, 1);
+        }
+      } break;
+
+
+      case (BEHAVIOR.PUSH_UP): {
+        if (button("+", box_x, box_y - BOX_SIZE * 0.85)) {
+          const new_box = boxes[i] + 1;
+          for (let j = 0; j < boxes.length; j++) if (boxes[j] >= new_box) boxes[j]++;
+          boxes.splice(i++ + 1, 0, new_box);
+        }
+
+        if (button("+", box_x, box_y + BOX_SIZE * 0.80)) {
+          const new_box = boxes[i];
+          for (let j = 0; j < boxes.length; j++) if (boxes[j] >= new_box) boxes[j]++;
+          boxes.splice(i++, 0, new_box);
+        }
+
+        if (button("x", box_x + BOX_SIZE * 0.9, box_y)) {
+          for (let j = 0; j < boxes.length; j++) if (boxes[j] < boxes[i]) boxes[j]++;
+          boxes.splice(i, 1);
+        }
+      } break;
+
+
+    }
+  }
+
+  lmb_clicked = false;
+  ctx.restore();
+})
+
+function lerp(v0, v1, t) { return (1 - t) * v0 + t * v1; }
+function inv_lerp(min, max, p) { return (p - min) / (max - min); }
+    </script>
+  </body>
+</html>
