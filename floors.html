@@ -144,7 +144,7 @@ requestAnimationFrame(function render(now) {
 
   const BOX_SIZE = 100;
 
-  const t = Math.max(0, Math.min(1, (now - boxes_change_timestamp) / TRANSITION_DURATION));
+  let t = Math.max(0, Math.min(1, (now - boxes_change_timestamp) / TRANSITION_DURATION));
 
   for (let i = 0; i < boxes.length; i++) {
     boxes[i].last_val ??= boxes[i].val;
@@ -162,7 +162,9 @@ requestAnimationFrame(function render(now) {
 
     /* box */
     if (new_box_i == i) {
-      ctx.globalAlpha = Math.max(0, Math.min(1, ((now - TRANSITION_DURATION) - boxes_change_timestamp) / TRANSITION_DURATION));
+      const half = (boxes.length - 1) / 2;
+      const delay = (Math.abs(new_box_i - half) == half) ? 0 : TRANSITION_DURATION;
+      ctx.globalAlpha = Math.max(0, Math.min(1, ((now - delay) - boxes_change_timestamp) / TRANSITION_DURATION));
     } else {
       ctx.globalAlpha = 1;
     }
