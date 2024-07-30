@@ -198,8 +198,12 @@ requestAnimationFrame(function render(now) {
         }
 
         if (button("x", box_x + BOX_SIZE * 0.9, box_y)) {
-          if (boxes[i] >= 0) { for (let j = 0; j < boxes.length; j++) if (boxes[j] > boxes[i]) boxes[j]--; }
-          else               { for (let j = 0; j < boxes.length; j++) if (boxes[j] < boxes[i]) boxes[j]++; }
+          const zero_max = boxes[boxes.length - 1] == 0;
+
+          if (zero_max && boxes[i] == 0) { for (let j = 0; j < boxes.length; j++) if (boxes[j] <= boxes[i]) boxes[j]++; }
+          if      (boxes[i] == 0)        { for (let j = 0; j < boxes.length; j++) if (boxes[j] >= boxes[i]) boxes[j]--; }
+          else if (boxes[i]  > 0)        { for (let j = 0; j < boxes.length; j++) if (boxes[j] >  boxes[i]) boxes[j]--; }
+          else                           { for (let j = 0; j < boxes.length; j++) if (boxes[j] <  boxes[i]) boxes[j]++; }
           boxes.splice(i, 1);
         }
       } break;
@@ -233,9 +237,12 @@ requestAnimationFrame(function render(now) {
         }
 
         if (button("x", box_x + BOX_SIZE * 0.9, box_y)) {
-          if      (boxes[i] == 0) { for (let j = 0; j < boxes.length; j++) if (boxes[j] >= boxes[i]) boxes[j]--; }
-          else if (boxes[i]  > 0) { for (let j = 0; j < boxes.length; j++) if (boxes[j] > boxes[i]) boxes[j]--; }
-          else              { for (let j = 0; j < boxes.length; j++) if (boxes[j] < boxes[i]) boxes[j]++; }
+          const zero_max = boxes[boxes.length - 1] == 0;
+
+          if (zero_max && boxes[i] == 0) { for (let j = 0; j < boxes.length; j++) if (boxes[j] <= boxes[i]) boxes[j]++; }
+          if      (boxes[i] == 0)        { for (let j = 0; j < boxes.length; j++) if (boxes[j] >= boxes[i]) boxes[j]--; }
+          else if (boxes[i]  > 0)        { for (let j = 0; j < boxes.length; j++) if (boxes[j] >  boxes[i]) boxes[j]--; }
+          else                           { for (let j = 0; j < boxes.length; j++) if (boxes[j] <  boxes[i]) boxes[j]++; }
           boxes.splice(i, 1);
         }
       } break;
@@ -271,8 +278,12 @@ requestAnimationFrame(function render(now) {
         }
 
         if (button("x", box_x + BOX_SIZE * 0.9, box_y)) {
-          if (boxes[i] >= 0) { for (let j = 0; j < boxes.length; j++) if (boxes[j] > boxes[i]) boxes[j]--; }
-          else               { for (let j = 0; j < boxes.length; j++) if (boxes[j] < boxes[i]) boxes[j]++; }
+          const zero_max = boxes[boxes.length - 1] == 0;
+
+          if (zero_max && boxes[i] == 0) { for (let j = 0; j < boxes.length; j++) if (boxes[j] <= boxes[i]) boxes[j]++; }
+          if      (boxes[i] == 0)        { for (let j = 0; j < boxes.length; j++) if (boxes[j] >= boxes[i]) boxes[j]--; }
+          else if (boxes[i]  > 0)        { for (let j = 0; j < boxes.length; j++) if (boxes[j] >  boxes[i]) boxes[j]--; }
+          else                           { for (let j = 0; j < boxes.length; j++) if (boxes[j] <  boxes[i]) boxes[j]++; }
           boxes.splice(i, 1);
         }
       } break;
