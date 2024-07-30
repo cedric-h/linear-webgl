@@ -36,8 +36,7 @@ window.onmousedown = e => {
 }
 
 let damped_zoom = 8;
-const boxes   = [-2, -1, 0, 1, 2];
-let boxes_b4 = [-2, -1, 0, 1, 2];
+const boxes = [{ val: -2 }, { val: -1 }, { val: 0 }, { val: 1 }, { val: 2 }];
 let new_box_i;
 let boxes_change_timestamp;
 
@@ -145,11 +144,11 @@ requestAnimationFrame(function render(now) {
 
   const BOX_SIZE = 100;
 
-  for (let i = 0; i < boxes.length; i++) {
-    const t = Math.max(0, Math.min(1, (now - boxes_change_timestamp) / TRANSITION_DURATION));
+  const t = Math.max(0, Math.min(1, (now - boxes_change_timestamp) / TRANSITION_DURATION));
 
-    let before_i = boxes_b4.indexOf(boxes[i]);
-    if (before_i < 0) before_i = i;
+  for (let i = 0; i < boxes.length; i++) {
+    boxes[i].last_val ??= boxes[i].val;
+    boxes[i].last_i ??= i;
 
     let y;
     {
@@ -158,19 +157,17 @@ requestAnimationFrame(function render(now) {
         const center = (behavior == BEHAVIOR.CENTRIC_HACK) ? 0.5 : 0;
         return (val + center) * space;
       }
-      y = lerp(
-        y_for_val(boxes_b4[before_i]),
-        y_for_val(boxes   [i]),
-        t
-      );
+      y = lerp(y_for_val(boxes[i].last_val), y_for_val(boxes[i].val), t);
     }
 
     /* box */
     if (new_box_i == i) {
       ctx.globalAlpha = Math.max(0, Math.min(1, ((now - TRANSITION_DURATION) - boxes_change_timestamp) / TRANSITION_DURATION));
+    } else {
+      ctx.globalAlpha = 1;
     }
     ctx.fillStyle = "navy";
-    const box_x = canvas.width*0.1 + lerp(before_i, i, t)*BOX_SIZE*1.25;
+    const box_x = canvas.width*0.1 + lerp(boxes[i].last_i, i, t)*BOX_SIZE*1.25;
     const box_y = canvas.height*0.5 - y;
     ctx.fillRect(
       box_x - BOX_SIZE*0.5,
@@ -200,8 +197,13 @@ requestAnimationFrame(function render(now) {
       const clicked = hover && lmb_clicked;
       if (clicked) {
         boxes_change_timestamp = now;
-        boxes_b4 = [...boxes];
-        new_box_i = (symbol == "+") ? i : -1;
+        new_box_i = -1;
+
+        for (let i = 0; i < boxes.length; i++) {
+          const b = boxes[i];
+          b.last_val = b.val;
+          b.last_i = i;
+        }
       }
       return clicked;
     }
@@ -209,34 +211,31 @@ requestAnimationFrame(function render(now) {
     ctx.textBaseline = 'middle';
 
     ctx.fillStyle = "white";
-    if (boxes[i] < 0) ctx.fillText(boxes[i], box_x - 30, box_y + 5);
-    else              ctx.fillText(boxes[i], box_x - 15, box_y + 5);
+    if (boxes[i].val < 0) ctx.fillText(boxes[i].val, box_x - 30, box_y + 5);
+    else                  ctx.fillText(boxes[i].val, box_x - 15, box_y + 5);
 
     switch (behavior) {
       case (BEHAVIOR.DEFAULT): {
         if (button("+", box_x, box_y - BOX_SIZE * 0.85)) {
-          const new_box = boxes[i] + 1;
-          for (let j = 0; j < boxes.length; j++) if (boxes[j] >= new_box) boxes[j]++;
-          boxes   .splice(i++ + 1, 0, new_box);
-          boxes_b4.splice(i++ + 1, 0, new_box);
+          const new_box = boxes[i].val + 1;
+          for (let j = 0; j < boxes.length; j++) if (boxes[j].val >= new_box) boxes[j].val++;
+          boxes.splice(new_box_i = i++ + 1, 0, { val: new_box });
         }
 
         if (button("+", box_x, box_y + BOX_SIZE * 0.80)) {
-          const new_box = boxes[i] - 1;
-          for (let j = 0; j < boxes.length; j++) if (boxes[j] <= new_box) boxes[j]--;
-          boxes   .splice(i++, 0, new_box);
-          boxes_b4.splice(i++, 0, new_box);
+          const new_box = boxes[i].val - 1;
+          for (let j = 0; j < boxes.length; j++) if (boxes[j].val <= new_box) boxes[j].val--;
+          boxes.splice(new_box_i = i++, 0, { val: new_box });
         }
 
         if (button("x", box_x + BOX_SIZE * 0.9, box_y)) {
-          const zero_max = boxes[boxes.length - 1] == 0;
+          const zero_max = boxes[boxes.length - 1].val == 0;
 
-          if (zero_max && boxes[i] == 0) { for (let j = 0; j < boxes.length; j++) if (boxes[j] <= boxes[i]) boxes[j]++; }
-          if      (boxes[i] == 0)        { for (let j = 0; j < boxes.length; j++) if (boxes[j] >= boxes[i]) boxes[j]--; }
-          else if (boxes[i]  > 0)        { for (let j = 0; j < boxes.length; j++) if (boxes[j] >  boxes[i]) boxes[j]--; }
-          else                           { for (let j = 0; j < boxes.length; j++) if (boxes[j] <  boxes[i]) boxes[j]++; }
-          boxes   .splice(i, 1);
-          boxes_b4.splice(i, 1);
+          if (zero_max && boxes[i].val == 0) { for (let j = 0; j < boxes.length; j++) if (boxes[j].val <= boxes[i].val) boxes[j].val++; }
+          if      (boxes[i].val == 0)        { for (let j = 0; j < boxes.length; j++) if (boxes[j].val >= boxes[i].val) boxes[j].val--; }
+          else if (boxes[i].val  > 0)        { for (let j = 0; j < boxes.length; j++) if (boxes[j].val >  boxes[i].val) boxes[j].val--; }
+          else                               { for (let j = 0; j < boxes.length; j++) if (boxes[j].val <  boxes[i].val) boxes[j].val++; }
+          boxes.splice(i, 1);
         }
       } break;
 
@@ -244,135 +243,119 @@ requestAnimationFrame(function render(now) {
       case (BEHAVIOR.CENTRIC): {
         if (button("+", box_x, box_y - BOX_SIZE * 0.85)) {
           /* NOTE: if you use < 0 here, it's impossible to place anything aboveground if you whittle down to just a basement */
-          if (boxes[i] < -1) {
-            const new_box = boxes[i];
-            for (let j = 0; j < boxes.length; j++) if (boxes[j] <= new_box) boxes[j]--;
-            boxes   .splice(i++ + 1, 0, new_box);
-            boxes_b4.splice(i++ + 1, 0, new_box);
+          if (boxes[i].val < -1) {
+            const new_box = boxes[i].val;
+            for (let j = 0; j < boxes.length; j++) if (boxes[j].val <= new_box) boxes[j].val--;
+            boxes.splice(new_box_i = i++ + 1, 0, { val: new_box });
           } else {
-            const new_box = boxes[i] + 1;
-            for (let j = 0; j < boxes.length; j++) if (boxes[j] >= new_box) boxes[j]++;
-            boxes   .splice(i++ + 1, 0, new_box);
-            boxes_b4.splice(i++ + 1, 0, new_box);
+            const new_box = boxes[i].val + 1;
+            for (let j = 0; j < boxes.length; j++) if (boxes[j].val >= new_box) boxes[j].val++;
+            boxes.splice(new_box_i = i++ + 1, 0, { val: new_box });
           }
         }
 
         if (button("+", box_x, box_y + BOX_SIZE * 0.80)) {
           /* NOTE: if you use < 0 here, it's impossible to place basements if you start with a 0 floor */
-          if (boxes[i] <= 0) {
-            const new_box = boxes[i] - 1;
-            for (let j = 0; j < boxes.length; j++) if (boxes[j] <= new_box) boxes[j]--;
-            boxes   .splice(i++, 0, new_box);
-            boxes_b4.splice(i++, 0, new_box);
+          if (boxes[i].val <= 0) {
+            const new_box = boxes[i].val - 1;
+            for (let j = 0; j < boxes.length; j++) if (boxes[j].val <= new_box) boxes[j].val--;
+            boxes.splice(new_box_i = i++, 0, { val: new_box });
           } else {
-            const new_box = boxes[i];
-            for (let j = 0; j < boxes.length; j++) if (boxes[j] >= new_box) boxes[j]++;
-            boxes   .splice(i++, 0, new_box);
-            boxes_b4.splice(i++, 0, new_box);
+            const new_box = boxes[i].val;
+            for (let j = 0; j < boxes.length; j++) if (boxes[j].val >= new_box) boxes[j].val++;
+            boxes.splice(new_box_i = i++, 0, { val: new_box });
           }
         }
 
         if (button("x", box_x + BOX_SIZE * 0.9, box_y)) {
-          const zero_max = boxes[boxes.length - 1] == 0;
+          const zero_max = boxes[boxes.length - 1].val == 0;
 
-          if (zero_max && boxes[i] == 0) { for (let j = 0; j < boxes.length; j++) if (boxes[j] <= boxes[i]) boxes[j]++; }
-          if      (boxes[i] == 0)        { for (let j = 0; j < boxes.length; j++) if (boxes[j] >= boxes[i]) boxes[j]--; }
-          else if (boxes[i]  > 0)        { for (let j = 0; j < boxes.length; j++) if (boxes[j] >  boxes[i]) boxes[j]--; }
-          else                           { for (let j = 0; j < boxes.length; j++) if (boxes[j] <  boxes[i]) boxes[j]++; }
-          boxes   .splice(i, 1);
-          boxes_b4.splice(i, 1);
+          if (zero_max && boxes[i].val == 0) { for (let j = 0; j < boxes.length; j++) if (boxes[j].val <= boxes[i].val) boxes[j].val++; }
+          if      (boxes[i].val == 0)        { for (let j = 0; j < boxes.length; j++) if (boxes[j].val >= boxes[i].val) boxes[j].val--; }
+          else if (boxes[i].val  > 0)        { for (let j = 0; j < boxes.length; j++) if (boxes[j].val >  boxes[i].val) boxes[j].val--; }
+          else                               { for (let j = 0; j < boxes.length; j++) if (boxes[j].val <  boxes[i].val) boxes[j].val++; }
+          boxes.splice(i, 1);
         }
       } break;
 
 
       case (BEHAVIOR.CENTRIC_HACK): {
         if (button("+", box_x, box_y - BOX_SIZE * 0.85)) {
-          const any_above = boxes[boxes.length - 1] >= 0;
+          const any_above = boxes[boxes.length - 1].val >= 0;
 
-          if (boxes[i] < 0 && (boxes[i] != -1 || any_above)) {
-            const new_box = boxes[i];
-            for (let j = 0; j < boxes.length; j++) if (boxes[j] <= new_box) boxes[j]--;
-            boxes   .splice(i++ + 1, 0, new_box);
-            boxes_b4.splice(i++ + 1, 0, new_box);
+          if (boxes[i].val < 0 && (boxes[i].val != -1 || any_above)) {
+            const new_box = boxes[i].val;
+            for (let j = 0; j < boxes.length; j++) if (boxes[j].val <= new_box) boxes[j].val--;
+            boxes.splice(new_box_i = i++ + 1, 0, { val: new_box });
           } else {
-            const new_box = boxes[i] + 1;
-            for (let j = 0; j < boxes.length; j++) if (boxes[j] >= new_box) boxes[j]++;
-            boxes   .splice(i++ + 1, 0, new_box);
-            boxes_b4.splice(i++ + 1, 0, new_box);
+            const new_box = boxes[i].val + 1;
+            for (let j = 0; j < boxes.length; j++) if (boxes[j].val >= new_box) boxes[j].val++;
+            boxes.splice(new_box_i = i++ + 1, 0, { val: new_box });
           }
         }
 
         if (button("+", box_x, box_y + BOX_SIZE * 0.80)) {
-          const any_below = boxes[0] < 0;
+          const any_below = boxes[0].val < 0;
 
-          if (boxes[i] < 0 || (boxes[i] == 0 && !any_below)) {
-            const new_box = boxes[i] - 1;
-            for (let j = 0; j < boxes.length; j++) if (boxes[j] <= new_box) boxes[j]--;
-            boxes   .splice(i++, 0, new_box);
-            boxes_b4.splice(i++, 0, new_box);
+          if (boxes[i].val < 0 || (boxes[i].val == 0 && !any_below)) {
+            const new_box = boxes[i].val - 1;
+            for (let j = 0; j < boxes.length; j++) if (boxes[j].val <= new_box) boxes[j].val--;
+            boxes.splice(new_box_i = i++, 0, { val: new_box });
           } else {
-            const new_box = boxes[i];
-            for (let j = 0; j < boxes.length; j++) if (boxes[j] >= new_box) boxes[j]++;
-            boxes   .splice(i++, 0, new_box);
-            boxes_b4.splice(i++, 0, new_box);
+            const new_box = boxes[i].val;
+            for (let j = 0; j < boxes.length; j++) if (boxes[j].val >= new_box) boxes[j].val++;
+            boxes.splice(new_box_i = i++, 0, { val: new_box });
           }
         }
 
         if (button("x", box_x + BOX_SIZE * 0.9, box_y)) {
-          const zero_max = boxes[boxes.length - 1] == 0;
+          const zero_max = boxes[boxes.length - 1].val == 0;
 
-          if (zero_max && boxes[i] == 0) { for (let j = 0; j < boxes.length; j++) if (boxes[j] <= boxes[i]) boxes[j]++; }
-          if      (boxes[i] == 0)        { for (let j = 0; j < boxes.length; j++) if (boxes[j] >= boxes[i]) boxes[j]--; }
-          else if (boxes[i]  > 0)        { for (let j = 0; j < boxes.length; j++) if (boxes[j] >  boxes[i]) boxes[j]--; }
-          else                           { for (let j = 0; j < boxes.length; j++) if (boxes[j] <  boxes[i]) boxes[j]++; }
-          boxes   .splice(i, 1);
-          boxes_b4.splice(i, 1);
+          if (zero_max && boxes[i].val == 0) { for (let j = 0; j < boxes.length; j++) if (boxes[j].val <= boxes[i].val) boxes[j].val++; }
+          if      (boxes[i].val == 0)        { for (let j = 0; j < boxes.length; j++) if (boxes[j].val >= boxes[i].val) boxes[j].val--; }
+          else if (boxes[i].val  > 0)        { for (let j = 0; j < boxes.length; j++) if (boxes[j].val >  boxes[i].val) boxes[j].val--; }
+          else                           { for (let j = 0; j < boxes.length; j++) if (boxes[j].val <  boxes[i].val) boxes[j].val++; }
+          boxes.splice(i, 1);
         }
       } break;
 
 
       case (BEHAVIOR.PUSH_DOWN): {
         if (button("+", box_x, box_y - BOX_SIZE * 0.85)) {
-          const new_box = boxes[i];
-          for (let j = 0; j < boxes.length; j++) if (boxes[j] <= new_box) boxes[j]--;
-          boxes   .splice(i++ + 1, 0, new_box);
-          boxes_b4.splice(i++ + 1, 0, new_box);
+          const new_box = boxes[i].val;
+          for (let j = 0; j < boxes.length; j++) if (boxes[j].val <= new_box) boxes[j].val--;
+          boxes.splice(new_box_i = i++ + 1, 0, { val: new_box });
         }
 
         if (button("+", box_x, box_y + BOX_SIZE * 0.80)) {
-          const new_box = boxes[i] - 1;
-          for (let j = 0; j < boxes.length; j++) if (boxes[j] <= new_box) boxes[j]--;
-          boxes   .splice(i++, 0, new_box);
-          boxes_b4.splice(i++, 0, new_box);
+          const new_box = boxes[i].val - 1;
+          for (let j = 0; j < boxes.length; j++) if (boxes[j].val <= new_box) boxes[j].val--;
+          boxes.splice(new_box_i = i++, 0, { val: new_box });
         }
 
         if (button("x", box_x + BOX_SIZE * 0.9, box_y)) {
-          for (let j = 0; j < boxes.length; j++) if (boxes[j] > boxes[i]) boxes[j]--;
-          boxes   .splice(i, 1);
-          boxes_b4.splice(i, 1);
+          for (let j = 0; j < boxes.length; j++) if (boxes[j].val > boxes[i].val) boxes[j].val--;
+          boxes.splice(i, 1);
         }
       } break;
 
 
       case (BEHAVIOR.PUSH_UP): {
         if (button("+", box_x, box_y - BOX_SIZE * 0.85)) {
-          const new_box = boxes[i] + 1;
-          for (let j = 0; j < boxes.length; j++) if (boxes[j] >= new_box) boxes[j]++;
-          boxes   .splice(i++ + 1, 0, new_box);
-          boxes_b4.splice(i++ + 1, 0, new_box);
+          const new_box = boxes[i].val + 1;
+          for (let j = 0; j < boxes.length; j++) if (boxes[j].val >= new_box) boxes[j].val++;
+          boxes.splice(new_box_i = i++ + 1, 0, { val: new_box });
         }
 
         if (button("+", box_x, box_y + BOX_SIZE * 0.80)) {
-          const new_box = boxes[i];
-          for (let j = 0; j < boxes.length; j++) if (boxes[j] >= new_box) boxes[j]++;
-          boxes   .splice(i++, 0, new_box);
-          boxes_b4.splice(i++, 0, new_box);
+          const new_box = boxes[i].val;
+          for (let j = 0; j < boxes.length; j++) if (boxes[j].val >= new_box) boxes[j].val++;
+          boxes.splice(new_box_i = i++, 0, { val: new_box });
         }
 
         if (button("x", box_x + BOX_SIZE * 0.9, box_y)) {
-          for (let j = 0; j < boxes.length; j++) if (boxes[j] < boxes[i]) boxes[j]++;
-          boxes   .splice(i, 1);
-          boxes_b4.splice(i, 1);
+          for (let j = 0; j < boxes.length; j++) if (boxes[j].val < boxes[i].val) boxes[j].val++;
+          boxes.splice(i, 1);
         }
       } break;
 
@@ -381,8 +364,12 @@ requestAnimationFrame(function render(now) {
     ctx.globalAlpha = 1.0;
   }
 
-  lmb_clicked = false;
   ctx.restore();
+
+  if (lmb_clicked) {
+    lmb_clicked = false;
+    render(now*1000);
+  }
 })
 
 function lerp(v0, v1, t) { return (1 - t) * v0 + t * v1; }
