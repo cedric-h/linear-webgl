@@ -85,6 +85,7 @@ const LAST_ACTION_MOUSE = 1;
 
 const DEFAULT_PITCH =  Math.PI*0.50;
 const DEFAULT_YAW   = -Math.PI*0.25;
+const DEFAULT_DAMPED_CAM_FACTOR = 0.95;
 const DEFAULT_ZOOM  = 25;
 let input = {
     /* mousewheel input is damped here before ending up in "zoom" */ 
@@ -663,10 +664,12 @@ const map_util = {
 
         /* distance from point to bridge */
         distance(bridge, p) {
+            let planks_min = Math.min(bridge.path_from, bridge.path_to)-3;
+            let planks_max = Math.max(bridge.path_from, bridge.path_to)+3;
             return sd_segment(
                 p,
-                bridge.path_from + 3, bridge.y,
-                bridge.path_to   - 3, bridge.y
+                planks_min, bridge.y,
+                planks_max, bridge.y
             ) - 1.5;
         },
 
@@ -744,17 +747,31 @@ const map_util = {
             ROCK: 2,
         },
 
+        init() {
+            return []
+        },
+
+        ensure_allocated(enemies, idx) {
+            enemies[idx] ??= {
+                died_timestamp: null,
+                died_direction: { x: 0, y: 0 },
+            }
+            return enemies[idx];
+        },
+
         draw(enemies, for_enemies, { pushImgUV, pushSpriteXYZ }) {
             for_enemies((idx, kind, enemy_x, enemy_y) => {
+                const enemy = this.ensure_allocated(enemies, idx);
+
                 let opacity = 1;
                 let push = 0;
-                if (enemies.died_timestamps[idx] != null) {
-                    const elapsed = last_timestamp - enemies.died_timestamps[idx];
+                if (enemy.died_timestamp != null) {
+                    const elapsed = last_timestamp - enemy.died_timestamp;
                     opacity = 1 - ease_out_circ(unit_clamp((elapsed - 0.1) / 0.25));
                     push = 0.5 * ease_out_circ(unit_clamp((elapsed - 0.0) / 0.2));
                 }
-                const push_x = push*enemies.died_directions[idx].x;
-                const push_y = push*enemies.died_directions[idx].y;
+                const push_x = push*enemy.died_direction.x;
+                const push_y = push*enemy.died_direction.y;
 
                 let sprite;
                 switch (kind) {
@@ -775,8 +792,10 @@ const map_util = {
 
         update(enemies, for_enemies) {
             for_enemies((idx, kind, x, y) => {
+                const enemy = this.ensure_allocated(enemies, idx);
+
                 /* dead guys don't get updates */
-                if (enemies.died_timestamps[idx] != null) return;
+                if (enemy.died_timestamp != null) return;
 
                 const pos = { x, y };
 
@@ -841,9 +860,9 @@ const map_util = {
                             } break;
                         }
 
-                        enemies.died_timestamps[idx]   = last_timestamp;
-                        enemies.died_directions[idx].x = bullet.dir.x;
-                        enemies.died_directions[idx].y = bullet.dir.y;
+                        enemy.died_timestamp   = last_timestamp;
+                        enemy.died_direction.x = bullet.dir.x;
+                        enemy.died_direction.y = bullet.dir.y;
                         return true;
                     }
                 );
@@ -851,7 +870,9 @@ const map_util = {
         },
 
         is_dead(enemies, idx) {
-            return enemies.died_timestamps[idx] != null;
+            const enemy = this.ensure_allocated(enemies, idx);
+
+            return enemy.died_timestamp != null;
         },
 
         all_dead(enemies, for_enemies) {
@@ -875,7 +896,7 @@ const map_util = {
         leaving_cutscene(hole_transition, for_holes) {
             if (hole_transition.step_timestamp == null) return false;
 
-            for_holes((idx, hole_x, hole_y, to_map) => {
+            for_holes((idx, hole_x, hole_y, hole_key) => {
                 if (idx != hole_transition.stepped_idx) return;
 
                 /* incorporate the player's previous velocity a little bit */
@@ -915,11 +936,14 @@ const map_util = {
                 if (t > 0) {
                     this.last_transition_timestamp = last_timestamp;
 
+                    /* transition to next map */
+
                     input.zoom = DEFAULT_ZOOM;
                     input.cam_pivot_x = save.player.damped_cam_pivot_x;
                     input.cam_pivot_y = save.player.damped_cam_pivot_y;
 
-                    const spawn_info = save.maps[to_map].PLAYER_SPAWN[save.map_key];
+                    const to_map = save.map().PLAYER_SPAWN[hole_key].map;
+                    const spawn_info = save.maps[to_map].PLAYER_SPAWN[hole_key];
                     save.player.pos.x   = spawn_info.pos?.x ?? 0;
                     save.player.pos.y   = spawn_info.pos?.y ?? 0;
                     save.player.vel.x   = 3.5 * (spawn_info.dir?.x ?? 1); /* he slides into the next level */
@@ -1012,6 +1036,10 @@ const MAP_TUTORIAL   =  0;
 const MAP_CAVE       =  1;
 const MAP_DRAWBRIDGE =  2;
 
+const HOLE_TUTORIAL_TO_DRAWBRIDGE   = 1;
+const HOLE_UPPER_DRAWBRIDGE_TO_CAVE = 2;
+const HOLE_CAVE_TO_LOWER_DRAWBRIDGE = 3;
+
 const save = {
 
     cutscene_active: false,
@@ -1030,6 +1058,7 @@ const save = {
          * taking over doesn't have to interfere with the player controller. */
         damped_cam_pivot_x: 0,
         damped_cam_pivot_y: 0,
+        damped_cam_factor: DEFAULT_DAMPED_CAM_FACTOR,
 
         pos_z() {
             return this.z_boost + save.map().height_at(save.player.pos);
@@ -1205,14 +1234,14 @@ const save = {
                 save.player.pos.y = next_p_y;
             }
 
-            if (input.last_action == LAST_ACTION_KEY)
+            if (!CAMERA_CONTROLS_ACTIVE || input.last_action == LAST_ACTION_KEY)
                 this.damp_camera();
         },
 
-        damp_camera() {
-            const t = Math.pow(1 - 0.95, Math.round(target_fps)*delta_time);
-            this.damped_cam_pivot_x = input.cam_pivot_x = lerp(this.damped_cam_pivot_x, save.player.pos.x, t);
-            this.damped_cam_pivot_y = input.cam_pivot_y = lerp(this.damped_cam_pivot_y, save.player.pos.y, t);
+        damp_camera(toward_x=save.player.pos.x, toward_y=save.player.pos.y) {
+            const t = Math.pow(1 - this.damped_cam_factor, Math.round(target_fps)*delta_time);
+            this.damped_cam_pivot_x = input.cam_pivot_x = lerp(this.damped_cam_pivot_x, toward_x, t);
+            this.damped_cam_pivot_y = input.cam_pivot_y = lerp(this.damped_cam_pivot_y, toward_y, t);
 
             input.pitch = lerp(input.pitch, DEFAULT_PITCH, t);
             input.yaw   = lerp(input.yaw  , DEFAULT_YAW,   t);
@@ -1431,7 +1460,7 @@ const save = {
         },
     },
 
-    map_key: DEBUG ? MAP_DRAWBRIDGE : MAP_TUTORIAL,
+    map_key: DEBUG ? MAP_TUTORIAL : MAP_TUTORIAL,
     map() { return this.maps[this.map_key]; },
 
     maps: {
@@ -1502,8 +1531,9 @@ const save = {
 
         [MAP_DRAWBRIDGE]: {
             PLAYER_SPAWN: {
-                [MAP_CAVE]:     { pos: { x: -2, y: -3 } },
-                [MAP_TUTORIAL]: { pos: { x: -17.2, y: -15.0 } },
+                [HOLE_TUTORIAL_TO_DRAWBRIDGE]:   { pos: { x: -17.2, y: -15.0 }, map: MAP_TUTORIAL },
+                [HOLE_UPPER_DRAWBRIDGE_TO_CAVE]: { pos: { x: -15.6, y:  -1.6 }, map: MAP_CAVE     },
+                [HOLE_CAVE_TO_LOWER_DRAWBRIDGE]: { pos: { x:  -2.0, y:  -3.0 }, map: MAP_CAVE     },
             },
             BULLETS_HIT_WALLS: true,
 
@@ -1530,13 +1560,21 @@ const save = {
             },
 
             camera_animate() {
-                const player = save.player;
-                let dist = Math.sqrt((player.pos.x - (this.LOOKOUT_X + 0))*(player.pos.x - (this.LOOKOUT_X + 0)) +
-                                     (player.pos.y - (this.LOOKOUT_Y - 3))*(player.pos.y - (this.LOOKOUT_Y - 3)));
-                dist = 1 - Math.min(1, dist / 4);
-                input.zoom = lerp(DEFAULT_ZOOM, DEFAULT_ZOOM*1.5, dist);
-                player.damped_cam_pivot_x += dist;
-                player.damped_cam_pivot_y += dist*0.4;
+                if (this.crank_progress < 0.99) {
+                    const player = save.player;
+                    let dist = Math.abs(player.pos.y - (this.LOOKOUT_Y - 3));
+                    dist = unit_clamp(1 - Math.min(1, dist / 4));
+                    input.zoom = lerp(DEFAULT_ZOOM, DEFAULT_ZOOM*1.5, dist);
+
+                    player.damped_cam_factor = DEFAULT_DAMPED_CAM_FACTOR;
+                    if (dist > 0) {
+                        player.damp_camera(
+                            this.LOOKOUT_X + dist*10.0,
+                            this.LOOKOUT_Y + dist*0.8
+                        );
+                        player.damped_cam_factor = 1;
+                    }
+                }
 
                 map_util.hole.leaving_cutscene(this.hole_transition, this.for_holes.bind(this));
             },
@@ -1547,10 +1585,9 @@ const save = {
 
             hole_transition: { step_timestamp: null, stepped_idx: null },
             for_holes(hole) {
-                let idx = 0;
-                map_util.hole.for_spawn(hole, this.PLAYER_SPAWN, MAP_CAVE    , idx++);
-                map_util.hole.for_spawn(hole, this.PLAYER_SPAWN, MAP_TUTORIAL, idx++);
-                hole(idx++, this.LOOKOUT_X, this.LOOKOUT_Y + 4, MAP_CAVE);
+                map_util.hole.for_spawn(hole, this.PLAYER_SPAWN, HOLE_TUTORIAL_TO_DRAWBRIDGE  , 0);
+                map_util.hole.for_spawn(hole, this.PLAYER_SPAWN, HOLE_CAVE_TO_LOWER_DRAWBRIDGE, 1);
+                map_util.hole.for_spawn(hole, this.PLAYER_SPAWN, HOLE_UPPER_DRAWBRIDGE_TO_CAVE, 2);
             },
 
             update() {
@@ -1696,17 +1733,20 @@ const save = {
 
         [MAP_CAVE]: {
             PLAYER_SPAWN: {
-                [MAP_DRAWBRIDGE]: {
+                [HOLE_UPPER_DRAWBRIDGE_TO_CAVE]: {
                     pos: { x:  3, y:  2 },
                     dir: { x: -1, y: -1 },
+                    map: MAP_DRAWBRIDGE,
+                },
+                [HOLE_CAVE_TO_LOWER_DRAWBRIDGE]: {
+                    pos: { x: -25.0, y: -2.0 },
+                    dir: { x:  -1.0, y: -1.0 },
+                    map: MAP_DRAWBRIDGE,
                 }
             },
             BULLETS_HIT_WALLS: true,
 
-            enemies: {
-                died_timestamps: Array.from({ length: 20 }, () => null),
-                died_directions: Array.from({ length: 20 }, () => ({ x: 0, y: 0 }))
-            },
+            enemies: map_util.enemies.init(),
 
             for_circles(circle) {
                 circle(  0.0,  0.0,  8.0);
@@ -1747,8 +1787,8 @@ const save = {
 
             hole_transition: { step_timestamp: null, stepped_idx: null },
             for_holes(hole) {
-                map_util.hole.for_spawn(hole, this.PLAYER_SPAWN, MAP_DRAWBRIDGE, 0);
-                hole(1, -25.0, -2.0, MAP_DRAWBRIDGE);
+                map_util.hole.for_spawn(hole, this.PLAYER_SPAWN, HOLE_UPPER_DRAWBRIDGE_TO_CAVE, 0);
+                map_util.hole.for_spawn(hole, this.PLAYER_SPAWN, HOLE_CAVE_TO_LOWER_DRAWBRIDGE, 1);
             },
 
             camera_animate() {
@@ -1830,7 +1870,7 @@ const save = {
         },
 
         [MAP_TUTORIAL]: {
-            PLAYER_SPAWN: { [MAP_DRAWBRIDGE]: { pos: { x: -35.8, y: 0.0 } } },
+            PLAYER_SPAWN: { [HOLE_TUTORIAL_TO_DRAWBRIDGE]: { pos: { x: -35.8, y: 0.0 }, map: MAP_DRAWBRIDGE } },
             BULLETS_HIT_WALLS: false,
 
             PICKUP_X: -65.8,
@@ -1843,18 +1883,15 @@ const save = {
             move_earth_t: 0,
             pickup_get_t: 0,
 
-            enemies: {
-                died_timestamps: [null, null],
-                died_directions: [{ x: 0, y: 0 }, { x: 0, y: 0 }],
-            },
+            enemies: map_util.enemies.init(),
 
             hole_transition: { step_timestamp: null, stepped_idx: null },
             for_holes(hole) {
                 const all_dead = map_util.enemies.all_dead(this.enemies, this.for_enemies.bind(this));
 
-                if (all_dead) map_util.hole.for_spawn(hole, this.PLAYER_SPAWN, MAP_DRAWBRIDGE, 0);
+                if (all_dead) map_util.hole.for_spawn(hole, this.PLAYER_SPAWN, HOLE_TUTORIAL_TO_DRAWBRIDGE, 0);
 
-                if (DEBUG) hole(1, 0, -3, MAP_DRAWBRIDGE);
+                if (DEBUG) hole(1, 0, -3, HOLE_TUTORIAL_TO_DRAWBRIDGE);
             },
 
             for_circles(circle) {
