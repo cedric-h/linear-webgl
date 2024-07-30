@@ -46,7 +46,7 @@ BEHAVIOR.DEFAULT      = "default"  ;
 BEHAVIOR.PUSH_DOWN    = "push down";
 BEHAVIOR.PUSH_UP      = "push up"  ;
 BEHAVIOR.CENTRIC      = "centric"  ;
-BEHAVIOR.CENTRIC_HACK = "centric hack";
+BEHAVIOR.CENTRIC_OFFSET = "centric offset";
 // let behavior = BEHAVIOR.PUSH_UP;
 let behavior = BEHAVIOR.CENTRIC;
 
@@ -58,9 +58,9 @@ BEHAVIOR_DESC[BEHAVIOR.PUSH_UP  ] = ['useless in isolation, but 1/4 of centric']
 BEHAVIOR_DESC[BEHAVIOR.CENTRIC  ] = ['adding upward pushes down if below 0, downward otherwise',
                                      'adding downward pushes up if above 0, downward otherwise',
                                      'removing collapses toward center'];
-BEHAVIOR_DESC[BEHAVIOR.CENTRIC_HACK] = ['centric + hack so that the pluses',
-                                        'between 0/-1 and the ground grow outward',
-                                        'unless there\'s nothing on the other side'];
+BEHAVIOR_DESC[BEHAVIOR.CENTRIC_OFFSET] = ['centric + offset so that the pluses',
+                                          'between 0/-1 and the ground grow outward',
+                                          'unless there\'s nothing on the other side'];
 
 let then = 0;
 let deltaTime = 0;
@@ -154,7 +154,7 @@ requestAnimationFrame(function render(now) {
     {
       function y_for_val(val) {
         const space = BOX_SIZE*2.75;
-        const center = (behavior == BEHAVIOR.CENTRIC_HACK) ? 0.5 : 0;
+        const center = (behavior == BEHAVIOR.CENTRIC_OFFSET) ? 0.5 : 0;
         return (val + center) * space;
       }
       y = lerp(y_for_val(boxes[i].last_val), y_for_val(boxes[i].val), t);
@@ -280,7 +280,7 @@ requestAnimationFrame(function render(now) {
       } break;
 
 
-      case (BEHAVIOR.CENTRIC_HACK): {
+      case (BEHAVIOR.CENTRIC_OFFSET): {
         if (button("+", box_x, box_y - BOX_SIZE * 0.85)) {
           const any_above = boxes[boxes.length - 1].val >= 0;
 
