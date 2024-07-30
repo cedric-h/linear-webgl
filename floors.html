@@ -40,14 +40,17 @@ const boxes = [{ val: -2 }, { val: -1 }, { val: 0 }, { val: 1 }, { val: 2 }];
 let new_box_i;
 let boxes_change_timestamp;
 
+const BAR_UNDER   = 0;
+const BAR_THROUGH = 1;
+let bar = BAR_THROUGH;
+
 const BEHAVIOR_DESC = {};
 const BEHAVIOR = {};
-BEHAVIOR.DEFAULT      = "default"  ;
-BEHAVIOR.PUSH_DOWN    = "push down";
-BEHAVIOR.PUSH_UP      = "push up"  ;
-BEHAVIOR.CENTRIC      = "centric"  ;
+BEHAVIOR.DEFAULT        = "default"  ;
+BEHAVIOR.PUSH_DOWN      = "push down";
+BEHAVIOR.PUSH_UP        = "push up"  ;
+BEHAVIOR.CENTRIC        = "centric"  ;
 BEHAVIOR.CENTRIC_OFFSET = "centric offset";
-// let behavior = BEHAVIOR.PUSH_UP;
 let behavior = BEHAVIOR.CENTRIC;
 
 BEHAVIOR_DESC[BEHAVIOR.DEFAULT  ] = ['adding upward always pushes upward',
@@ -99,7 +102,11 @@ requestAnimationFrame(function render(now) {
 
       const hover = (raw_mouse_x > (canvas.width - 500)) && (Math.abs(raw_mouse_y - y - 60) < 30);
       if (hover) ctx.fillStyle = "blue";
-      if (hover && lmb_clicked) behavior = BEHAVIOR[key];
+      if (hover && lmb_clicked) {
+        behavior = BEHAVIOR[key];
+        if (behavior == BEHAVIOR.CENTRIC       ) bar = BAR_THROUGH;
+        if (behavior == BEHAVIOR.CENTRIC_OFFSET) bar = BAR_UNDER;
+      }
 
       ctx.fillText(
         BEHAVIOR[key],
@@ -108,6 +115,37 @@ requestAnimationFrame(function render(now) {
       );
     }
     y += 50;
+
+    {
+      ctx.textBaseline = "alphabetic";
+      ctx.textAlign = 'right';
+      let y = canvas.height - 15;
+
+      {
+        ctx.fillStyle = (bar == BAR_UNDER) ? "red" : "black";
+        const hover = (raw_mouse_x > (canvas.width - 500)) && (Math.abs(raw_mouse_y - y) < 30);
+        if (hover) ctx.fillStyle = "blue";
+        if (hover && lmb_clicked) bar = BAR_UNDER;
+        ctx.fillText(
+          "BAR UNDER",
+          canvas.width - 20,
+          y
+        );
+      }
+
+      {
+        y -= 60;
+        ctx.fillStyle = (bar == BAR_THROUGH) ? "red" : "black";
+        const hover = (raw_mouse_x > (canvas.width - 500)) && (Math.abs(raw_mouse_y - y) < 30);
+        if (hover) ctx.fillStyle = "blue";
+        if (hover && lmb_clicked) bar = BAR_THROUGH;
+        ctx.fillText(
+          "BAR THROUGH",
+          canvas.width - 20,
+          y
+        );
+      }
+    }
 
     ctx.beginPath();
     ctx.moveTo(canvas.width - 500, y);
@@ -154,7 +192,7 @@ requestAnimationFrame(function render(now) {
     {
       function y_for_val(val) {
         const space = BOX_SIZE*2.75;
-        const center = (behavior == BEHAVIOR.CENTRIC_OFFSET) ? 0.5 : 0;
+        const center = (bar == BAR_UNDER) ? 0.5 : 0;
         return (val + center) * space;
       }
       y = lerp(y_for_val(boxes[i].last_val), y_for_val(boxes[i].val), t);
