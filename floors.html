@@ -244,8 +244,7 @@ requestAnimationFrame(function render(now) {
 
       case (BEHAVIOR.CENTRIC): {
         if (button("+", box_x, box_y - BOX_SIZE * 0.85)) {
-          /* NOTE: if you use < 0 here, it's impossible to place anything aboveground if you whittle down to just a basement */
-          if (boxes[i].val < -1) {
+          if (boxes[i].val < 0) {
             const new_box = boxes[i].val;
             for (let j = 0; j < boxes.length; j++) if (boxes[j].val <= new_box) boxes[j].val--;
             boxes.splice(new_box_i = i++ + 1, 0, { val: new_box });
