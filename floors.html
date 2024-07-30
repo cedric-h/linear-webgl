@@ -53,14 +53,14 @@ BEHAVIOR.CENTRIC        = "centric"  ;
 BEHAVIOR.CENTRIC_OFFSET = "centric offset";
 let behavior = BEHAVIOR.CENTRIC;
 
-BEHAVIOR_DESC[BEHAVIOR.DEFAULT  ] = ['adding upward always pushes upward',
-                                     'adding downward always pushes downward',
-                                     'removing collapses toward center'];
-BEHAVIOR_DESC[BEHAVIOR.PUSH_DOWN] = ['useless in isolation, but 1/4 of centric'];                                                
-BEHAVIOR_DESC[BEHAVIOR.PUSH_UP  ] = ['useless in isolation, but 1/4 of centric'];                                                
-BEHAVIOR_DESC[BEHAVIOR.CENTRIC  ] = ['adding upward pushes down if below 0, downward otherwise',
-                                     'adding downward pushes up if above 0, downward otherwise',
-                                     'removing collapses toward center'];
+BEHAVIOR_DESC[BEHAVIOR.DEFAULT       ] = ['adding upward always pushes upward',
+                                          'adding downward always pushes downward',
+                                          'removing collapses toward center'];
+BEHAVIOR_DESC[BEHAVIOR.PUSH_DOWN     ] = ['useless in isolation, but 1/4 of centric'];                                                
+BEHAVIOR_DESC[BEHAVIOR.PUSH_UP       ] = ['useless in isolation, but 1/4 of centric'];                                                
+BEHAVIOR_DESC[BEHAVIOR.CENTRIC       ] = ['adding upward pushes down if below 0, downward otherwise',
+                                          'adding downward pushes up if above 0, downward otherwise',
+                                          'removing collapses toward center'];
 BEHAVIOR_DESC[BEHAVIOR.CENTRIC_OFFSET] = ['centric + offset so that the pluses',
                                           'between 0/-1 and the ground grow outward',
                                           'unless there\'s nothing on the other side'];
