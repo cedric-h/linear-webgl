@@ -141,8 +141,9 @@ requestAnimationFrame(function render(now) {
   for (let i = 0; i < boxes.length; i++) {
     let y;
     {
-      const space = BOX_SIZE*3.2;
-      y = boxes[i] * BOX_SIZE*2.75;
+      const space = BOX_SIZE*2.75;
+      const center = (behavior == BEHAVIOR.CENTRIC_HACK) ? 0.5 : 0;
+      y = (boxes[i] + center) * space;
     }
 
     /* box */
