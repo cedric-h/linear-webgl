@@ -351,9 +351,9 @@ requestAnimationFrame(function render(now) {
           const zero_max = boxes[boxes.length - 1].val == 0;
 
           if (zero_max && boxes[i].val == 0) { for (let j = 0; j < boxes.length; j++) if (boxes[j].val <= boxes[i].val) boxes[j].val++; }
-          if      (boxes[i].val == 0)        { for (let j = 0; j < boxes.length; j++) if (boxes[j].val >= boxes[i].val) boxes[j].val--; }
+          else if (boxes[i].val == 0)        { for (let j = 0; j < boxes.length; j++) if (boxes[j].val >= boxes[i].val) boxes[j].val--; }
           else if (boxes[i].val  > 0)        { for (let j = 0; j < boxes.length; j++) if (boxes[j].val >  boxes[i].val) boxes[j].val--; }
-          else                           { for (let j = 0; j < boxes.length; j++) if (boxes[j].val <  boxes[i].val) boxes[j].val++; }
+          else                               { for (let j = 0; j < boxes.length; j++) if (boxes[j].val <  boxes[i].val) boxes[j].val++; }
           boxes.splice(i, 1);
         }
       } break;
