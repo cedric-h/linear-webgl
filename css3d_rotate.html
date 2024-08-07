@@ -11,11 +11,12 @@
   <body>
     <script>"use strict";
 window.onload = () => {
-    document.body.style.backgroundColor = 'white';// 'rgb(120, 140, 240)';
+    document.body.style.backgroundColor = 'white';
 
     const parent = document.createElement('div');
     parent.style.width   = '100vw';
     parent.style.height  = '100vh';
+    parent.style.perspective = '500px';
     document.body.appendChild(parent);
 
     const divs = [];
@@ -36,18 +37,8 @@ window.onload = () => {
         parent.appendChild(div);
     }
 
-    parent.style.perspective = '500px';
-
-    let mouse_x = 0, mouse_y = 0;
-    window.onmousemove = ev => {
-        mouse_x = ev.clientX;
-        mouse_y = ev.clientY;
-    };
-
     requestAnimationFrame(function frame() {
         requestAnimationFrame(frame);
-
-        const center_y = window.innerHeight * 0.5;
 
         for (let i = 0; i < divs.length; i++) {
             const t = i / divs.length;
