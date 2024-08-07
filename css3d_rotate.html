@@ -24,20 +24,19 @@ window.onload = () => {
         div.style.width  = '8vh';
         div.style.height = '8vh';
         div.style.margin = '0.8vh';
-        div.style.backgroundColor = 'gray';// 'rgb(40, 80, 50)';
+        div.style.backgroundColor = 'gray';
 
-        div.style.display = 'flex';
+        div.style.display        = 'flex';
         div.style.justifyContent = 'center';
-        div.style.alignItems = 'center';
-
+        div.style.alignItems     = 'center';
         div.style.fontSize = '4vh';
         div.textContent += "🤔";
-
-        parent.style.perspective = '500px';
 
         divs.push(div);
         parent.appendChild(div);
     }
+
+    parent.style.perspective = '500px';
 
     let mouse_x = 0, mouse_y = 0;
     window.onmousemove = ev => {
