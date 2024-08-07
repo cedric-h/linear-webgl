@@ -1,0 +1,94 @@
+<!-- vim: sw=2 ts=2 expandtab smartindent ft=javascript
+-->
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>canvas demo</title>
+    <style> document, body { margin: 0px; padding: 0px; overflow: hidden; } </style>
+  </head>
+
+  <body>
+    <canvas id="glcanvas"></canvas>
+    <script>"use strict";
+
+const canvas = document.getElementById("glcanvas");
+const ctx = canvas.getContext('2d');
+(window.onresize = () => {
+   canvas.width = window.innerWidth*window.devicePixelRatio,
+   canvas.height = window.innerHeight*window.devicePixelRatio
+   canvas.style.width = window.innerWidth + 'px';
+   canvas.style.height = window.innerHeight + 'px';
+ })();
+
+let mouse_x = 0;
+let mouse_y = 0;
+window.onpointermove = e => {
+  mouse_x = e.pageX*window.devicePixelRatio;
+  mouse_y = e.pageY*window.devicePixelRatio;
+  e.preventDefault();
+}
+
+requestAnimationFrame(function render(now) {
+  requestAnimationFrame(render);
+
+  ctx.fillStyle = "white";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  const cx = canvas.width  * 0.5;
+  const cy = canvas.height * 0.5;
+
+  const RADIUS = canvas.height * 0.34;
+  ctx.strokeStyle = "red";
+  ctx.beginPath();
+  ctx.lineWidth = 10;
+  ctx.arc(cx, cy, RADIUS, 0, Math.PI*2);
+  ctx.stroke();
+
+  ctx.fillStyle = "blue";
+  ctx.fillRect(cx - 10, cy - 10, 20, 20);
+
+  ctx.fillStyle = "magenta";
+  ctx.fillRect(mouse_x - 10, mouse_y - 10, 20, 20);
+
+  let dx = mouse_x - cx;
+  let dy = mouse_y - cy;
+  const dlen = Math.sqrt(dx*dx + dy*dy);
+  dx /= dlen;
+  dy /= dlen;
+  const px = cx + dx * RADIUS;
+  const py = cy + dy * RADIUS;
+  ctx.fillStyle = "chartreuse";
+  ctx.fillRect(px - 10, py - 10, 20, 20);
+
+  {
+    const perp_x = -dy;
+    const perp_y =  dx;
+    const lhs_x = px + perp_x * RADIUS*0.2;
+    const lhs_y = py + perp_y * RADIUS*0.2;
+    const rhs_x = px - perp_x * RADIUS*0.2;
+    const rhs_y = py - perp_y * RADIUS*0.2;
+    ctx.fillStyle = "orange";
+    ctx.fillRect(lhs_x - 10, lhs_y - 10, 20, 20);
+    ctx.fillRect(rhs_x - 10, rhs_y - 10, 20, 20);
+
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.font = "60px sans-serif";
+
+    ctx.save();
+    const angle = Math.atan2(perp_y, perp_x);
+    ctx.translate(px, py);
+    ctx.rotate(angle);
+    ctx.fillText("🐙", 0, 0);
+    ctx.restore();
+
+    ctx.fillText("🐙", cx - dx * RADIUS, cy - dy * RADIUS);
+  }
+})
+
+function lerp(v0, v1, t) { return (1 - t) * v0 + t * v1; }
+function inv_lerp(min, max, p) { return (p - min) / (max - min); }
+    </script>
+  </body>
+</html>

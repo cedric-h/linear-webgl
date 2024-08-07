@@ -1,0 +1,68 @@
+<!-- vim: sw=4 ts=4 expandtab smartindent ft=javascript
+-->
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>WebGL Demo</title>
+    <style> document, body { margin: 0px; padding: 0px; overflow: hidden; } </style>
+  </head>
+
+  <body>
+    <script>"use strict";
+window.onload = () => {
+    document.body.style.backgroundColor = 'white';// 'rgb(120, 140, 240)';
+
+    const parent = document.createElement('div');
+    if (1) {
+        parent.style.width  = '200vw';
+        parent.style.height = '200vh';
+        parent.style.left   = '-50vw';
+        parent.style.top    = '-50vh';
+    } else {
+        parent.style.width  = '100%';
+        parent.style.height = '100%';
+    }
+    parent.style.display = 'flex';
+    parent.style.flexWrap = 'wrap';
+    // parent.style.justifyContent = 'center';
+    document.body.appendChild(parent);
+
+    const divs = [];
+    for (let i = 0; i < 1600; i++) {
+        const div = document.createElement('div');
+        div.style.width  = '50px';
+        div.style.height = '50px';
+        div.style.margin = '5px';
+        div.style.backgroundColor = 'black';// 'rgb(40, 80, 50)';
+        div.style.opacity = 0.1;
+
+        div.style.perspective = '100px';
+
+        divs.push(div);
+        parent.appendChild(div);
+    }
+
+    let mouse_x = 0, mouse_y = 0;
+    window.onmousemove = ev => {
+        mouse_x = ev.clientX;
+        mouse_y = ev.clientY;
+    };
+
+    requestAnimationFrame(function frame() {
+        requestAnimationFrame(frame);
+
+        for (const d of divs) {
+            const bcr = d.getBoundingClientRect();
+            const x = bcr.x + bcr.width*0.5;
+            const y = bcr.y + bcr.height*0.5;
+            const dist = Math.sqrt((x - mouse_x)*(x - mouse_x) +
+                                   (y - mouse_y)*(y - mouse_y));
+            // d.style.opacity = +(dist > 200);
+            d.style.scale = Math.abs(1 - dist / 100) * 0.7;
+        }
+    });
+}
+    </script>
+  </body>
+</html>
