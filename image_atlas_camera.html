@@ -743,8 +743,9 @@ const map_util = {
     enemies: {
         ENEMY: {
             TUTORIAL_NINJA: 0,
-            NINJA: 1,
-            ROCK: 2,
+            NINJA:          1,
+            ROCK:           2,
+            SLIME:          3,
         },
 
         init() {
@@ -775,6 +776,62 @@ const map_util = {
 
                 let sprite;
                 switch (kind) {
+                    case (this.ENEMY.SLIME): {
+                        let size_x = 1;
+                        let size_y = 1;
+                        size_x += 0.05*Math.sin(1.2*last_timestamp);
+                        size_y += 0.05*Math.sin(1.2*last_timestamp);
+
+                        let z = 0;
+
+                        let jump_t = (last_timestamp * 1.2) % 3;
+                        jump_t -= 1;
+                        if (jump_t > 0) {
+                            const JUMP_HEIGHT = 3;
+
+                            const CROUCH_SECS = 0.4;
+                            const crouch_t = unit_clamp(jump_t / CROUCH_SECS);
+                            jump_t -= CROUCH_SECS;
+
+                            const UNCROUCH_SECS = 0.3;
+                            const UNOVERCROUCH_SECS = 0.2;
+                            const uncrouch_t = unit_clamp(jump_t / UNCROUCH_SECS);
+                            const unovercrouch_t = unit_clamp((jump_t - UNCROUCH_SECS) / UNOVERCROUCH_SECS);
+
+                            const UP_SECS = 0.2;
+                            const up_t = unit_clamp(jump_t / UP_SECS);
+                            jump_t -= UP_SECS;
+
+                            const PAUSE_SECS = 0.15;
+                            const pause_t = unit_clamp(jump_t / PAUSE_SECS);
+                            jump_t -= PAUSE_SECS;
+
+                            const DOWN_SECS = 0.3;
+                            const down_t = unit_clamp(jump_t / DOWN_SECS);
+                            jump_t -= DOWN_SECS;
+
+                            const END_CROUCH_SECS = 0.2;
+                            const end_crouch_t = unit_clamp((jump_t + END_CROUCH_SECS*0.1) / END_CROUCH_SECS);
+                            jump_t -= END_CROUCH_SECS;
+
+                            z += JUMP_HEIGHT * (up_t   + 0.1*pause_t);
+                            z -= JUMP_HEIGHT * (down_t + 0.1*pause_t);
+
+                            let crouch = 1 - crouch_t;
+                            crouch += uncrouch_t     * (1.7 + 0);
+                            crouch -= unovercrouch_t * (1.7 - 1);
+                            crouch -= 1 - 2*Math.abs(0.5 - end_crouch_t);
+                            size_y *= 0.6 + 0.4*crouch;
+                            size_x *= 1.0 + 0.4*(1 - crouch);
+                        }
+
+                        sprite = ATLAS_ROCK;
+                        pushImgUV(sprite, 0, opacity);
+                        pushSpriteXYZ(enemy_x + push_x, enemy_y + push_y, z, size_x, size_y);
+
+                        return; /* <-- this says "return" not "break" */
+                    }; break;
+
                     case (this.ENEMY.ROCK): {
                         sprite = ATLAS_ROCK;
                     } break;
@@ -801,6 +858,7 @@ const map_util = {
 
                 let shoots = true;
                 if (kind == this.ENEMY.ROCK) shoots = false;
+                if (kind == this.ENEMY.SLIME) shoots = false;
                 if (shoots) {
                     const t = ~~(last_timestamp / delta_time) % 70;
 
@@ -831,6 +889,7 @@ const map_util = {
 
                 let size;
                 switch (kind) {
+                    case (this.ENEMY.SLIME):
                     case (this.ENEMY.ROCK): {
                         size = 1.2;
                     } break;
@@ -850,6 +909,7 @@ const map_util = {
                         const direction = Math.atan2(bullet.dir.y, bullet.dir.x);
                         
                         switch (kind) {
+                            case (this.ENEMY.SLIME):
                             case (this.ENEMY.ROCK): {
                                 save.particle.spurt(ATLAS_ROCK, save.particles, direction, pos, 1);
                             } break;
@@ -1031,6 +1091,7 @@ const map_util = {
 
 };
 
+const MAP_ENEMY_TEST = -2;
 const MAP_BASIC      = -1;
 const MAP_TUTORIAL   =  0;
 const MAP_CAVE       =  1;
@@ -1460,7 +1521,7 @@ const save = {
         },
     },
 
-    map_key: DEBUG ? MAP_TUTORIAL : MAP_TUTORIAL,
+    map_key: DEBUG ? MAP_ENEMY_TEST : MAP_TUTORIAL,
     map() { return this.maps[this.map_key]; },
 
     maps: {
@@ -1507,6 +1568,78 @@ const save = {
                 drawImg(AXIS_SPRITE, 3, 1,  0.8, ATLAS_THREAD);
                 
                 map_util.hole.draw(this.hole_transition, this.for_holes.bind(this), ctx);
+            },
+
+            distance_at(pos) {
+                let circ_min_dist = Infinity;
+
+                this.for_circles((x, y, size) => {
+                    const dx = pos.x - x;
+                    const dy = pos.y - y;
+                    const dist = Math.sqrt(dx*dx + dy*dy) - size*0.65;
+                    circ_min_dist = Math.min(circ_min_dist, dist);
+                });
+
+                return circ_min_dist;
+            },
+
+            height_at(p) {
+                let height = 0;
+
+                return height;
+            },
+        },
+
+        [MAP_ENEMY_TEST]: {
+            PLAYER_SPAWN: {},
+            BULLETS_HIT_WALLS: true,
+
+            enemies: map_util.enemies.init(),
+
+            for_enemies(enemy) {
+                const slime = map_util.enemies.ENEMY.SLIME;
+                enemy(0, slime, 2, 2);
+            },
+
+            for_circles(circle) {
+                circle(  0.0,  0.0,  8.0);
+            },
+
+            hole_transition: { step_timestamp: null, stepped_idx: null },
+            for_holes(hole) {
+                // map_util.hole.for_spawn(hole, this.PLAYER_SPAWN, MAP_TUTORIAL, 0);
+            },
+
+            camera_animate() {
+                map_util.hole.leaving_cutscene(this.hole_transition, this.for_holes.bind(this));
+            },
+
+            update() {
+                let i = 0;
+
+                if (save.cutscene_active) return;
+
+                map_util.hole.detect_step(this.hole_transition, this.for_holes.bind(this));
+
+                map_util.enemies.update(this.enemies, this.for_enemies.bind(this));
+
+            },
+
+            draw(ctx) {
+                const { pushSpriteXYZ, pushImgUV, drawImg } = ctx;
+
+                this.for_circles((x, y, size) => {
+                    drawImg(
+                        AXIS_FLAT,
+                        x + size*MOON_NUDGE_X, y+size*MOON_NUDGE_Y,
+                        size * 0.9,
+                        ATLAS_MOON,
+                        SHADER_FLAG_GREENIFY
+                    );
+                });
+
+                map_util.hole.draw(this.hole_transition, this.for_holes.bind(this), ctx);
+                map_util.enemies.draw(this.enemies, this.for_enemies.bind(this), ctx);
             },
 
             distance_at(pos) {
@@ -2171,16 +2304,16 @@ requestAnimationFrame(function frame(timestamp) {
         }
 
         const back = Math.cos(Math.PI*0.25);
-        function pushSpriteXYZ(x, y, z, size, rot=-Math.PI*0.25) {
+        function pushSpriteXYZ(x, y, z, size_x, size_y = size_x) {
             const center_x = x;
-            const center_z = z + back*size;
+            const center_z = z + back*size_y;
 
             const vbuf_i = geo.pos.length / 3;
 
-            geo.pos.push(center_x+size, y          , center_z - back*size);
-            geo.pos.push(center_x-size, y          , center_z - back*size);
-            geo.pos.push(center_x-size, y-back*size, center_z + back*size);
-            geo.pos.push(center_x+size, y-back*size, center_z + back*size);
+            geo.pos.push(center_x+size_x, y            , center_z - back*size_y);
+            geo.pos.push(center_x-size_x, y            , center_z - back*size_y);
+            geo.pos.push(center_x-size_x, y-back*size_y, center_z + back*size_y);
+            geo.pos.push(center_x+size_x, y-back*size_y, center_z + back*size_y);
 
             geo.idx.push(vbuf_i + 0, vbuf_i + 1, vbuf_i + 2,
                          vbuf_i + 2, vbuf_i + 3, vbuf_i + 0);
