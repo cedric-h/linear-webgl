@@ -1806,19 +1806,23 @@ const save = {
                     // const moai_x = 24;
                     const moai_x = 6;
                     const moai_y = 0;
-                    drawImg(AXIS_SPRITE, moai_x, moai_y, 3, ATLAS_MOAI);
+                    {
+                        const t = 0.1 * Math.sin(5*last_timestamp);
+                        drawImg(AXIS_SPRITE, moai_x, moai_y, 3 + t, ATLAS_MOAI);
+                    }
 
                     for (let i = 0; i < MOAI_MINION_COUNT; i++) {
                         const t = i / MOAI_MINION_COUNT;
 
                         const bob  = Math.sin(10*(i + last_timestamp));
-                        const out = 2.8 + 1.0*(1 + Math.sin(100*(i + last_timestamp)));
+                        const out = 3.2 + 0.2*(1 + Math.sin(15*(i + last_timestamp)));
                         let x = moai_x + 0.25 + out * Math.cos(last_timestamp + t * Math.PI * 2);
                         let y = moai_y + 0.00 + out * Math.sin(last_timestamp + t * Math.PI * 2);
-                        y += bob * 0.2;
+                        let z = 2.5;
+                        z += bob * 0.2;
 
                         pushImgUV(ATLAS_MOAI);
-                        pushSpriteXYZ(x, y, 2.5, 1);
+                        pushSpriteXYZ(x, y, z, 1);
                     }
                 }
 
