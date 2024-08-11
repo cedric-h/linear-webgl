@@ -741,6 +741,9 @@ const map_util = {
     },
 
     enemies: {
+        SLIME_JUMP_SPEEDUP: 1.2,
+        SLIME_JUMP_FREQ: 3,
+
         ENEMY: {
             TUTORIAL_NINJA: 0,
             NINJA:          1,
@@ -752,17 +755,35 @@ const map_util = {
             return []
         },
 
-        ensure_allocated(enemies, idx) {
+        ensure_allocated(enemies, idx, spawn_x, spawn_y) {
+            
             enemies[idx] ??= {
                 died_timestamp: null,
                 died_direction: { x: 0, y: 0 },
-            }
+                next_shot_timestamp: null,
+                pos: { x: spawn_x, y: spawn_y },
+                vel: { x:       0, y:       0 },
+                og_pos: { x: spawn_x, y: spawn_y }
+            };
+
+            /* I will later get rid of the "og_pos" concept when I abstract
+             * out "circles" and have them simply move everything above them.
+             *
+             * However, such an improvement will only be necessary if a level requires
+             * moving platforms underneath moving enemies that can leave their platforms. */
+            enemies[idx].pos.x -= (enemies[idx].og_pos.x - spawn_x);
+            enemies[idx].pos.y -= (enemies[idx].og_pos.y - spawn_y);
+            enemies[idx].og_pos.x = spawn_x;
+            enemies[idx].og_pos.y = spawn_y;
+
             return enemies[idx];
         },
 
         draw(enemies, for_enemies, { pushImgUV, pushSpriteXYZ }) {
-            for_enemies((idx, kind, enemy_x, enemy_y) => {
-                const enemy = this.ensure_allocated(enemies, idx);
+            for_enemies((idx, kind, spawn_x, spawn_y) => {
+                const enemy = this.ensure_allocated(enemies, idx, spawn_x, spawn_y);
+                const enemy_x = enemy.pos.x;
+                const enemy_y = enemy.pos.y;
 
                 let opacity = 1;
                 let push = 0;
@@ -777,14 +798,17 @@ const map_util = {
                 let sprite;
                 switch (kind) {
                     case (this.ENEMY.SLIME): {
+                        const SPEEDUP = this.SLIME_JUMP_SPEEDUP;
+                        const FREQ    = this.SLIME_JUMP_FREQ;
+
                         let size_x = 1;
                         let size_y = 1;
-                        size_x += 0.05*Math.sin(1.2*last_timestamp);
-                        size_y += 0.05*Math.sin(1.2*last_timestamp);
+                        size_x += 0.05*Math.sin(SPEEDUP*last_timestamp);
+                        size_y += 0.05*Math.sin(SPEEDUP*last_timestamp);
 
                         let z = 0;
 
-                        let jump_t = (last_timestamp * 1.2) % 3;
+                        let jump_t = (last_timestamp * SPEEDUP) % FREQ;
                         jump_t -= 1;
                         if (jump_t > 0) {
                             const JUMP_HEIGHT = 3;
@@ -832,6 +856,7 @@ const map_util = {
                         return; /* <-- this says "return" not "break" */
                     }; break;
 
+                    case (this.ENEMY.SLIME):
                     case (this.ENEMY.ROCK): {
                         sprite = ATLAS_ROCK;
                     } break;
@@ -847,90 +872,213 @@ const map_util = {
             });
         },
 
-        update(enemies, for_enemies) {
+        for_collisions(enemies, for_enemies, pos, radius, callback) {
             for_enemies((idx, kind, x, y) => {
-                const enemy = this.ensure_allocated(enemies, idx);
+                if (kind != this.ENEMY.SLIME) return;
+                if (this.is_dead(enemies, idx, x, y)) return;
 
-                /* dead guys don't get updates */
-                if (enemy.died_timestamp != null) return;
+                const enemy = this.ensure_allocated(enemies, idx, x, y);
 
-                const pos = { x, y };
+                const dx = enemy.pos.x - pos.x;
+                const dy = enemy.pos.y - pos.y;
+                const dist = Math.sqrt(dx*dx + dy*dy);
+                const hit = (dist < radius);
 
-                let shoots = true;
-                if (kind == this.ENEMY.ROCK) shoots = false;
-                if (kind == this.ENEMY.SLIME) shoots = false;
-                if (shoots) {
-                    const t = ~~(last_timestamp / delta_time) % 70;
-
-                    if (t == 0) {
-                        const dx = save.player.pos.x - pos.x;
-                        const dy = save.player.pos.y - pos.y;
-                        const angle = Math.atan2(dy, dx);
-                        const dir = { x: 0, y: 0 };
-
-                        if (kind == this.ENEMY.TUTORIAL_NINJA)
-                            /* using "sign" instead of "sin" here makes them slightly bad
-                             * at aiming -- good for tutorial */
-                            dir.x = Math.cos(angle), dir.y = Math.sign(angle);
-                        else
-                            dir.x = Math.cos(angle), dir.y = Math.sin(angle);
-
-                        save.bullets.push({
-                            layer: LAYER_PLAYER,
-                            z: 1,
-                            pos,
-                            dir: dir,
-                            range: 25,
-                            speed: 7,
-                            sprite: ATLAS_KNIFE
-                        });
-                    }
+                if (hit && callback(enemy, idx, kind, x, y)) {
+                    enemy.vel.x += (dx / dist) * 8;
+                    enemy.vel.y += (dy / dist) * 8;
                 }
-
-                let size;
-                switch (kind) {
-                    case (this.ENEMY.SLIME):
-                    case (this.ENEMY.ROCK): {
-                        size = 1.2;
-                    } break;
-
-                    case (this.ENEMY.NINJA):
-                    case (this.ENEMY.TUTORIAL_NINJA): {
-                        size = 0.95;
-                    } break;
-                }
-
-                save.bullet.for_collisions(
-                    save.bullets,
-                    LAYER_ENEMIES,
-                    pos,
-                    size,
-                    bullet => {
-                        const direction = Math.atan2(bullet.dir.y, bullet.dir.x);
-                        
-                        switch (kind) {
-                            case (this.ENEMY.SLIME):
-                            case (this.ENEMY.ROCK): {
-                                save.particle.spurt(ATLAS_ROCK, save.particles, direction, pos, 1);
-                            } break;
-
-                            case (this.ENEMY.NINJA):
-                            case (this.ENEMY.TUTORIAL_NINJA): {
-                                save.particle.blood(save.particles, direction, pos, 1);
-                            } break;
-                        }
-
-                        enemy.died_timestamp   = last_timestamp;
-                        enemy.died_direction.x = bullet.dir.x;
-                        enemy.died_direction.y = bullet.dir.y;
-                        return true;
-                    }
-                );
             });
         },
 
-        is_dead(enemies, idx) {
-            const enemy = this.ensure_allocated(enemies, idx);
+        update(enemies, for_enemies) {
+            /* note: for moving enemies, x & y here are just "spawn pos" */
+            for_enemies((idx, kind, x, y) => {
+                const enemy = this.ensure_allocated(enemies, idx, x, y);
+
+                /* dead guys don't get updates (sorry sir) */
+                if (enemy.died_timestamp != null) return;
+
+                /* shoots */
+                do {
+                    if (kind == this.ENEMY.ROCK) continue;
+                    if (kind == this.ENEMY.SLIME) continue;
+
+                    if (last_timestamp < enemy.next_shot_timestamp) continue;
+                    enemy.next_shot_timestamp = last_timestamp + 1;
+
+                    const dx = save.player.pos.x - enemy.pos.x;
+                    const dy = save.player.pos.y - enemy.pos.y;
+                    const angle = Math.atan2(dy, dx);
+                    const dir = { x: 0, y: 0 };
+
+                    if (kind == this.ENEMY.TUTORIAL_NINJA)
+                        /* using "sign" instead of "sin" here makes them slightly bad
+                         * at aiming -- good for tutorial */
+                        dir.x = Math.cos(angle), dir.y = Math.sign(angle);
+                    else
+                        dir.x = Math.cos(angle), dir.y = Math.sin(angle);
+
+                    save.bullets.push({
+                        layer: LAYER_PLAYER,
+                        z: 1,
+                        pos: { x: enemy.pos.x, y: enemy.pos.y },
+                        dir: dir,
+                        range: 25,
+                        speed: 7,
+                        sprite: ATLAS_KNIFE
+                    });
+                } while (false);
+
+                /* getting hit by bullets */
+                {
+                    /* hitcircle radius */
+                    let size;
+                    switch (kind) {
+                        case (this.ENEMY.SLIME):
+                        case (this.ENEMY.ROCK): {
+                            size = 1.2;
+                        } break;
+
+                        case (this.ENEMY.NINJA):
+                        case (this.ENEMY.TUTORIAL_NINJA): {
+                            size = 0.95;
+                        } break;
+                    }
+
+                    const pos = { x: enemy.pos.x, y: enemy.pos.y };
+                    save.bullet.for_collisions(
+                        save.bullets,
+                        LAYER_ENEMIES,
+                        pos,
+                        size,
+                        bullet => {
+                            const direction = Math.atan2(bullet.dir.y, bullet.dir.x);
+                            
+                            switch (kind) {
+                                case (this.ENEMY.SLIME):
+                                case (this.ENEMY.ROCK): {
+                                    save.particle.spurt(ATLAS_ROCK, save.particles, direction, pos, 1);
+                                } break;
+
+                                case (this.ENEMY.NINJA):
+                                case (this.ENEMY.TUTORIAL_NINJA): {
+                                    save.particle.blood(save.particles, direction, pos, 1);
+                                } break;
+                            }
+
+                            enemy.died_timestamp   = last_timestamp;
+                            enemy.died_direction.x = bullet.dir.x;
+                            enemy.died_direction.y = bullet.dir.y;
+                            return true;
+                        }
+                    );
+                }
+
+                /* movement */
+                do {
+                    if (kind != this.ENEMY.SLIME) continue;
+
+                    /* tentative next position; will be constrained by terrain before application */
+                    let p_x = enemy.pos.x;
+                    let p_y = enemy.pos.y;
+
+                    /* collision with other slimes */
+                    this.for_collisions(enemies, for_enemies, enemy.pos, 1.15, (other, other_idx) => {
+                        if (other_idx == idx) return;
+
+                        let sum_vel = Math.sqrt(other.vel.x*other.vel.x + other.vel.y*other.vel.y) +
+                                      Math.sqrt(enemy.vel.x*enemy.vel.x + enemy.vel.y*enemy.vel.y) ;
+                        sum_vel = 0.7 + 0.3*unit_clamp(sum_vel * 3);
+
+                        const dx = other.pos.x - enemy.pos.x;
+                        const dy = other.pos.y - enemy.pos.y;
+                        const dist = Math.sqrt(dx*dx + dy*dy) || 1;
+                        enemy.vel.x -= (dx / dist) * 8 * sum_vel;
+                        enemy.vel.y -= (dy / dist) * 8 * sum_vel;
+                    });
+
+                    /* velocity */
+                    {
+                        /* add velocity */
+                        p_x += enemy.vel.x*delta_time;
+                        p_y += enemy.vel.y*delta_time;
+
+                        /* multiplicative drag to velocity */
+                        {
+                            const fraction_remaining_after_one_second = 0.01;
+                            const new_vel_x = enemy.vel.x * Math.pow(fraction_remaining_after_one_second, delta_time);
+                            const new_vel_y = enemy.vel.y * Math.pow(fraction_remaining_after_one_second, delta_time);
+
+                            p_x += (new_vel_x - enemy.vel.x) / Math.log(fraction_remaining_after_one_second);
+                            p_y += (new_vel_y - enemy.vel.y) / Math.log(fraction_remaining_after_one_second);
+
+                            enemy.vel.x = new_vel_x;
+                            enemy.vel.y = new_vel_y;
+                        }
+                    }
+
+                    /* slime movement */
+                    do {
+                        const SPEEDUP = this.SLIME_JUMP_SPEEDUP;
+                        const FREQ    = this.SLIME_JUMP_FREQ;
+                        let jump_t = (last_timestamp * SPEEDUP) % FREQ;
+                        const move = (jump_t < 2.05) && (jump_t > 1.4);
+                        if (!move) continue;
+
+                        /* how to synchronize this with the jumping? */
+                        let dx = save.player.pos.x - enemy.pos.x;
+                        let dy = save.player.pos.y - enemy.pos.y;
+                        const dist_to_player = Math.sqrt(dx*dx + dy*dy);
+                        if (dist_to_player > 0) dx /= dist_to_player;
+                        if (dist_to_player > 0) dy /= dist_to_player;
+
+                        const speed = 6;
+                        p_x += dx * Math.min(dist_to_player, speed * delta_time);
+                        p_y += dy * Math.min(dist_to_player, speed * delta_time);
+                    } while (false);
+
+                    /* modified version of this code in the character controller */
+                    {
+                        let next_p_x = enemy.pos.x;
+                        let next_p_y = enemy.pos.y;
+                        const axes = [{ x: enemy.pos.x, y: p_y }, { x: p_x, y: enemy.pos.y }];
+                        for (let i = 0; i < axes.length; i++) {
+                            const o = axes[i];
+
+                            /* how far you're trying to go */
+                            let moved_dist = Math.sqrt((enemy.pos.x - o.x)*(enemy.pos.x - o.x) +
+                                                       (enemy.pos.y - o.y)*(enemy.pos.y - o.y));
+
+                            /* how far you can go w/o hitting something */
+                            let max_dist = save.map().distance_at(o);
+
+                            const min = Math.min(-max_dist, moved_dist);
+
+                            const cut_dist = Math.abs(min - moved_dist);
+
+                            let dx = o.x - enemy.pos.x;
+                            let dy = o.y - enemy.pos.y;
+
+                            if (Math.abs(dx) > 0 || Math.abs(dy) > 0) {
+                                const d_len = Math.sqrt(dx*dx + dy*dy);
+                                dx /= d_len;
+                                dy /= d_len;
+
+                                next_p_x += dx*min;
+                                next_p_y += dy*min;
+                            }
+                        }
+                        enemy.pos.x = next_p_x;
+                        enemy.pos.y = next_p_y;
+                    }
+
+                } while (false);
+            });
+        },
+
+        is_dead(enemies, idx, x, y) {
+            const enemy = this.ensure_allocated(enemies, idx, x, y);
 
             return enemy.died_timestamp != null;
         },
@@ -938,7 +1086,7 @@ const map_util = {
         all_dead(enemies, for_enemies) {
             let ret = true; 
 
-            for_enemies((idx) => ret &&= this.is_dead(enemies, idx));
+            for_enemies((idx, _, x, y) => ret &&= this.is_dead(enemies, idx, x, y));
 
             return ret;
         }
@@ -1125,22 +1273,40 @@ const save = {
             return this.z_boost + save.map().height_at(save.player.pos);
         },
 
+        hit(direction_x, direction_y) {
+            const angle = Math.atan2(direction_y, direction_x);
+            save.flinch.trigger(angle);
+
+            save.player.vel.x += 0.18*direction_x;
+            save.player.vel.y += 0.18*direction_y;
+        },
+
         update() {
-            save.bullet.for_collisions(
-                save.bullets,
-                LAYER_PLAYER,
-                this.pos,
-                0.95,
-                bullet => {
-                    const angle = Math.atan2(bullet.dir.y, bullet.dir.x);
-                    save.flinch.trigger(angle);
+            /* radius of hitcircle */
+            const size = 0.95;
+            const pos = this.pos;
 
-                    save.player.vel.x += 0.18*bullet.dir.x;
-                    save.player.vel.y += 0.18*bullet.dir.y;
+            const bullet_hit = (bullet) => {
+                this.hit(bullet.dir.x, bullet.dir.y);
+                return true;
+            };
+            save.bullet.for_collisions(save.bullets, LAYER_PLAYER, pos, size, bullet_hit);
 
-                    return true;
-                }
-            );
+            const enemies = save.map().enemies;
+            const for_enemies = save.map().for_enemies;
+            if (!enemies || !for_enemies) return;
+
+            const enemy_hit = (enemy) => {
+                const dx = pos.x - enemy.pos.x;
+                const dy = pos.y - enemy.pos.y;
+                const dist = Math.sqrt(dx*dx + dy*dy) || 1;
+
+                const knockback = 15;
+                this.hit(dx / dist * knockback, dy / dist * knockback);
+
+                return true;
+            }
+            map_util.enemies.for_collisions(enemies, for_enemies, pos, size, enemy_hit);
         },
 
         draw({ pushImgUV, pushSpriteXYZ }) {
@@ -1598,11 +1764,17 @@ const save = {
 
             for_enemies(enemy) {
                 const slime = map_util.enemies.ENEMY.SLIME;
-                enemy(0, slime, 2, 2);
+                // enemy(0, slime,  2,  2);
+                // enemy(1, slime, -2,  2);
+                // enemy(2, slime, -2, -2);
+                // enemy(3, slime,  2, -2);
             },
 
             for_circles(circle) {
-                circle(  0.0,  0.0,  8.0);
+                circle( -3.0,  0.0,  12.0);
+                circle(  6.0,  0.0,  12.0);
+                circle( 15.0,  0.0,  12.0);
+                circle( 24.0,  0.0,  18.0);
             },
 
             hole_transition: { step_timestamp: null, stepped_idx: null },
@@ -1627,6 +1799,28 @@ const save = {
 
             draw(ctx) {
                 const { pushSpriteXYZ, pushImgUV, drawImg } = ctx;
+
+                {
+                    const MOAI_MINION_COUNT = 6;
+
+                    // const moai_x = 24;
+                    const moai_x = 6;
+                    const moai_y = 0;
+                    drawImg(AXIS_SPRITE, moai_x, moai_y, 3, ATLAS_MOAI);
+
+                    for (let i = 0; i < MOAI_MINION_COUNT; i++) {
+                        const t = i / MOAI_MINION_COUNT;
+
+                        const bob  = Math.sin(10*(i + last_timestamp));
+                        const out = 2.8 + 1.0*(1 + Math.sin(100*(i + last_timestamp)));
+                        let x = moai_x + 0.25 + out * Math.cos(last_timestamp + t * Math.PI * 2);
+                        let y = moai_y + 0.00 + out * Math.sin(last_timestamp + t * Math.PI * 2);
+                        y += bob * 0.2;
+
+                        pushImgUV(ATLAS_MOAI);
+                        pushSpriteXYZ(x, y, 2.5, 1);
+                    }
+                }
 
                 this.for_circles((x, y, size) => {
                     drawImg(
@@ -1959,7 +2153,7 @@ const save = {
                 this.for_enemies((idx, kind, x, y) => {
                     const rock = map_util.enemies.ENEMY.ROCK;
                     if (kind != rock) return;
-                    if (!map_util.enemies.is_dead(this.enemies, idx)) return;
+                    if (!map_util.enemies.is_dead(this.enemies, idx, x, y)) return;
 
                     drawImg(AXIS_SPRITE, x+0.1, y+0.4, 0.2, ATLAS_ROCK);
                     drawImg(AXIS_SPRITE, x-0.2, y+0.0, 0.3, ATLAS_ROCK);
@@ -1983,7 +2177,7 @@ const save = {
                 this.for_enemies((idx, kind, x, y) => {
                     const rock = map_util.enemies.ENEMY.ROCK;
                     if (kind != rock) return;
-                    if (map_util.enemies.is_dead(this.enemies, idx)) return;
+                    if (map_util.enemies.is_dead(this.enemies, idx, x, y)) return;
 
                     const dx = pos.x - x;
                     const dy = pos.y - y;
