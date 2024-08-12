@@ -749,6 +749,7 @@ const map_util = {
             NINJA:          1,
             ROCK:           2,
             SLIME:          3,
+            MINI_MOAI:      4,
         },
 
         init() {
@@ -781,6 +782,8 @@ const map_util = {
 
         draw(enemies, for_enemies, { pushImgUV, pushSpriteXYZ }) {
             for_enemies((idx, kind, spawn_x, spawn_y) => {
+                if (kind == this.ENEMY.MINI_MOAI) return;
+
                 const enemy = this.ensure_allocated(enemies, idx, spawn_x, spawn_y);
                 const enemy_x = enemy.pos.x;
                 const enemy_y = enemy.pos.y;
@@ -1768,6 +1771,33 @@ const save = {
                 // enemy(1, slime, -2,  2);
                 // enemy(2, slime, -2, -2);
                 // enemy(3, slime,  2, -2);
+
+                if (1) {
+                    const MOAI_MINION_COUNT = 6;
+
+                    // const moai_x = 24;
+                    const moai_x = 6;
+                    const moai_y = 0;
+                    if (0) {
+                        const t = 0.1 * Math.sin(5*last_timestamp);
+                        drawImg(AXIS_SPRITE, moai_x, moai_y, 3 + t, ATLAS_MOAI);
+                    }
+
+                    for (let i = 0; i < MOAI_MINION_COUNT; i++) {
+                        const t = i / MOAI_MINION_COUNT;
+
+                        const bob  = Math.sin(10*(i + last_timestamp));
+                        const out = 3.2 + 0.2*(1 + Math.sin(15*(i + last_timestamp)));
+                        let x = moai_x + 0.25 + out * Math.cos(last_timestamp + t * Math.PI * 2);
+                        let y = moai_y + 0.00 + out * Math.sin(last_timestamp + t * Math.PI * 2);
+                        let z = 2.5;
+                        z += bob * 0.2;
+
+                        enemy(i, map_util.enemies.ENEMY.MINI_MOAI, x, y);
+                        // pushImgUV(ATLAS_MOAI);
+                        // pushSpriteXYZ(x, y, z, 1);
+                    }
+                }
             },
 
             for_circles(circle) {
