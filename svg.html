@@ -1,0 +1,108 @@
+<!-- vim: sw=4 ts=4 expandtab smartindent ft=javascript
+-->
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>svg Demo</title>
+    <style> document, body { margin: 0px; padding: 0px; overflow: hidden; } </style>
+  </head>
+
+  <body>
+    <div id="drawing"></div>
+    <script>"use strict";
+
+const input = {
+    scroll: 0,
+
+    cam_x: 0,
+    cam_y: 0,
+    cam_zoom: 1,
+
+    mouse_x: 0,
+    mouse_y: 0,
+
+    mouse_down_x: 0,
+    mouse_down_y: 0,
+
+    mouse_down: false,
+    mouse_released: false
+};
+let wheelTimeout;
+window.onwheel = e => {
+    input.scroll = Math.sign(e.deltaY);
+    clearTimeout(wheelTimeout)
+    wheelTimeout = setTimeout(() => input.scroll = 0, 100)
+};
+window.onmousedown = e => {
+    input.mouse_down = true;
+    input.mouse_down_x = e.clientX;
+    input.mouse_down_y = e.clientY;
+};
+window.onmousemove = e => {
+    input.mouse_x = e.clientX;
+    input.mouse_y = e.clientY;
+};
+window.onmouseup = e => {
+    input.mouse_down = false;
+    input.mouse_released = true;
+    input.mouse_x = e.clientX;
+    input.mouse_y = e.clientY;
+};
+
+window.onload = () => {
+    const ns = 'http://www.w3.org/2000/svg';
+    const div = document.getElementById('drawing') ;
+    const svg = document.createElementNS(ns, 'svg');
+    div.appendChild(svg);
+
+    requestAnimationFrame(function frame() {
+        requestAnimationFrame(frame);
+
+        svg.setAttributeNS(null, 'width', '100vw');
+        svg.setAttributeNS(null, 'height', '100vh');
+
+        svg.children[0]?.remove();
+        const group = document.createElementNS(ns, 'g');
+        {
+            let cam_x = input.cam_x;
+            let cam_y = input.cam_y;
+            /* camera input handling */
+            {
+                if (input.mouse_down || input.mouse_released) {
+                    cam_x += (input.mouse_x - input.mouse_down_x);
+                    cam_y += (input.mouse_y - input.mouse_down_y);
+                }
+
+                if (input.mouse_released) {
+                    input.mouse_released = false;
+                    input.cam_x = cam_x;
+                    input.cam_y = cam_y;
+                }
+
+                input.cam_zoom *= 1 + input.scroll*0.03;
+            }
+
+            let scale = input.cam_zoom;
+            const transform = `translate(${cam_x} ${cam_y}) ` + 
+                              `scale(${scale} ${scale}) `; 
+            group.setAttributeNS(null, 'transform', transform);
+        }
+
+        {
+            const rect = document.createElementNS(ns, 'rect');
+            rect.setAttributeNS(null, 'width', 100);
+
+            rect.setAttributeNS(null, 'width', 100);
+            rect.setAttributeNS(null, 'height', 100);
+            rect.setAttributeNS(null, 'fill', '#f06');
+            group.appendChild(rect);
+        }
+
+        svg.appendChild(group);
+    });
+}
+
+    </script>
+  </body>
+</html>
