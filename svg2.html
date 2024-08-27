@@ -1,0 +1,200 @@
+<!-- vim: sw=4 ts=4 expandtab smartindent ft=javascript
+-->
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>svg Demo</title>
+    <style> document, body { margin: 0px; padding: 0px; overflow: hidden; } </style>
+  </head>
+
+  <body>
+    <div id="drawing"></div>
+    <script>"use strict";
+
+const input = {
+    scroll: 0,
+
+    cam_x: 0,
+    cam_y: 0,
+    cam_zoom: 1,
+
+    mouse_x: 0,
+    mouse_y: 0,
+
+    mouse_down_x: 0,
+    mouse_down_y: 0,
+
+    mouse_down: false,
+    mouse_released: false
+};
+let wheelTimeout;
+window.onwheel = e => {
+    input.scroll = Math.sign(e.deltaY);
+    clearTimeout(wheelTimeout)
+    wheelTimeout = setTimeout(() => input.scroll = 0, 100)
+};
+window.onmousedown = e => {
+    input.mouse_down = true;
+    input.mouse_down_x = e.clientX;
+    input.mouse_down_y = e.clientY;
+};
+window.onmousemove = e => {
+    input.mouse_x = e.clientX;
+    input.mouse_y = e.clientY;
+};
+window.onmouseup = e => {
+    input.mouse_down = false;
+    input.mouse_released = true;
+    input.mouse_x = e.clientX;
+    input.mouse_y = e.clientY;
+};
+
+window.onload = () => {
+    const ns = 'http://www.w3.org/2000/svg';
+    const div = document.getElementById('drawing') ;
+    const svg = document.createElementNS(ns, 'svg');
+    div.appendChild(svg);
+
+    let img_src;
+    {
+        const canvas = document.createElement("canvas");
+        canvas.width = canvas.height = 100;
+        {
+            const ctx = canvas.getContext("2d");
+            ctx.fillStyle = "pink";
+            ctx.font = '80px sans-serif';
+            ctx.fillText("🤔", 10, 80);
+        }
+        img_src = canvas.toDataURL();
+    }
+
+    svg.children[0]?.remove();
+    svg.children[0]?.remove();
+    const group = document.createElementNS(ns, 'g');
+
+    {
+        const rows = Math.ceil(Math.sqrt(3000));
+        for (let x = 0; x < rows; x++) {
+            for (let y = 0; y < rows; y++) {
+                const rect = document.createElementNS(ns, 'rect');
+                rect.setAttributeNS(null, 'transform', `translate(${x*300} ${y*300})`);
+                rect.setAttributeNS(null, 'width', 100);
+                rect.setAttributeNS(null, 'height', 100);
+                rect.setAttributeNS(null, 'fill', '#f06');
+
+                group.appendChild(rect);
+
+                // const text = document.createElementNS(ns, 'text');
+                // text.setAttributeNS(null, 'x', x*300 + 25);
+                // text.setAttributeNS(null, 'y', y*300 + 75);
+                // text.setAttributeNS(null, 'font-size', 60);
+                // text.textContent = 'oop';
+
+                // group.appendChild(text);
+
+                const img = document.createElementNS(ns, 'image');
+                img.setAttributeNS(null, 'transform', `translate(${x*300} ${y*300})`);
+                img.setAttributeNS(null, 'height', '100');
+                img.setAttributeNS(null, 'width', '100');
+                img.setAttributeNS(null, 'href', img_src);
+
+                group.appendChild(img);
+            }
+        }
+
+        svg.appendChild(       group);
+    }
+
+    svg.setAttributeNS(null, 'width', '100vw');
+    svg.setAttributeNS(null, 'height', '100vh');
+    const size = 55 * 300;
+    svg.setAttributeNS(null, 'viewBox', `0 0 ${size} ${size}`);
+
+    requestAnimationFrame(function frame() {
+        requestAnimationFrame(frame);
+
+        {
+            /* camera input handling */
+            let cam_x = input.cam_x;
+            let cam_y = input.cam_y;
+
+            if (input.mouse_down || input.mouse_released) {
+                cam_x -= (input.mouse_x - input.mouse_down_x)/input.cam_zoom;
+                cam_y -= (input.mouse_y - input.mouse_down_y)/input.cam_zoom;
+            }
+
+            if (input.mouse_released) {
+                input.mouse_released = false;
+                input.cam_x = cam_x;
+                input.cam_y = cam_y;
+            }
+
+            if (1) {
+                const w = window.innerWidth;
+                const h = window.innerHeight;
+
+                let scale = input.cam_zoom;
+
+                {
+                    cam_x *= scale;
+                    cam_y *= scale;
+
+                    scale *= size / window.innerHeight;
+                    if (h > w) scale *= window.innerHeight / window.innerWidth;
+
+                    let svg_size;
+                    if (w < h) svg_size = window.innerWidth  * scale;
+                    else       svg_size = window.innerHeight * scale;
+
+                    cam_x += (window.innerWidth - svg_size) * 0.5;
+                    cam_y += (window.innerHeight - svg_size) * 0.5;
+                }
+
+                const transform = `matrix(${scale}, 0, 0, ${scale}, ${-cam_x}, ${-cam_y})`;
+                div.style.transform = transform;
+            } else {
+                const w = window.innerWidth;
+                const h = window.innerHeight;
+
+                let viewBoxRatio;
+                if (w < h) viewBoxRatio = (size / window.innerWidth);
+                else       viewBoxRatio = (size / window.innerHeight);
+                const scale = input.cam_zoom * viewBoxRatio;
+                cam_x *= scale;
+                cam_y *= scale;
+
+                if (w < h) cam_y -= (w - h) * 0.5 * viewBoxRatio;
+                else       cam_x -= (h - w) * 0.5 * viewBoxRatio;
+
+                const transform = `matrix(${scale}, 0, 0, ${scale}, ${-cam_x}, ${-cam_y})`;
+                group.setAttributeNS(null, 'transform', transform);
+            }
+
+            if (input.scroll) {
+                const min_x = input.cam_x;
+                const min_y = input.cam_y;
+                const max_x = input.cam_x + (window.innerWidth  / input.cam_zoom);
+                const max_y = input.cam_y + (window.innerHeight / input.cam_zoom);
+                const focal_x = lerp(min_x, max_x, input.mouse_x / window.innerWidth );
+                const focal_y = lerp(min_y, max_y, input.mouse_y / window.innerHeight);
+
+                const zoom = 1.0 - 0.03*input.scroll;
+                let zoomed_min_x = (min_x - focal_x)*zoom + focal_x;
+                let zoomed_min_y = (min_y - focal_y)*zoom + focal_y;
+                let zoomed_max_x = (max_x - focal_x)*zoom + focal_x;
+                let zoomed_max_y = (max_y - focal_y)*zoom + focal_y;
+
+                input.cam_zoom = window.innerHeight / (zoomed_max_y - zoomed_min_y);
+                input.cam_x = zoomed_min_x;
+                input.cam_y = zoomed_min_y;
+            }
+        }
+    });
+}
+
+function lerp(v0, v1, t) { return (1 - t) * v0 + t * v1; }
+function inv_lerp(min, max, p) { return (p - min) / (max - min); }
+    </script>
+  </body>
+</html>
