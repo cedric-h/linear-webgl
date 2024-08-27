@@ -1,0 +1,66 @@
+<!-- vim: sw=2 ts=2 expandtab smartindent ft=javascript
+-->
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>draw</title>
+    <style> document, body { margin: 0px; padding: 0px; overflow: hidden; } </style>
+  </head>
+
+  <body>
+    <canvas id="glcanvas"></canvas>
+    <script>"use strict";
+
+const canvas = document.getElementById("glcanvas");
+const ctx = canvas.getContext('2d');
+(window.onresize = () => {
+   canvas.width = window.innerWidth*window.devicePixelRatio,
+   canvas.height = window.innerHeight*window.devicePixelRatio
+   canvas.style.width = window.innerWidth + 'px';
+   canvas.style.height = window.innerHeight + 'px';
+})();
+
+let paths = [[]];
+let mouse_down = false;
+window.onmousedown = e => mouse_down = true;
+window.onmouseup = e => {
+    mouse_down = false;
+    paths.push([]);
+}
+window.onmousemove = e => {
+    if (mouse_down) {
+        const p = { x: e.pageX * window.devicePixelRatio,
+                    y: e.pageY * window.devicePixelRatio };
+        paths[paths.length - 1].push(p);
+    }
+};
+
+requestAnimationFrame(function render(now) {
+  requestAnimationFrame(render);
+
+  ctx.fillStyle = "white";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  ctx.save();
+  {
+    for (const path of paths) {
+        ctx.strokeStyle = "red";
+        ctx.beginPath();
+        for (let i = 0; i < path.length; i++) {
+            const p = path[i];
+            ctx[i ? 'lineTo' : 'moveTo'](p.x, p.y);
+        }
+        ctx.lineWidth = window.devicePixelRatio;
+        ctx.stroke();
+        ctx.closePath();
+    }
+  }
+  ctx.restore();
+})
+
+function lerp(v0, v1, t) { return (1 - t) * v0 + t * v1; }
+function inv_lerp(min, max, p) { return (p - min) / (max - min); }
+    </script>
+  </body>
+</html>

@@ -1,0 +1,76 @@
+<!-- vim: sw=2 ts=2 expandtab smartindent ft=javascript
+-->
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>inflate</title>
+    <style> document, body { margin: 0px; padding: 0px; overflow: hidden; } </style>
+  </head>
+
+  <body>
+    <canvas id="glcanvas"></canvas>
+    <script>"use strict";
+
+const canvas = document.getElementById("glcanvas");
+const ctx = canvas.getContext('2d');
+(window.onresize = () => {
+   canvas.width = window.innerWidth*window.devicePixelRatio,
+   canvas.height = window.innerHeight*window.devicePixelRatio
+   canvas.style.width = window.innerWidth + 'px';
+   canvas.style.height = window.innerHeight + 'px';
+})();
+
+const state = {
+    shapes:     [],
+    path:       [],
+    mouse_down: false,
+};
+window.onmousedown = e => state.mouse_down = true;
+window.onmouseup = e => {
+    state.mouse_down = false;
+    state.shapes.push(state.path);
+    state.path = [];
+}
+window.onmousemove = e => {
+    if (state.mouse_down) {
+        const p = { x: e.pageX * window.devicePixelRatio,
+                    y: e.pageY * window.devicePixelRatio };
+        state.path.push(p);
+    }
+};
+
+requestAnimationFrame(function render(now) {
+    requestAnimationFrame(render);
+
+    ctx.fillStyle = "white";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    ctx.save();
+    {
+        const paths = [...state.shapes, state.path]
+        for (const path of paths) {
+            if (path.length == 0) continue;
+
+            ctx.strokeStyle = "red";
+            ctx.beginPath();
+
+            ctx.moveTo(path[0].x, path[0].y);
+
+            for (let i = 0; i < path.length; i++) {
+                const p = path[path.length - 1 - i];
+                ctx.lineTo(p.x, p.y);
+            }
+            ctx.lineWidth = window.devicePixelRatio;
+            ctx.stroke();
+            ctx.closePath();
+        }
+    }
+    ctx.restore();
+})
+
+function lerp(v0, v1, t) { return (1 - t) * v0 + t * v1; }
+function inv_lerp(min, max, p) { return (p - min) / (max - min); }
+    </script>
+  </body>
+</html>
