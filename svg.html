@@ -63,10 +63,13 @@ window.onload = () => {
         svg.setAttributeNS(null, 'height', '100vh');
 
         svg.children[0]?.remove();
-        const group = document.createElementNS(ns, 'g');
+        svg.children[0]?.remove();
+        const group        = document.createElementNS(ns, 'g');
+        const static_group = document.createElementNS(ns, 'g');
+
+        let cam_x = input.cam_x;
+        let cam_y = input.cam_y;
         {
-            let cam_x = input.cam_x;
-            let cam_y = input.cam_y;
             /* camera input handling */
             {
                 if (input.mouse_down || input.mouse_released) {
@@ -80,29 +83,127 @@ window.onload = () => {
                     input.cam_y = cam_y;
                 }
 
-                input.cam_zoom *= 1 + input.scroll*0.03;
+                if (input.scroll) do {
+                    break;
+
+                    input.cam_zoom *= 1 + input.scroll*0.03;
+
+                    const s = 1 / input.cam_zoom;
+                    const min_x = cam_x*s;
+                    const min_y = cam_y*s;
+                    const max_x = (window.innerWidth  + cam_x) * s;
+                    const max_y = (window.innerHeight + cam_y) * s;
+                    const focal_x = lerp(min_x, max_x, input.mouse_x / window.innerWidth );
+                    const focal_y = lerp(min_y, max_y, input.mouse_y / window.innerHeight);
+
+                    const zoom = 1.0 + 0.03*input.scroll;
+                    const zoomed_min_x = (min_x - focal_x)*zoom + focal_x;
+                    const zoomed_max_x = (max_x - focal_x)*zoom + focal_x;
+                    const zoomed_min_y = (min_y - focal_y)*zoom + focal_y;
+                    const zoomed_max_y = (max_y - focal_y)*zoom + focal_y;
+
+                    const x = zoomed_min_x                  * input.cam_zoom + input.cam_x;
+                    const y = zoomed_min_y                  * input.cam_zoom + input.cam_y;
+                    const w = (zoomed_max_x - zoomed_min_x) * input.cam_zoom;
+                    const h = (zoomed_max_y - zoomed_min_y) * input.cam_zoom;
+
+                    input.cam_x = x;
+                    input.cam_y = y;
+                    input.cam_zoom = w / window.innerWidth;
+                } while(false);
             }
 
             let scale = input.cam_zoom;
-            const transform = `translate(${cam_x} ${cam_y}) ` + 
-                              `scale(${scale} ${scale}) `; 
+            const transform = `matrix(${scale} 0 0 ${scale} ${cam_x} ${cam_y})`;
             group.setAttributeNS(null, 'transform', transform);
         }
 
         {
             const rect = document.createElementNS(ns, 'rect');
             rect.setAttributeNS(null, 'width', 100);
-
-            rect.setAttributeNS(null, 'width', 100);
             rect.setAttributeNS(null, 'height', 100);
             rect.setAttributeNS(null, 'fill', '#f06');
             group.appendChild(rect);
         }
 
-        svg.appendChild(group);
+        function corner(x, y) {
+            const rect = document.createElementNS(ns, 'rect');
+            rect.setAttributeNS(null, 'transform' , `translate(${x-5} ${y-5})`);
+            rect.setAttributeNS(null, 'width' , 10);
+            rect.setAttributeNS(null, 'height', 10);
+            rect.setAttributeNS(null, 'fill', '#60f');
+            group.appendChild(rect);
+        }
+        const s = input.cam_zoom;
+        const min_x = input.cam_x*s;
+        const min_y = input.cam_y*s;
+        const max_x = (window.innerWidth  + input.cam_x) * s;
+        const max_y = (window.innerHeight + input.cam_y) * s;
+        const focal_x = lerp(min_x, max_x, input.mouse_x / window.innerWidth );
+        const focal_y = lerp(min_y, max_y, input.mouse_y / window.innerHeight);
+        {
+            const zoom = 1.0 + 0.03*input.scroll;
+            const zoomed_min_x = (min_x - focal_x)*zoom + focal_x;
+            const zoomed_max_x = (max_x - focal_x)*zoom + focal_x;
+            const zoomed_min_y = (min_y - focal_y)*zoom + focal_y;
+            const zoomed_max_y = (max_y - focal_y)*zoom + focal_y;
+
+            {
+                const rect = document.createElementNS(ns, 'rect');
+                rect.setAttributeNS(null, 'transform' , `translate(${min_x} ${min_y})`);
+                rect.setAttributeNS(null, 'width' , max_x - min_x);
+                rect.setAttributeNS(null, 'height', max_y - min_y);
+                rect.setAttributeNS(null, 'fill', 'none');
+                rect.setAttributeNS(null, 'stroke', '#6f0');
+                rect.setAttributeNS(null, 'stroke-width', '20');
+                group.appendChild(rect);
+            }
+
+            {
+                const rect = document.createElementNS(ns, 'rect');
+                const x = zoomed_min_x                  / input.cam_zoom - input.cam_x;
+                const y = zoomed_min_y                  / input.cam_zoom - input.cam_y;
+                const w = (zoomed_max_x - zoomed_min_x) / input.cam_zoom;
+                const h = (zoomed_max_y - zoomed_min_y) / input.cam_zoom;
+                const scale = w / window.innerWidth;
+                const transform = `matrix(${ 1 /scale} 0 0 ${ 1 / scale} ${-x} ${-y})`;
+                static_group.setAttributeNS(null, 'transform', transform);
+                input.cam_x += x;
+                input.cam_y += y;
+                input.cam_zoom *= scale;
+
+                if (0) {
+                    {
+                        const x = window.innerWidth  * 0.5 - 50
+                        const y = window.innerHeight * 0.5 - 50
+                        rect.setAttributeNS(null, 'transform' , `translate(${x}, ${y})`);
+                    }
+                    rect.setAttributeNS(null, 'width' , 100);
+                    rect.setAttributeNS(null, 'height', 100);
+                } else {
+                    rect.setAttributeNS(null, 'transform', `translate(${x} ${y})`);
+                    rect.setAttributeNS(null, 'width' , w);
+                    rect.setAttributeNS(null, 'height', h);
+                }
+                rect.setAttributeNS(null, 'fill', 'none');
+                rect.setAttributeNS(null, 'stroke', '#f0f');
+                rect.setAttributeNS(null, 'stroke-width', '2');
+                static_group.appendChild(rect);
+            }
+        }
+        corner(focal_x, focal_y);
+        corner(min_x, min_y);
+        corner(max_x, max_y);
+        corner(max_x, min_y);
+        corner(min_x, max_y);
+
+        svg.appendChild(       group);
+        svg.appendChild(static_group);
     });
 }
 
+function lerp(v0, v1, t) { return (1 - t) * v0 + t * v1; }
+function inv_lerp(min, max, p) { return (p - min) / (max - min); }
     </script>
   </body>
 </html>

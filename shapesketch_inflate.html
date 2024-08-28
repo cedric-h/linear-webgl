@@ -1,4 +1,4 @@
-<!-- vim: sw=2 ts=2 expandtab smartindent ft=javascript
+<!-- vim: sw=4 ts=4 expandtab smartindent ft=javascript
 -->
 <!DOCTYPE html>
 <html lang="en">
@@ -29,6 +29,66 @@ const state = {
 window.onmousedown = e => state.mouse_down = true;
 window.onmouseup = e => {
     state.mouse_down = false;
+
+    /* find intersections */
+    {
+        const path = state.path;
+        const lines = [];
+        for (let i = 0; i < path.length; i++) {
+            let a = path[i];
+            let b = path[((i + 1) == path.length) ? 0 : i + 1];
+
+            let min_x, max_x;
+            if (a.x < b.x) min_x = a, max_x = b;
+            else           min_x = b, max_x = a;
+
+            const line = { a: min_x, b: max_x, cross: false };
+            lines.push(line);
+        }
+
+        const open_lines = [];
+        for (const a of lines) {
+            for (const b of lines) {
+                if (a == b) continue;
+
+                const u =
+                    ((a.a.x - b.a.x)*(b.a.y - b.b.y) - (a.a.y - b.a.y)*(b.a.x - b.b.x)) /
+                    ((a.a.x - a.b.x)*(b.a.y - b.b.y) - (a.a.y - a.b.y)*(b.a.x - b.b.x));
+
+                const t =
+                   -((a.a.x - a.b.x)*(a.a.y - b.a.y) - (a.a.y - a.b.y)*(a.a.x - b.a.x)) /
+                    ((a.a.x - a.b.x)*(b.a.y - b.b.y) - (a.a.y - a.b.y)*(b.a.x - b.b.x));
+
+                if (u > 0 && u < 1 && t > 0 && t < 1)
+                    a.cross = b.cross = true;
+            }
+        }
+
+        {
+            ctx.fillStyle = "white";
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            ctx.save();
+            {
+                for (const line of lines) {
+                    ctx.strokeStyle = line.cross ? "magenta" : "blue";
+                    ctx.beginPath();
+
+                    ctx.moveTo(line.a.x, line.a.y);
+                    ctx.lineTo(line.b.x, line.b.y);
+
+                    ctx.lineWidth = window.devicePixelRatio;
+                    ctx.stroke();
+                    ctx.closePath();
+                }
+            }
+
+            ctx.restore();
+        }
+
+        debugger;
+    }
+
     state.shapes.push(state.path);
     state.path = [];
 }
