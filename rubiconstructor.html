@@ -1,4 +1,4 @@
-<!-- vim: sw=2 ts=2 expandtab smartindent ft=javascript
+<!-- vim: sw=4 ts=4 expandtab smartindent ft=javascript
 -->
 <!DOCTYPE html>
 <html lang="en">
@@ -21,18 +21,61 @@ const ctx = canvas.getContext('2d');
    canvas.style.height = window.innerHeight + 'px';
 })();
 
-let paths = [[]];
+let raw_paths = [[]];
+let refined_paths = [[]];
+
 let mouse_down = false;
 window.onmousedown = e => mouse_down = true;
 window.onmouseup = e => {
     mouse_down = false;
-    paths.push([]);
+        raw_paths.push([]);
+    refined_paths.push([]);
 }
 window.onmousemove = e => {
     if (mouse_down) {
-        const p = { x: e.pageX * window.devicePixelRatio,
-                    y: e.pageY * window.devicePixelRatio };
-        paths[paths.length - 1].push(p);
+        const mouse = { x: e.pageX * window.devicePixelRatio,
+                        y: e.pageY * window.devicePixelRatio };
+        raw_paths[raw_paths.length - 1].push(mouse);
+
+        const path = raw_paths[raw_paths.length - 1];
+        if (path.length > 2) {
+            const d_norm = (a, b) => {
+                let dx = a.x - b.x;
+                let dy = a.y - b.y;
+                const dlen = Math.sqrt(dx*dx + dy*dy);
+                if (dlen > 0) {
+                    dx /= dlen;
+                    dy /= dlen;
+                }
+                return { x: dx, y: dy };
+            }
+            const dot = (a, b) => a.x*b.x + a.y*b.y;
+
+            let current_dnorm = d_norm(path[0], path[1]);
+            let current_start = path[0];
+            let new_line = false;
+            const out = [path[0]];
+            for (const p of path) {
+                if (new_line) {
+                    current_dnorm = d_norm(current_start, p);
+                    new_line = false;
+                    continue;
+                }
+
+                const new_dnorm = d_norm(current_start, p);
+                if (new_dnorm.x == 0 && new_dnorm.y == 0) continue;
+
+                console.log(dot(current_dnorm, new_dnorm));
+                if (dot(current_dnorm, new_dnorm) < 0.98) {
+                    out.push(p);
+                    current_start = p;
+                    new_line = true;
+                }
+            }
+
+            out.push(mouse);
+            refined_paths[refined_paths.length - 1] = out;
+        }
     }
 };
 
@@ -44,16 +87,35 @@ requestAnimationFrame(function render(now) {
 
   ctx.save();
   {
-    for (const path of paths) {
-        ctx.strokeStyle = "white";
-        ctx.beginPath();
-        for (let i = 0; i < path.length; i++) {
-            const p = path[i];
-            ctx[i ? 'lineTo' : 'moveTo'](p.x, p.y);
-        }
-        ctx.lineWidth = 4 * window.devicePixelRatio;
-        ctx.stroke();
-        ctx.closePath();
+    {
+      const paths = refined_paths;
+      ctx.strokeStyle = 'white';
+
+      for (const path of paths) {
+          ctx.beginPath();
+          for (let i = 0; i < path.length; i++) {
+              const p = path[i];
+              ctx[i ? 'lineTo' : 'moveTo'](p.x, p.y);
+          }
+          ctx.lineWidth = 4 * window.devicePixelRatio;
+          ctx.stroke();
+          ctx.closePath();
+      }
+    }
+    {
+      const paths = raw_paths;
+      ctx.strokeStyle = "rgb(200, 200, 200)";
+
+      for (const path of paths) {
+          ctx.beginPath();
+          for (let i = 0; i < path.length; i++) {
+              const p = path[i];
+              ctx[i ? 'lineTo' : 'moveTo'](p.x, p.y);
+          }
+          ctx.lineWidth = window.devicePixelRatio;
+          ctx.stroke();
+          ctx.closePath();
+      }
     }
   }
   ctx.restore();
