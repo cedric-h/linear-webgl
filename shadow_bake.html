@@ -11,6 +11,15 @@
   <body>
     <canvas id="glcanvas"></canvas>
     <script>
+/**
+ * WIP
+ *
+ * [ ] allow moving sun
+ * [ ] fix UVs
+ * [ ] bake (move sun = know it works)
+ * [ ] accumulate 
+ */
+
 const ATLAS_SIZE = 8; /* in emoji, along one axis (total # supported is ATLAS_SIZE*ATLAS_SIZE) */
 const TEXELS_PER_QUAD = 300;
 const DEPTH_TEX_SIZE = 1 << 9;
@@ -87,7 +96,7 @@ let shaders;
 
 
 
-    var depth_vs = 
+    const depth_vs = 
         'precision mediump float;' +
 
         'uniform mat4 u_matrix;' +
@@ -100,7 +109,7 @@ let shaders;
         '  gl_Position = v_pos = u_matrix * a_pos;' +
         '}';
 
-    var depth_fs = 
+    const depth_fs = 
         'precision mediump float;' +
 
         'varying vec4 v_pos;' +

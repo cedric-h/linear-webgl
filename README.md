@@ -50,7 +50,7 @@ Other useful resources in the same vein:
 | **link**                                                                       | **desc**                                                                                                              |
 |--------------------------------------------------------------------------------|-----------------------------------------------------------------------------------------------------------------------|
 | [shadow       ](https://cedric-h.github.io/linear-webgl/shadow.html)           | super simple shadow with no PCF, etc. just reprojection                                                               |
-| [lighting     ](https://cedric-h.github.io/linear-webgl/shadow.html)           | soft shadows + ambient occlusion + shadows dynamically from progressive lightmap                                      |
+| [shadow_bake  ](https://cedric-h.github.io/linear-webgl/shadow_bake.html)      | soft shadows + ambient occlusion + shadows dynamically from progressive lightmap                                      |
 | [paint        ](https://cedric-h.github.io/linear-webgl/shadow.html)           | technically NOT shadows/lighting, but can be helpful to read alongside them. also silly, messy, and fun!              |
 
 <img width="400"  alt="Screenshot 2024-05-06 at 12 45 15 PM" src="https://github.com/cedric-h/linear-webgl/assets/25539554/293a9cff-318e-48b1-8859-baeb620c8317">
