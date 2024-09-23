@@ -1,0 +1,54 @@
+<!-- vim: sw=2 ts=2 expandtab smartindent ft=javascript
+-->
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>address -> 3d</title>
+    <style> document, body { margin: 0px; padding: 0px; overflow: hidden; } </style>
+    <script src="https://unpkg.com/pmtiles@3.2.0/dist/pmtiles.js"></script> <!-- window.pmtiles -->
+    <script src="https://unpkg.com/pbf@4.0.1/dist/pbf.js"></script> <!-- window.Pbf -->
+    <script type="importmap">
+      {
+        "imports": {
+          "@mapbox/vector-tile": "https://unpkg.com/@mapbox/vector-tile@2.0.3/index.js",
+          "@mapbox/point-geometry": "https://unpkg.com/@mapbox/point-geometry@1.1.0/index.js"
+        }
+      }
+    </script>
+  </head>
+
+  <body>
+    <script type="module">"use strict";
+import { VectorTile } from "@mapbox/vector-tile";
+const Protobuf = Pbf;
+
+{
+  const coords = [-111.8484891, 40.6222274];
+  function lon2tile(lon,zoom) { return (Math.floor((lon+180)/360*Math.pow(2,zoom))); }
+  function lat2tile(lat,zoom)  { return (Math.floor((1-Math.log(Math.tan(lat*Math.PI/180) + 1/Math.cos(lat*Math.PI/180))/Math.PI)/2 *Math.pow(2,zoom))); }
+  const source = new pmtiles.FetchSource("https://data.source.coop/protomaps/openstreetmap/tiles/v3.pmtiles", {"x-custom-header":"value"});
+  const tile_fetcher = new pmtiles.PMTiles(source);
+  const zoom = 15;
+  const x = lon2tile(coords[0], zoom);
+  const y = lat2tile(coords[1], zoom);
+  tile_fetcher.getZxy(zoom, x, y).then(x => {
+    const tile = new VectorTile(new Protobuf(new Uint8Array(x.data)));
+    console.log(tile)
+    console.log(tile.layers)
+    console.log(tile.layers.earth.feature(0).toGeoJSON())
+    console.log(tile.layers.natural.feature(0).toGeoJSON())
+  });
+}
+
+if (0) {
+  const base_url = "https://nominatim.openstreetmap.org/search"
+  const query = "?q=" + encodeURI(prompt("address?")) +
+                "&format=geojson";
+  fetch(base_url + query)
+      .then(x => x.json().then(console.log))
+}
+
+    </script>
+  </body>
+</html>
