@@ -1296,7 +1296,7 @@ const save = {
             save.bullet.for_collisions(save.bullets, LAYER_PLAYER, pos, size, bullet_hit);
 
             const enemies = save.map().enemies;
-            const for_enemies = save.map().for_enemies;
+            const for_enemies = save.map().for_enemies?.bind(this);
             if (!enemies || !for_enemies) return;
 
             const enemy_hit = (enemy) => {
