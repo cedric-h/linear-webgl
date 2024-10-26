@@ -21,24 +21,93 @@
   <body>
     <script type="module">"use strict";
 import { VectorTile } from "@mapbox/vector-tile";
+import Point from "@mapbox/point-geometry";
+console.log(Point);
 const Protobuf = Pbf;
 
 {
-  const coords = [-111.8484891, 40.6222274];
-  function lon2tile(lon,zoom) { return (Math.floor((lon+180)/360*Math.pow(2,zoom))); }
-  function lat2tile(lat,zoom)  { return (Math.floor((1-Math.log(Math.tan(lat*Math.PI/180) + 1/Math.cos(lat*Math.PI/180))/Math.PI)/2 *Math.pow(2,zoom))); }
-  const source = new pmtiles.FetchSource("https://data.source.coop/protomaps/openstreetmap/tiles/v3.pmtiles", {"x-custom-header":"value"});
-  const tile_fetcher = new pmtiles.PMTiles(source);
-  const zoom = 15;
-  const x = lon2tile(coords[0], zoom);
-  const y = lat2tile(coords[1], zoom);
-  tile_fetcher.getZxy(zoom, x, y).then(x => {
-    const tile = new VectorTile(new Protobuf(new Uint8Array(x.data)));
-    console.log(tile)
-    console.log(tile.layers)
-    console.log(tile.layers.earth.feature(0).toGeoJSON())
-    console.log(tile.layers.natural.feature(0).toGeoJSON())
-  });
+  function loadGeomAndBbox(pbf, geometry, scale) {
+    pbf.pos = geometry;
+    const end = pbf.readVarint() + pbf.pos;
+    let cmd = 1;
+    let length = 0;
+    let x = 0;
+    let y = 0;
+    let x1 = Infinity;
+    let x2 = -Infinity;
+    let y1 = Infinity;
+    let y2 = -Infinity;
+
+    const lines = [];
+    let line = [];
+    while (pbf.pos < end) {
+      if (length <= 0) {
+        const cmdLen = pbf.readVarint();
+        cmd = cmdLen & 0x7;
+        length = cmdLen >> 3;
+      }
+      length--;
+      if (cmd === 1 || cmd === 2) {
+        x += pbf.readSVarint() * scale;
+        y += pbf.readSVarint() * scale;
+        if (x < x1) x1 = x;
+        if (x > x2) x2 = x;
+        if (y < y1) y1 = y;
+        if (y > y2) y2 = y;
+        if (cmd === 1) {
+          if (line.length > 0) lines.push(line);
+          line = [];
+        }
+        line.push(new Point(x, y));
+      } else if (cmd === 7) {
+        if (line) line.push(line[0].clone());
+      } else throw new Error(`unknown command ${cmd}`);
+    }
+    if (line) lines.push(line);
+    return { geom: lines, bbox: { minX: x1, minY: y1, maxX: x2, maxY: y2 } };
+  };
+
+  function parseTile(buffer, tileSize) {
+    const v = new VectorTile(new Protobuf(buffer));
+    const result = new Map();
+    for (const [key, value] of Object.entries(v.layers)) {
+      const features = [];
+      const layer = value;
+      for (let i = 0; i < layer.length; i++) {
+        const loaded = loadGeomAndBbox(
+          layer.feature(i)._pbf,
+          layer.feature(i)._geometry,
+          tileSize / layer.extent,
+        );
+        let numVertices = 0;
+        for (const part of loaded.geom) numVertices += part.length;
+        features.push({
+          id: layer.feature(i).id,
+          geomType: layer.feature(i).type,
+          geom: loaded.geom,
+          numVertices: numVertices,
+          bbox: loaded.bbox,
+          props: layer.feature(i).properties,
+        });
+      }
+      result.set(key, features);
+    }
+    return result;
+  }
+
+  {
+    const coords = [-111.8484891, 40.6222274];
+    function lon2tile(lon,zoom) { return (Math.floor((lon+180)/360*Math.pow(2,zoom))); }
+    function lat2tile(lat,zoom) { return (Math.floor((1-Math.log(Math.tan(lat*Math.PI/180) + 1/Math.cos(lat*Math.PI/180))/Math.PI)/2 *Math.pow(2,zoom))); }
+    const source = new pmtiles.FetchSource("https://data.source.coop/protomaps/openstreetmap/tiles/v3.pmtiles", {"x-custom-header":"value"});
+    const tile_fetcher = new pmtiles.PMTiles(source);
+    const zoom = 15;
+    const x = lon2tile(coords[0], zoom);
+    const y = lat2tile(coords[1], zoom);
+    tile_fetcher.getZxy(zoom, x, y).then(result => {
+      console.log(parseTile(result.data, 1000));
+    });
+  }
 }
 
 if (0) {
