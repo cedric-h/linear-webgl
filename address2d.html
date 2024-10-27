@@ -1,0 +1,361 @@
+<!-- vim: sw=2 ts=2 expandtab smartindent ft=javascript
+-->
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>address -> 3d</title>
+    <style> document, body { margin: 0px; padding: 0px; overflow: hidden; } </style>
+    <script type="importmap">
+      {
+        "imports": {
+          "pbf": "https://unpkg.com/pbf@4.0.1/index.js",
+          "pmtiles": "https://unpkg.com/pmtiles@3.2.0/dist/index.js",
+          "@mapbox/vector-tile": "https://unpkg.com/@mapbox/vector-tile@2.0.3/index.js",
+          "@mapbox/point-geometry": "https://unpkg.com/@mapbox/point-geometry@1.1.0/index.js"
+        }
+      }
+    </script>
+  </head>
+
+  <body>
+    <script type="module">"use strict";
+
+/* VectorTile parses binary "vector tiles" filled with map data. Relies on @mapbox/point-geometry.
+ * Spec here: https://github.com/mapbox/vector-tile-spec */
+import { VectorTile } from "@mapbox/vector-tile";
+
+/* Pyramid Tiles are a format that lets you store maps of VectorTiles in S3 buckets or similar,
+ * without any server-side logic. PMTiles is the frontend code that knows how to query those buckets. */
+import * as PMTiles from "pmtiles";
+
+/* For easily parsing binary protobuf logic in JavaScript */
+import Protobuf from "pbf";
+
+/* https://github.com/protomaps/protomaps-leaflet/blob/da47e14fe6ba0c4a17c3a8d3dc9921f0f99f39f0/src/tilecache.ts#L18 */
+const GEOM_TYPE_POINT   = 1;
+const GEOM_TYPE_LINE    = 2;
+const GEOM_TYPE_POLYGON = 3;
+
+async function map_data_at(lat, lon, zoom) {
+  /** 
+   * Takes a vector tile, parses the geometry out of the binary format and
+   * returns a Map<LayerName, Feature> where Feature contains geometry, properties and an ID.
+   *
+   * See reference implementation here:
+   * https://github.com/protomaps/protomaps-leaflet/blob/da47e14fe6ba0c4a17c3a8d3dc9921f0f99f39f0/src/tilecache.ts#L101
+   **/
+  function parseTile({ data: buffer }) {
+    /**
+     * Parse binary PMTile geometry data.
+     * Returns a list of line geometry associated with the data.
+     *
+     * See reference implementation here.
+     * https://github.com/protomaps/protomaps-leaflet/blob/da47e14fe6ba0c4a17c3a8d3dc9921f0f99f39f0/src/tilecache.ts#L60
+     **/
+    function loadGeomAndBbox(pbf, geometry) {
+      pbf.pos = geometry;
+      const end = pbf.readVarint() + pbf.pos;
+      let cmd = 1;
+      let length = 0;
+      let x = 0;
+      let y = 0;
+
+      const lines = [];
+      let line = [];
+      while (pbf.pos < end) {
+
+        if (length <= 0) {
+          const cmdLen = pbf.readVarint();
+          cmd = cmdLen & 0b111;
+          length = cmdLen >> 3;
+        }
+        length--;
+
+        /* new line(1) or continuation of line (2)  */
+        if (cmd === 1 || cmd === 2) {
+          x += pbf.readSVarint();
+          y += pbf.readSVarint();
+          if (cmd === 1) {
+            if (line.length > 0) lines.push(line);
+            line = [];
+          }
+          line.push(x, y);
+
+          continue;
+        }
+
+        /* single point */
+        if (cmd === 7) {
+          line.push(x, y);
+          continue;
+        }
+
+        throw new Error(`binary map data parsing error: unknown command ${cmd}`);
+      }
+      if (line) lines.push(line);
+
+      return lines;
+    };
+
+    const v = new VectorTile(new Protobuf(buffer));
+    const result = new Map();
+
+    for (const [key, layer] of Object.entries(v.layers)) {
+      const features = [];
+
+      for (let i = 0; i < layer.length; i++) {
+        const geom = loadGeomAndBbox(layer.feature(i)._pbf, layer.feature(i)._geometry);
+
+        features.push({
+          id: layer.feature(i).id,
+          geom_type: layer.feature(i).type,
+          geom,
+          props: layer.feature(i).properties,
+        });
+      }
+
+      result.set(key, features);
+    }
+
+    return result;
+  }
+
+  function lon2tile(lon,zoom) { return (Math.floor((lon+180)/360*Math.pow(2,zoom))); }
+  function lat2tile(lat,zoom) { return (Math.floor((1-Math.log(Math.tan(lat*Math.PI/180) + 1/Math.cos(lat*Math.PI/180))/Math.PI)/2 *Math.pow(2,zoom))); }
+
+  const source = new PMTiles.FetchSource("https://data.source.coop/protomaps/openstreetmap/tiles/v3.pmtiles", {"x-custom-header":"value"});
+  return new PMTiles.PMTiles(source)
+    .getZxy(zoom, lon2tile(lon, zoom), lat2tile(lat, zoom))
+    .then(parseTile);
+}
+
+
+let map_data;
+{
+  let ctx;
+  const canvas = document.createElement("canvas");
+  document.body.prepend(canvas);
+  (window.onresize = () => {
+    canvas.style.width  = window.innerWidth + 'px';
+    canvas.style.height = window.innerHeight + 'px';
+    canvas.width  = window.innerWidth  *  window.devicePixelRatio;
+    canvas.height = window.innerHeight *  window.devicePixelRatio;
+
+    ctx = canvas.getContext("2d");
+  })();
+
+  let cam_x = 0;
+  let cam_y = 0;
+  let cam_scale = 1;
+  let mouse_down_cam_x = 0;
+  let mouse_down_cam_y = 0;
+  let mouse_down_x = 0;
+  let mouse_down_y = 0;
+  let mouse_down = false;
+  window.onwheel = ev => {
+    cam_scale -= 0.0005*ev.deltaY*cam_scale;
+    cam_scale = Math.min(3.0, cam_scale);
+    cam_scale = Math.max(0.1, cam_scale);
+  }
+  window.onmousedown = ev => {
+    if (ev.button != 0) return;
+    mouse_down = true;
+    mouse_down_x = ev.clientX;
+    mouse_down_y = ev.clientY;
+    mouse_down_cam_x = cam_x;
+    mouse_down_cam_y = cam_y;
+  }
+  window.onmousemove = ev => {
+    if (!mouse_down) return;
+    const delta_x = ev.clientX - mouse_down_x;
+    const delta_y = ev.clientY - mouse_down_y;
+    cam_x = mouse_down_cam_x + delta_x * window.devicePixelRatio / cam_scale;
+    cam_y = mouse_down_cam_y + delta_y * window.devicePixelRatio / cam_scale;
+  }
+  window.onmouseup = ev => {
+    if (ev.button != 0) return;
+    mouse_down = false;
+  }
+
+  requestAnimationFrame(function frame() {
+    requestAnimationFrame(frame);
+
+    ctx.save();
+    {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      ctx.translate( canvas.width*0.5,  canvas.height*0.5);
+      ctx.scale(cam_scale, cam_scale);
+      ctx.translate(-canvas.width*0.5, -canvas.height*0.5);
+
+      ctx.translate(cam_x, cam_y);
+
+      if (!map_data) {
+
+        ctx.font = "100px sans-serif";
+        ctx.fillText("loading ...", canvas.width * 0.5, canvas.height * 0.5);
+
+      }
+
+      if (map_data) {
+
+        function draw_feature(ctx, f) {
+          for (const contour of f.geom) {
+            if (f.geom_type == GEOM_TYPE_POLYGON) {
+              for (const contour of f.geom) {
+
+                ctx.beginPath();
+                ctx.moveTo(contour[0], contour[1]);
+                for (let i = 2; i < contour.length; i += 2)
+                  ctx.lineTo(contour[i], contour[i + 1]);
+                ctx.closePath();
+                ctx.fill();
+              }
+
+              continue;
+            }
+
+            if (f.geom_type == GEOM_TYPE_LINE) {
+              for (const contour of f.geom) {
+                ctx.beginPath();
+                ctx.moveTo(contour[0], contour[1]);
+                for (let i = 2; i < contour.length; i += 2)
+                  ctx.lineTo(contour[i], contour[i + 1]);
+                ctx.stroke();
+              }
+
+              continue;
+            }
+
+            if (f.geom_type == GEOM_TYPE_POINT) {
+              const contour = f.geom[0];
+
+              ctx.fillRect(contour[0] - 5, contour[1] - 5, 0, 0);
+              continue;
+            }
+          }
+        }
+
+        {
+          /* note that the order of these loops is also important for layering */
+
+          for (const f of map_data.get("water") ?? []) {
+            ctx.globalAlpha = 0.07;
+            ctx.strokeStyle = ctx.fillStyle = "cyan";
+            ctx.lineWidth = 20;
+            draw_feature(ctx, f);
+          }
+
+          for (const f of map_data.get("landuse") ?? []) {
+            ctx.globalAlpha = 0.1;
+            ctx.strokeStyle = ctx.fillStyle = "purple";
+            ctx.lineWidth = 20;
+            draw_feature(ctx, f);
+          }
+
+          for (const f of map_data.get("natural") ?? []) {
+            ctx.globalAlpha = 0.2;
+            ctx.strokeStyle = ctx.fillStyle = "lightgreen";
+            ctx.lineWidth = 20;
+            draw_feature(ctx, f);
+          }
+
+          for (const f of map_data.get("roads") ?? []) {
+            ctx.globalAlpha = 1.0;
+            ctx.strokeStyle = ctx.fillStyle = "lightgray";
+            ctx.lineWidth = 20;
+            draw_feature(ctx, f);
+          }
+
+          for (const f of map_data.get("buildings") ?? []) {
+            ctx.globalAlpha = 1.0;
+            ctx.strokeStyle = ctx.fillStyle = "black";
+            ctx.lineWidth = 20;
+            draw_feature(ctx, f);
+          }
+        }
+
+      }
+    }
+    ctx.restore();
+  });
+}
+
+{
+  let map_data_zoom = 15;
+  let map_data_lat = 40.6222274;
+  let map_data_lon = -111.8484891;
+
+  map_data_at(map_data_lat, map_data_lon, map_data_zoom)
+    .then(x => map_data = x)
+    .then(console.log);
+
+
+  const div = document.createElement("div");
+  div.style.position = 'absolute';
+  div.style.top  = '0px';
+  div.style.left = '0px';
+  div.style.margin = '5px';
+  div.style.display = 'flex';
+  div.style.flexDirection = 'column';
+  document.body.appendChild(div);
+
+  const change_location = document.createElement("button");
+  change_location.textContent = "New Location";
+  /* it's a dope af button and i don't want you hos to miss it */
+  setTimeout(() => change_location.style.boxShadow = '0px 0px 12px magenta', 5000);
+  change_location.style.fontSize = '1.5rem';
+  change_location.style.margin = '0.5rem';
+  div.appendChild(change_location);
+
+  const change_zoom = document.createElement("button");
+  change_zoom.textContent = "Change Zoom: " + map_data_zoom;
+  change_zoom.style.fontSize = '1.5rem';
+  change_zoom.style.margin = '0.5rem';
+  div.appendChild(change_zoom);
+
+  const address_label = document.createElement("h2");
+  address_label.textContent = "";
+  div.appendChild(address_label);
+
+  change_location.onclick = () => {
+    change_location.style.boxShadow = '';
+
+    const address = prompt("address?");
+    address_label.textContent = address;
+
+    const base_url = "https://nominatim.openstreetmap.org/search"
+    const query = "?q=" + encodeURI() +
+                  "&format=geojson";
+
+    fetch(base_url + query)
+        .then(x => x.json())
+        .then(geocoder => {
+          /* throwing away so much potentially useful data here - other features, bounding box, etc. */
+          console.log(geocoder);
+
+          const lonlat = geocoder.features.find(x => x?.geometry?.coordinates).geometry.coordinates;
+          map_data_lat = lonlat[1];
+          map_data_lon = lonlat[0];
+          map_data_at(map_data_lat, map_data_lon, map_data_zoom)
+            .then(x => map_data = x)
+            .then(console.log);
+        });
+  };
+
+  change_zoom.onclick = () => {
+    map_data_zoom = parseInt(prompt("new zoom?", map_data_zoom.toString()));
+    if (!isFinite(map_data_zoom)) map_data_zoom = 15;
+
+    change_zoom.textContent = "Change Zoom: " + map_data_zoom;
+
+    map_data_at(map_data_lat, map_data_lon, map_data_zoom)
+      .then(x => map_data = x)
+      .then(console.log);
+  };
+}
+
+    </script>
+  </body>
+</html>
