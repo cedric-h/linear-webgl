@@ -93,10 +93,10 @@ async function map_data_at(lat, lon, zoom) {
           continue;
         }
 
-        /* single point */
+        /* single point - seems to only be used for POIs? ignoring for now */
         if (cmd === 7) {
-          line.rect(x-5, y-5, 10, 10);
-          line_is_dirty = true;
+          // line.rect(x-5, y-5, 10, 10);
+          // line_is_dirty = true;
           continue;
         }
 
@@ -219,7 +219,7 @@ let map_data;
           /* note that the order of these loops is also important for layering */
 
           for (const f of map_data.get("water") ?? []) {
-            ctx.globalAlpha = 0.07;
+            ctx.globalAlpha = 0.175;
             ctx.strokeStyle = ctx.fillStyle = "cyan";
             ctx.lineWidth = 20;
             draw_feature(ctx, f);
@@ -264,6 +264,7 @@ let map_data;
   let map_data_zoom = 15;
   let map_data_lat = 40.6222274;
   let map_data_lon = -111.8484891;
+  let map_data_address = '';
 
   map_data_at(map_data_lat, map_data_lon, map_data_zoom)
     .then(x => map_data = x)
@@ -295,16 +296,16 @@ let map_data;
 
   const address_label = document.createElement("h2");
   address_label.textContent = "";
+  address_label.style.maxWidth = "20rem";
   div.appendChild(address_label);
 
   change_location.onclick = () => {
     change_location.style.boxShadow = '';
 
-    const address = prompt("address?");
-    address_label.textContent = address;
+    const address = prompt("address?", map_data_address);
 
     const base_url = "https://nominatim.openstreetmap.org/search"
-    const query = "?q=" + encodeURI() +
+    const query = "?q=" + encodeURI(address) +
                   "&format=geojson";
 
     fetch(base_url + query)
@@ -313,7 +314,11 @@ let map_data;
           /* throwing away so much potentially useful data here - other features, bounding box, etc. */
           console.log(geocoder);
 
-          const lonlat = geocoder.features.find(x => x?.geometry?.coordinates).geometry.coordinates;
+          const feature = geocoder.features.find(x => x?.geometry?.coordinates);
+
+          map_data_address = feature.properties.display_name ?? address;
+          address_label.textContent = map_data_address;
+          const lonlat = feature.geometry.coordinates;
           map_data_lat = lonlat[1];
           map_data_lon = lonlat[0];
           map_data_at(map_data_lat, map_data_lon, map_data_zoom)
