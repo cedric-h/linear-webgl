@@ -45,7 +45,7 @@ async function map_data_at(lat, lon, zoom) {
    * See reference implementation here:
    * https://github.com/protomaps/protomaps-leaflet/blob/da47e14fe6ba0c4a17c3a8d3dc9921f0f99f39f0/src/tilecache.ts#L101
    **/
-  function parseTile({ data: buffer }) {
+  function parseTile(buffer) {
     /**
      * Parse binary PMTile geometry data.
      * Returns a list of line geometry associated with the data.
@@ -120,6 +120,7 @@ async function map_data_at(lat, lon, zoom) {
           id: layer.feature(i).id,
           geom_type: layer.feature(i).type,
           geom,
+          feature_kind: key,
           props: layer.feature(i).properties,
         });
       }
@@ -134,9 +135,13 @@ async function map_data_at(lat, lon, zoom) {
   function lat2tile(lat,zoom) { return (Math.floor((1-Math.log(Math.tan(lat*Math.PI/180) + 1/Math.cos(lat*Math.PI/180))/Math.PI)/2 *Math.pow(2,zoom))); }
 
   const source = new PMTiles.FetchSource("https://data.source.coop/protomaps/openstreetmap/tiles/v3.pmtiles", {"x-custom-header":"value"});
-  return new PMTiles.PMTiles(source)
-    .getZxy(zoom, lon2tile(lon, zoom), lat2tile(lat, zoom))
-    .then(parseTile);
+  const response = await new PMTiles.PMTiles(source).getZxy(zoom, lon2tile(lon, zoom), lat2tile(lat, zoom));
+
+  if (response.data) return parseTile(response.data);
+  else {
+    console.error(response);
+    throw new Error(response);
+  }
 }
 
 
@@ -316,7 +321,7 @@ let info = document.createElement("pre");
           if (f.geom_type == GEOM_TYPE_POINT) ctx.fill(f.geom);
 
           if (highlighted) {
-            info.textContent = JSON.stringify(f.props, null, 2);
+            info.textContent = `layer: "${f.feature_kind}"\n\n` + JSON.stringify(f.props, null, 2);
           }
           ctx.globalAlpha = alphaB4;
         }
@@ -353,7 +358,7 @@ let info = document.createElement("pre");
           }
 
           for (const f of map_data.get("buildings") ?? []) {
-            ctx.globalAlpha = 1.0;
+            ctx.globalAlpha = 0.5;
             ctx.strokeStyle = ctx.fillStyle = "black";
             ctx.lineWidth = 20;
             draw_feature(ctx, f);
