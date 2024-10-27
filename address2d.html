@@ -163,6 +163,7 @@ let info = document.createElement("pre");
   div.style.position = 'absolute';
   div.style.top  = '0px';
   div.style.left = '0px';
+  div.style.maxHeight = '100vh';
   div.style.margin = '5px';
   div.style.display = 'flex';
   div.style.flexDirection = 'column';
@@ -171,7 +172,7 @@ let info = document.createElement("pre");
   const change_location = document.createElement("button");
   change_location.textContent = "New Location";
   /* it's a dope af button and i don't want you hos to miss it */
-  setTimeout(() => change_location.style.boxShadow = '0px 0px 12px magenta', 5000);
+  setTimeout(() => change_location.style.boxShadow = '0px 0px 12px magenta', 2500);
   change_location.style.fontSize = '1.5rem';
   change_location.style.margin = '0.5rem';
   div.appendChild(change_location);
@@ -189,6 +190,7 @@ let info = document.createElement("pre");
 
   info.textContent = "";
   info.style.maxWidth = "20rem";
+  info.style.overflow = "scroll";
   info.style.backgroundColor = 'rgba(255, 255, 255, 0.85)';
   div.appendChild(info);
 
@@ -205,9 +207,14 @@ let info = document.createElement("pre");
         .then(x => x.json())
         .then(geocoder => {
           /* throwing away so much potentially useful data here - other features, bounding box, etc. */
-          console.log(geocoder);
+          console.log(address, geocoder);
+          info.textContent = JSON.stringify(geocoder, null, 2);
 
           const feature = geocoder.features.find(x => x?.geometry?.coordinates);
+          if (!feature) {
+            alert("No results.");
+            return;
+          }
 
           map_data_address = feature.properties.display_name ?? address;
           address_label.textContent = map_data_address;
@@ -255,12 +262,12 @@ let info = document.createElement("pre");
   let mouse_x = 0;
   let mouse_y = 0;
   let mouse_down = false;
-  window.onwheel = ev => {
+  canvas.onwheel = ev => {
     cam_scale -= 0.0005*ev.deltaY*cam_scale;
     cam_scale = Math.min(3.0, cam_scale);
     cam_scale = Math.max(0.1, cam_scale);
   }
-  window.onmousedown = ev => {
+  canvas.onmousedown = ev => {
     if (ev.button != 0) return;
     mouse_down = true;
     mouse_down_x = ev.clientX;
@@ -268,7 +275,7 @@ let info = document.createElement("pre");
     mouse_down_cam_x = cam_x;
     mouse_down_cam_y = cam_y;
   }
-  window.onmousemove = ev => {
+  canvas.onmousemove = ev => {
     mouse_x = ev.clientX * window.devicePixelRatio;
     mouse_y = ev.clientY * window.devicePixelRatio;
     if (!mouse_down) return;
@@ -329,6 +336,13 @@ let info = document.createElement("pre");
         {
           /* note that the order of these loops is also important for layering */
 
+          for (const f of map_data.get("earth") ?? []) {
+            ctx.globalAlpha = 0.3;
+            ctx.strokeStyle = ctx.fillStyle = "beige";
+            ctx.lineWidth = 20;
+            draw_feature(ctx, f);
+          }
+
           for (const f of map_data.get("water") ?? []) {
             ctx.globalAlpha = 0.175;
             ctx.strokeStyle = ctx.fillStyle = "cyan";
@@ -336,8 +350,15 @@ let info = document.createElement("pre");
             draw_feature(ctx, f);
           }
 
+          for (const f of map_data.get("physical_line") ?? []) {
+            ctx.globalAlpha = 0.175;
+            ctx.strokeStyle = ctx.fillStyle = "cyan";
+            ctx.lineWidth = 20;
+            draw_feature(ctx, f);
+          }
+
           for (const f of map_data.get("landuse") ?? []) {
-            ctx.globalAlpha = 0.1;
+            ctx.globalAlpha = 0.07;
             ctx.strokeStyle = ctx.fillStyle = "purple";
             ctx.lineWidth = 20;
             draw_feature(ctx, f);
@@ -351,9 +372,16 @@ let info = document.createElement("pre");
           }
 
           for (const f of map_data.get("roads") ?? []) {
-            ctx.globalAlpha = 1.0;
+            ctx.globalAlpha = 0.5;
             ctx.strokeStyle = ctx.fillStyle = "lightgray";
-            ctx.lineWidth = 20;
+            switch (f.props['pmap:kind']) {
+              case 'minor_road' : ctx.lineWidth = 30; break;
+              case 'medium_road': ctx.lineWidth = 40; break;
+              case 'major_road' : ctx.lineWidth = 50; break;
+              case 'path'       : ctx.lineWidth =  5; break;
+              default           : ctx.lineWidth = 20; break;
+            }
+            
             draw_feature(ctx, f);
           }
 
