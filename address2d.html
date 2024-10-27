@@ -61,8 +61,9 @@ async function map_data_at(lat, lon, zoom) {
       let x = 0;
       let y = 0;
 
-      const lines = [];
-      let line = [];
+      const lines = new Path2D();
+      let line = lines;
+      let line_is_dirty = false;
       while (pbf.pos < end) {
 
         if (length <= 0) {
@@ -77,23 +78,31 @@ async function map_data_at(lat, lon, zoom) {
           x += pbf.readSVarint();
           y += pbf.readSVarint();
           if (cmd === 1) {
-            if (line.length > 0) lines.push(line);
-            line = [];
+            if (line_is_dirty && lines != line) lines.addPath(line);
+            line = new Path2D();
+            line_is_dirty = false;
           }
-          line.push(x, y);
+
+          if (line_is_dirty) {
+            line.lineTo(x, y);
+          } else {
+            line.moveTo(x, y);
+            line_is_dirty = true;
+          }
 
           continue;
         }
 
         /* single point */
         if (cmd === 7) {
-          line.push(x, y);
+          line.rect(x-5, y-5, 10, 10);
+          line_is_dirty = true;
           continue;
         }
 
         throw new Error(`binary map data parsing error: unknown command ${cmd}`);
       }
-      if (line) lines.push(line);
+      if (line_is_dirty && line != lines) lines.addPath(line);
 
       return lines;
     };
@@ -201,40 +210,9 @@ let map_data;
       if (map_data) {
 
         function draw_feature(ctx, f) {
-          for (const contour of f.geom) {
-            if (f.geom_type == GEOM_TYPE_POLYGON) {
-              for (const contour of f.geom) {
-
-                ctx.beginPath();
-                ctx.moveTo(contour[0], contour[1]);
-                for (let i = 2; i < contour.length; i += 2)
-                  ctx.lineTo(contour[i], contour[i + 1]);
-                ctx.closePath();
-                ctx.fill();
-              }
-
-              continue;
-            }
-
-            if (f.geom_type == GEOM_TYPE_LINE) {
-              for (const contour of f.geom) {
-                ctx.beginPath();
-                ctx.moveTo(contour[0], contour[1]);
-                for (let i = 2; i < contour.length; i += 2)
-                  ctx.lineTo(contour[i], contour[i + 1]);
-                ctx.stroke();
-              }
-
-              continue;
-            }
-
-            if (f.geom_type == GEOM_TYPE_POINT) {
-              const contour = f.geom[0];
-
-              ctx.fillRect(contour[0] - 5, contour[1] - 5, 0, 0);
-              continue;
-            }
-          }
+          if (f.geom_type == GEOM_TYPE_POLYGON) ctx.fill(f.geom);
+          if (f.geom_type == GEOM_TYPE_LINE) ctx.stroke(f.geom);
+          if (f.geom_type == GEOM_TYPE_POINT) ctx.fill(f.geom);
         }
 
         {
