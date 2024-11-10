@@ -4,7 +4,7 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <title>WebGL Demo</title>
+    <title>Image Editor</title>
     <style> document, body { margin: 0px; padding: 0px; overflow: hidden; } </style>
   </head>
 
@@ -101,12 +101,13 @@ let mouse_lock_vector_x = 0;
 let mouse_lock_vector_y = 0;
 let mouse_down_state = state;
 let mouse_down = false;
+let mouse_clicked = false; /* true for one frame after click */
 window.addEventListener('mousemove', ev => {
   mouse_x = ev.clientX * window.devicePixelRatio;
   mouse_y = ev.clientY * window.devicePixelRatio;
 });
 window.addEventListener('mousedown', ev => {
-  mouse_down = true;
+  mouse_clicked = mouse_down = true;
   mouse_down_x = mouse_x;
   mouse_down_y = mouse_y;
   mouse_down_state = { image_selected: state.image_hovered && { ...state.image_hovered } };
@@ -162,7 +163,12 @@ requestAnimationFrame(function render(now) {
   {
     ctx.translate(canvas.width/2, canvas.height/2);
 
-    {
+    const EDGE_HIT_AREA = 50;
+
+    let rerender = false;
+    do {
+      rerender = false;
+
       ctx.save();
       ctx.translate(-CROP_SIZE_X * 0.5, -CROP_SIZE_Y*0.5);
 
@@ -174,11 +180,10 @@ requestAnimationFrame(function render(now) {
         state.image_hovered = null;
         for (const imported_img of state.images) {
           let { img, x, y, scale } = imported_img;
-          const PAD = 20;
-          x -= PAD*0.5;
-          y -= PAD*0.5;
-          const w = img. width * scale + PAD;
-          const h = img.height * scale + PAD;
+          x -= EDGE_HIT_AREA;
+          y -= EDGE_HIT_AREA;
+          const w = img. width * scale + EDGE_HIT_AREA*2;
+          const h = img.height * scale + EDGE_HIT_AREA*2;
 
           const hover = (((mouse.x - x) < w) && (mouse.x - x) > 0) &&
                         (((mouse.y - y) > 0) && (mouse.y - y) < h);
@@ -215,10 +220,52 @@ requestAnimationFrame(function render(now) {
           ctx.fillRect(x, y, w, h);
           ctx.globalAlpha = 1;
 
-          /* start moving if mousedown */
+          /* start moving if mouse down */
           if (mouse_down && mouse_action == ACTION_DRAG_NONE) {
             mouse_action = ACTION_DRAG_MOVE;
             state.image_selected = imported_img;
+          }
+        }
+
+        {
+          const BUTTON_WASTEBASKET = 0;
+          const BUTTON_LAYER_UP    = 1;
+          const BUTTON_LAYER_DOWN  = 2;
+          const BUTTON_CROP        = 3;
+          const BUTTON_COUNT       = 4;
+          let cursor_x = x + w - 60;
+          for (let button = 0; button < BUTTON_COUNT; button++) {
+            const btn_x = cursor_x;
+            cursor_x -= 70;
+
+            const btn_y = y + 15 - 70;
+            {
+              const rect_x = btn_x - 5;
+              const rect_y = btn_y - 10;
+              const rect_w = 60;
+              const rect_h = 60;
+              const hover = (((mouse.x - rect_x) < rect_w) && (mouse.x - rect_x) >      0) &&
+                            (((mouse.y - rect_y) >      0) && (mouse.y - rect_y) < rect_h);
+
+              ctx.fillStyle = hover ? "rgb(200, 200, 200)" : "rgb(230, 230, 230)";
+
+              ctx.fillRect(rect_x, rect_y, rect_w, rect_h);
+
+              if (hover && mouse_clicked) {
+                const idx = state.images.indexOf(imported_img);
+                if (button == BUTTON_WASTEBASKET) state.images.splice(idx, 1);
+                if (button == BUTTON_LAYER_UP   ) state.images.splice(idx, 1), state.images.splice(idx+1, 0, imported_img), rerender = true;
+                if (button == BUTTON_LAYER_DOWN ) state.images.splice(idx, 1), state.images.splice(idx-1, 0, imported_img);
+                if (button == BUTTON_CROP       ) ;
+              }
+            }
+
+            ctx.font = "50px sans";
+            ctx.textBaseline = "top";
+            if (button == BUTTON_WASTEBASKET) ctx.fillText("🗑️", btn_x, btn_y);
+            if (button == BUTTON_LAYER_UP   ) ctx.fillText("⬆️", btn_x, btn_y);
+            if (button == BUTTON_LAYER_DOWN ) ctx.fillText("⬇️", btn_x, btn_y);
+            if (button == BUTTON_CROP       ) ctx.fillText("✂️", btn_x, btn_y);
           }
         }
 
@@ -236,7 +283,7 @@ requestAnimationFrame(function render(now) {
           const horizontal = Math.abs(dx) > 0;
           const dist = Math.abs(horizontal ? px - mouse.x : py - mouse.y);
 
-          if (dist < 10) {
+          if (dist < EDGE_HIT_AREA) {
             document.body.style.cursor = horizontal ? 'col-resize' : 'row-resize';
 
             /* start resizing on side drag */
@@ -269,7 +316,8 @@ requestAnimationFrame(function render(now) {
       }
 
       ctx.restore();
-    }
+      mouse_clicked = false;
+    } while (rerender);
 
     /* outline crop area */
     {
