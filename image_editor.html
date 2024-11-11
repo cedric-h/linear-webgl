@@ -163,10 +163,10 @@ requestAnimationFrame(function render(now) {
         dx = (state.image_selected.crop.w - start.crop.w)*start.scale;
         dy = (state.image_selected.crop.h - start.crop.h)*start.scale;
 
-        /* this block adjusts crop x/y and canvas x/y for congruency in the negative x/y case */
+        /* this block adjusts x/y for congruency when pulling in the negative x/y directions */
         {
-          if (mouse_lock_vector_x < 0) state.image_selected.crop.x = start.crop.x - dx/start.scale;
-          if (mouse_lock_vector_y < 0) state.image_selected.crop.y = start.crop.y - dy/start.scale;
+          if (mouse_lock_vector_x < 0) state.image_selected.crop.x = Math.max(0, start.crop.x - dx/start.scale);
+          if (mouse_lock_vector_y < 0) state.image_selected.crop.y = Math.max(0, start.crop.y - dy/start.scale);
 
           if (mouse_lock_vector_x < 0) state.image_selected.x = start.x - dx;
           if (mouse_lock_vector_y < 0) state.image_selected.y = start.y - dy;
@@ -181,6 +181,7 @@ requestAnimationFrame(function render(now) {
         const new_scale_y = new_size_y / start_size_y;
         const scale = (Math.abs(mouse_lock_vector_x) > 0) ? new_scale_x : new_scale_y;
 
+        /* this block adjusts x/y for congruency when pulling in the negative x/y directions */
         state.image_selected.scale = start.scale * scale;
         if (mouse_lock_vector_x < 0) state.image_selected.x = start.x + (start_size_x - new_size_x);
         if (mouse_lock_vector_y < 0) state.image_selected.y = start.y + (start_size_y - new_size_y);
@@ -374,6 +375,7 @@ requestAnimationFrame(function render(now) {
       ctx.strokeRect(-CANVAS_SIZE_X*0.5, -CANVAS_SIZE_Y*0.5, CANVAS_SIZE_X, CANVAS_SIZE_Y);
     }
 
+    /* here's where we do the scrim over the canvas, outlining the area that will be exported */
     {
       ctx.globalAlpha = 0.5;
       const top_left     = ctx.getTransform().inverse().transformPoint(new DOMPoint(0, 0));
