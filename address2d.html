@@ -128,14 +128,21 @@ async function map_data_at(lat, lon, zoom) {
       result.set(key, features);
     }
 
+    console.log(result.get("earth"));
+
     return result;
   }
 
-  function lon2tile(lon,zoom) { return (Math.floor((lon+180)/360*Math.pow(2,zoom))); }
-  function lat2tile(lat,zoom) { return (Math.floor((1-Math.log(Math.tan(lat*Math.PI/180) + 1/Math.cos(lat*Math.PI/180))/Math.PI)/2 *Math.pow(2,zoom))); }
+  function lon2tile(lon,zoom) { return (lon+180)/360*Math.pow(2,zoom); }
+  function lat2tile(lat,zoom) { return (1-Math.log(Math.tan(lat*Math.PI/180) + 1/Math.cos(lat*Math.PI/180))/Math.PI)/2 *Math.pow(2,zoom); }
 
   const source = new PMTiles.FetchSource("https://data.source.coop/protomaps/openstreetmap/tiles/v3.pmtiles", {"x-custom-header":"value"});
-  const response = await new PMTiles.PMTiles(source).getZxy(zoom, lon2tile(lon, zoom), lat2tile(lat, zoom));
+  const x = Math.floor(lon2tile(lon, zoom));
+  const y = Math.floor(lat2tile(lat, zoom));
+  const x_frac = lon2tile(lon, zoom) - x;
+  const y_frac = lat2tile(lat, zoom) - y;
+  const response = await new PMTiles.PMTiles(source).getZxy(zoom, x, y);
+  console.log(x_frac, y_frac);
 
   if (response.data) return parseTile(response.data);
   else {
@@ -146,18 +153,25 @@ async function map_data_at(lat, lon, zoom) {
 
 
 let map_data;
+let cam_x = 0;
+let cam_y = 0;
 let info = document.createElement("pre");
-
 {
   let map_data_zoom = 15;
-  let map_data_lat = 40.6222274;
-  let map_data_lon = -111.8484891;
+  let map_data_lat =  40.625967420413474;
+  let map_data_lon = -111.84575167953076;
   let map_data_address = '';
 
   map_data_at(map_data_lat, map_data_lon, map_data_zoom)
     .then(x => map_data = x)
     .then(console.log);
 
+  async function load_coords() {
+    const res = map_data_at(map_data_lat, map_data_lon, map_data_zoom);
+    cam_x = res.cam_x;
+    cam_y = res.cam_y;
+    map_data = res.map_data;
+  }
 
   const div = document.createElement("div");
   div.style.position = 'absolute';
@@ -252,8 +266,6 @@ let info = document.createElement("pre");
     ctx = canvas.getContext("2d");
   })();
 
-  let cam_x = 0;
-  let cam_y = 0;
   let cam_scale = 1;
   let mouse_down_cam_x = 0;
   let mouse_down_cam_y = 0;
@@ -301,6 +313,15 @@ let info = document.createElement("pre");
       ctx.translate(-canvas.width*0.5, -canvas.height*0.5);
 
       ctx.translate(cam_x, cam_y);
+
+      /* outline tile */
+      if (0) {
+        ctx.strokeStyle = "red";
+        ctx.lineWidth = 5;
+        const TILE_PAD  =   50;
+        const TILE_SIZE = 4200;
+        ctx.strokeRect(-TILE_PAD, -TILE_PAD, TILE_SIZE, TILE_SIZE);
+      }
 
       if (!map_data) {
 
