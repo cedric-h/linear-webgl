@@ -9,36 +9,73 @@
   </head>
 
   <body>
-    <script>"use strict";
-window.onload = () => {
-    document.body.style.backgroundColor = 'white';
 
-    const parent = document.createElement('div');
+    <div
+        style="z-index:1;margin:1vh;position:absolute;top:0px;left:0px;display:flex;flex-direction:column;"
+        id="inputs"
+    >
+
+        <div>
+            <input type="text" value="3" id="size_input" style="margin:0.2vh;"/>
+            <label for="size_input">size</label>
+        </div>
+
+        <div>
+            <input type="text" value="60" id="count_input" style="margin:0.2vh;"/>
+            <label for="count_input">count</label>
+        </div>
+
+        <div>
+            <input type="text" value="500" id="perspective_input" style="margin:0.2vh;"/>
+            <label for="perspective_input">perspective</label>
+        </div>
+    </div>
+
+    <script>"use strict";
+for (const input of document.querySelector('#inputs').querySelectorAll('input')) {
+    input.oninput = init;
+}
+
+const parent = document.createElement('div');
+parent.id = 'carousel-holder'
+let divs;
+function init() {
+    parent.innerHTML = '';
     parent.style.width   = '100vw';
     parent.style.height  = '100vh';
-    parent.style.perspective = '500px';
+    parent.style.perspective = parseInt(document.querySelector('input#perspective_input').value) + 'px';
     document.body.appendChild(parent);
 
-    const divs = [];
-    for (let i = 0; i < 20; i++) {
+    const size_vh = parseInt(document.querySelector('input#size_input').value);
+    const count = parseInt(document.querySelector('input#count_input').value);
+
+    divs = [];
+    for (let i = 0; i < count; i++) {
         const div = document.createElement('div');
-        div.style.width  = '8vh';
-        div.style.height = '8vh';
-        div.style.margin = '0.8vh';
+        div.style.width  = size_vh + 'vh';
+        div.style.height = size_vh + 'vh';
         div.style.backgroundColor = 'gray';
 
         div.style.display        = 'flex';
         div.style.justifyContent = 'center';
         div.style.alignItems     = 'center';
-        div.style.fontSize = '4vh';
+        div.style.fontSize = size_vh*0.5 + 'vh';
         div.textContent += "🤔";
 
         divs.push(div);
         parent.appendChild(div);
     }
+}
+
+window.onload = () => {
+    document.body.style.backgroundColor = 'white';
+
+    init();
 
     requestAnimationFrame(function frame() {
         requestAnimationFrame(frame);
+
+        const size_vh = parseInt(document.querySelector('input#size_input').value);
 
         for (let i = 0; i < divs.length; i++) {
             const t = i / divs.length;
@@ -52,8 +89,8 @@ window.onload = () => {
             y *= window.innerHeight*0.3;
             z *= window.innerHeight*0.3;
             divs[i].style.position = 'absolute';
-            divs[i].style.top = (y + window.innerHeight*0.45) + 'px';
-            divs[i].style.left = 'calc(' + window.innerWidth*0.5 + 'px - 4vh)';
+            divs[i].style.top = (y + window.innerHeight*0.5) + 'px';
+            divs[i].style.left = `calc(${window.innerWidth*0.5}px - ${size_vh*0.5}vh)`;
             divs[i].style.transform = `translateZ(${-z}px) rotateX(${tan_angle}rad)`;
             divs[i].style.zIndex = -~~z;
         }
