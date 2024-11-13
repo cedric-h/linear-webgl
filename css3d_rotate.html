@@ -26,7 +26,7 @@
         </div>
 
         <div>
-            <input type="text" value="500" id="perspective_input" style="margin:0.2vh;"/>
+            <input type="text" value="360" id="perspective_input" style="margin:0.2vh;"/>
             <label for="perspective_input">perspective</label>
         </div>
     </div>
@@ -72,7 +72,7 @@ window.onload = () => {
 
     init();
 
-    requestAnimationFrame(function frame() {
+    requestAnimationFrame(function frame(dt) {
         requestAnimationFrame(frame);
 
         const size_vh = parseInt(document.querySelector('input#size_input').value);
@@ -80,7 +80,7 @@ window.onload = () => {
         for (let i = 0; i < divs.length; i++) {
             const t = i / divs.length;
             const ANGLE_RANGE = Math.PI * 2;
-            const angle = (t + Date.now()*0.000025) * ANGLE_RANGE;
+            const angle = (t + dt*0.000025) * ANGLE_RANGE;
             let y = Math.cos(angle);
             let z = Math.sin(angle);
             /* NOTE: Math.atan2(y, z) is tempting, but you get upside down quads */
