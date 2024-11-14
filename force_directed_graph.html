@@ -524,65 +524,65 @@ window.addEventListener('mouseup', ev => {
 });
 
 requestAnimationFrame(function frame() {
-   requestAnimationFrame(frame);
+  requestAnimationFrame(frame);
 
-   ctx.save();
+  ctx.save();
 
-   ctx.fillStyle = "white";
-   ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.fillStyle = "white";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-   ctx.translate( canvas.width*0.5,  canvas.height*0.5);
-   ctx.scale(cam_scale, cam_scale);
-   ctx.translate(-canvas.width*0.5, -canvas.height*0.5);
+  ctx.translate( canvas.width*0.5,  canvas.height*0.5);
+  ctx.scale(cam_scale, cam_scale);
+  ctx.translate(-canvas.width*0.5, -canvas.height*0.5);
 
-   ctx.translate(cam_x, cam_y);
+  ctx.translate(cam_x, cam_y);
 
-   for (let i = 0; i < 100; i++) for (const [_, v] of graph.vertices) {
-       /* we'll accumulate all the forces into this vector, to prevent instability */
-       let vdx = 0;
-       let vdy = 0;
+  for (let i = 0; i < 100; i++) for (const [_, v] of graph.vertices) {
+    /* we'll accumulate all the forces into this vector, to prevent instability */
+    let vdx = 0;
+    let vdy = 0;
 
-       /* edges attract */
-       for (const neighbor of v.edges) {
-           const dx = neighbor.x - v.x;
-           const dy = neighbor.y - v.y;
-           vdx += dx * 0.01;
-           vdy += dy * 0.01;
-       }
+    /* edges attract */
+    for (const neighbor of v.edges) {
+      const dx = neighbor.x - v.x;
+      const dy = neighbor.y - v.y;
+      vdx += dx * 0.01;
+      vdy += dy * 0.01;
+    }
 
-       /* vertices repel (TODO: quadtree) */
-       for (const [_, other] of graph.vertices) {
-           if (other == v) continue;
-           const dx = v.x - other.x;
-           const dy = v.y - other.y;
-           const dist = (dx === 0 && dy === 0) ? 0 : Math.sqrt(dx*dx + dy*dy);
-           const force = Math.max(0, 50 - dist) * 0.01;
-           vdx += dx / dist * force;
-           vdy += dy / dist * force;
-       }
+    /* vertices repel (TODO: quadtree) */
+    for (const [_, other] of graph.vertices) {
+      if (other == v) continue;
+      const dx = v.x - other.x;
+      const dy = v.y - other.y;
+      const dist = (dx === 0 && dy === 0) ? 0 : Math.sqrt(dx*dx + dy*dy);
+      const force = Math.max(0, 50 - dist) * 0.01;
+      vdx += dx / dist * force;
+      vdy += dy / dist * force;
+    }
 
-       /* apply force */
-       v.x += vdx;
-       v.y += vdy;
-   }
+    /* apply force */
+    v.x += vdx;
+    v.y += vdy;
+  }
 
-   ctx.fillStyle = "black";
-   for (const [lhs, rhs] of graph.edges) {
-       ctx.beginPath();
-       ctx.moveTo(lhs.x, lhs.y);
-       ctx.lineTo(rhs.x, rhs.y);
-       ctx.closePath();
-       ctx.stroke();
-   }
-   for (const [_, v] of graph.vertices) {
-       // ctx.fillRect(v.x - 5, v.y - 5, 10, 10);
+  ctx.fillStyle = "black";
+  for (const [lhs, rhs] of graph.edges) {
+    ctx.beginPath();
+    ctx.moveTo(lhs.x, lhs.y);
+    ctx.lineTo(rhs.x, rhs.y);
+    ctx.closePath();
+    ctx.stroke();
+  }
+  for (const [_, v] of graph.vertices) {
+    // ctx.fillRect(v.x - 5, v.y - 5, 10, 10);
 
-       ctx.font = "10px serif";
-       ctx.textBaseline = "middle";
-       ctx.fillText(v.emoji, v.x - 5, v.y);
-   }
+    ctx.font = "10px serif";
+    ctx.textBaseline = "middle";
+    ctx.fillText(v.emoji, v.x - 5, v.y);
+  }
 
-   ctx.restore();
+  ctx.restore();
 });
     </script>
   </body>
