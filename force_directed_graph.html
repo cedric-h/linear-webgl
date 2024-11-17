@@ -15,11 +15,11 @@
 const canvas = document.getElementById("glcanvas");
 const ctx = canvas.getContext('2d');
 (window.onresize = () => {
-   canvas.width = window.innerWidth*window.devicePixelRatio,
-   canvas.height = window.innerHeight*window.devicePixelRatio
-   canvas.style.width = window.innerWidth + 'px';
-   canvas.style.height = window.innerHeight + 'px';
- })();
+  canvas.width = window.innerWidth*window.devicePixelRatio,
+  canvas.height = window.innerHeight*window.devicePixelRatio
+  canvas.style.width = window.innerWidth + 'px';
+  canvas.style.height = window.innerHeight + 'px';
+})();
 
 const graph = {
   "edges": [
