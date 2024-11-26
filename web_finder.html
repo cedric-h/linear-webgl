@@ -903,6 +903,9 @@
   }
 
 
+  const path_calc_start = performance.now();
+
+
   /* push all the lines out a little bit so we don't miss any junctions */
   {
     for (const pipe of web) {
@@ -961,7 +964,6 @@
   {
 
     for (const rtu of rtus) {
-    // for (const rtu of rtus.slice(1, 2)) {
       for (const pipe of web) {
 
         let closest_segment_dist = Infinity;
@@ -1022,93 +1024,30 @@
             frontier.push({ path: [...path, connection.junction], segment: connection.segment, direction: 'both' });
           }
         }
+      }
+    }
 
-        // while (frontier.length) {
-        //   let { path, segment } = frontier.pop();
+    /* hide overlapping portions of the path */
 
-        //   if (seen.has(segment)) continue;
-        //   seen.add(segment);
+    for (const p_path of complete_paths) for (const p of p_path) {
+      p.hidden = false;
+    }
 
-        //   if (segment.next) {
-        //     if (!seen.has(segment.next))
-        //       frontier.push({ path: [...path, segment.lhs, segment.rhs], segment: segment.next });
-        //   } else {
-        //     const last = path[path.length - 1];
-        //     path = [...path, (last == segment.lhs) ? segment.rhs : segment.lhs];
-        //   }
-
-        //   if (path.length > 1)
-        //     complete_paths.push([...contour_segments(path)]);
-
-        //   if (0) for (const link of segment.connections) {
-        //     if (seen.has(link.segment)) continue;
-        //     frontier.push({ path: [...path, link.junction], segment: link.segment });
-        //   }
-        // }
-
-        // (function walk(contour_from_start, segment, direction) {
-
-        //   const base = (direction == 'next') ? segment.lhs : segment.rhs;
-        //   const end  = (direction == 'next') ? segment.rhs : segment.lhs;
-        //   const dead_end = segment[direction] == null;
-        //   // contour_from_start
-
-        //   if (contour_from_start.some(j => j.x == base.x && j.y == base.y)) return;
-        //   if (contour_from_start.some(j => j.x ==  end.x && j.y ==  end.y)) return;
-
-        //   /* continue in this direction */
-        //   if (!dead_end) {
-        //     walk([...contour_from_start, base], segment[direction], direction);
-        //   }
-
-        //   /* walk connections */
-        //   for (const connection of segment.connections) {
-        //     const linked = connection.segment;
-        //     const junc   = connection.junction;
-        //     if (linked == segment) continue;
-
-        //     // if (linked.connections.length > 1) continue;
-
-        //     const drive_thru = [...contour_from_start, base, junc];
-
-        //     // complete_paths.push([...contour_segments([...drive_thru, linked.lhs])]);
-        //     // complete_paths.push([...contour_segments([...drive_thru, linked.rhs])]);
-
-        //     // walk(drive_thru, linked, 'next');
-        //     // walk(drive_thru, linked, 'prev');
-
-        //     for (const friends_friendship of linked.connections) {
-
-        //       const friend_of_friend = friends_friendship.segment;
-
-        //       if (friend_of_friend == segment) continue;
-
-        //       const turn = friends_friendship.junction;
-
-        //       // walk([...drive_thru, turn], friend_of_friend, 'next');
-        //       // walk([...drive_thru, turn], friend_of_friend, 'prev');
-
-        //       // complete_paths.push([...contour_segments([...drive_thru, turn, friend_of_friend.lhs])]);
-        //       // complete_paths.push([...contour_segments([...drive_thru, turn, friend_of_friend.rhs])]);
-        //     }
-
-        //     // walk([...contour_from_start, base, junc], linked, direction);
-        //     // walk([...contour_from_start, junc], linked, 'prev');
-        //   }
-
-        //   if (dead_end) {
-        //     contour_from_start = [...contour_from_start, base, end];
-        //     complete_paths.push([...contour_segments(contour_from_start)]);
-        //   }
-        // })([base], closest_segment, direction);
-
-
-        // break; /* TEMPORARY */
-
+    for (const p_path of complete_paths) for (const p of p_path) {
+      for (const o_path of complete_paths) for (const o of o_path) {
+        if (p == o) continue;
+        if (p.hidden || o.hidden) continue;
+        let same_path = false;
+        same_path ||= (p.lhs.x == o.lhs.x && p.lhs.y == o.lhs.y) && (p.rhs.x == o.rhs.x && p.rhs.y == o.rhs.y);
+        same_path ||= (p.lhs.x == o.rhs.x && p.lhs.y == o.rhs.y) && (p.rhs.x == o.lhs.x && p.rhs.y == o.lhs.y);
+        if (same_path) p.hidden = o.hidden = true;
       }
     }
   }
-  // complete_paths = [complete_paths[0]];
+
+  console.log(`${complete_paths.length} paths computed in ${performance.now() - path_calc_start}ms`);
+  console.log(complete_paths);
+
 
   let ctx;
   const canvas = document.createElement("canvas");
@@ -1171,12 +1110,16 @@
     dt_accumulator += dt;
     last_ts = ts;
 
-    if (dt_accumulator > 1000) {
-      // const path = complete_paths[Math.floor(Math.random() * complete_paths.length)];
-
-      for (const path of complete_paths) {
-        particles.push({ x: path[0].lhs.x, y: path[0].lhs.y, path, spawn_ts: ts });
+    if (dt_accumulator > 500) {
+      if (0) {
+        const path = complete_paths[Math.floor(Math.random() * complete_paths.length)];
         dt_accumulator = 0;
+        particles.push({ x: path[0].lhs.x, y: path[0].lhs.y, path, spawn_ts: ts, hidden: true });
+      } else {
+        for (const path of complete_paths) {
+          particles.push({ x: path[0].lhs.x, y: path[0].lhs.y, path, spawn_ts: ts, hidden: true });
+          dt_accumulator = 0;
+        }
       }
     }
 
@@ -1186,12 +1129,13 @@
 
       const speed = 1;
       let progress = t * speed;
-      for (const { lhs, rhs } of p.path) {
+      for (const { lhs, rhs, hidden } of p.path) {
         const len = Math.sqrt((lhs.x - rhs.x)*(lhs.x - rhs.x) + (lhs.y - rhs.y)*(lhs.y - rhs.y));
         if (progress > len) {
           progress -= len;
           continue;
         }
+        p.hidden = hidden;
         p.x = lerp(lhs.x, rhs.x, progress / len);
         p.y = lerp(lhs.y, rhs.y, progress / len);
         progress -= len;
@@ -1319,7 +1263,8 @@
       } else {
         ctx.globalAlpha = 0.1;
         for (const path of complete_paths) {
-          for (const { lhs, rhs } of path) {
+          for (const { hidden, lhs, rhs } of path) {
+            if (hidden) continue;
             ctx.beginPath()
             ctx.moveTo(lhs.x, lhs.y);
             ctx.lineTo(rhs.x, rhs.y);
@@ -1332,6 +1277,8 @@
       }
 
       for (const j of particles) {
+        if (j.hidden) continue;
+
         ctx.beginPath()
         ctx.arc(j.x, j.y, 130, 0, Math.PI*2);
         ctx.closePath();
