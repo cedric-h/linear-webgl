@@ -1,0 +1,1402 @@
+<!-- vim: sw=2 ts=2 expandtab smartindent ft=javascript
+-->
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>web finder</title>
+    <style> document, body { margin: 0px; padding: 0px; overflow: hidden; } </style>
+  </head>
+
+  <body>
+    <script type="module">"use strict";
+
+{
+  const RTU_SIZE = 1000;
+
+  let web = [
+      {
+          "ID": "00179841-1F98-4CA0-B4E6-E5EAA9F068BC",
+          "contour": [
+              {
+                  "x": -16131.683766279419,
+                  "y": 28349.999446489546
+              },
+              {
+                  "x": -16067.185562220739,
+                  "y": 28349.999041161973
+              },
+              {
+                  "x": -12548.382361230484,
+                  "y": 28349.98566906739
+              },
+              {
+                  "x": -2440.7333042902173,
+                  "y": 28349.98330288431
+              },
+              {
+                  "x": 269.0192206619506,
+                  "y": 27899.99988308259
+              },
+              {
+                  "x": 404.61403731900214,
+                  "y": 21187.541495069498
+              }
+          ]
+      },
+      {
+          "ID": "020F4C5C-647C-43B7-B6C0-C19E0E947BAA",
+          "contour": [
+              {
+                  "x": -30849.99965508164,
+                  "y": 13333.333333333334
+              },
+              {
+                  "x": -30849.99967675465,
+                  "y": 12683.333333333334
+              },
+              {
+                  "x": -30849.999683423266,
+                  "y": 12683.333333333334
+              }
+          ]
+      },
+      {
+          "ID": "070F9ABB-98C4-4F70-BFEF-8543A907E8E9",
+          "contour": [
+              {
+                  "x": 81.80260893439888,
+                  "y": 14115.51745104779
+              },
+              {
+                  "x": 64.68944974247847,
+                  "y": 14061.827856048702
+              },
+              {
+                  "x": 1184.3137967265802,
+                  "y": 14000.000570468428
+              },
+              {
+                  "x": 1184.314450230581,
+                  "y": 11088.424599367627
+              }
+          ]
+      },
+      {
+          "ID": "0F452DCA-AAE8-45B9-A2CD-C6866037E390",
+          "contour": [
+              {
+                  "x": 6425.000217204807,
+                  "y": 9000
+              },
+              {
+                  "x": 6425.000436176666,
+                  "y": 13421.572265467737
+              },
+              {
+                  "x": 7925.7357126747775,
+                  "y": 13849.999932243549
+              },
+              {
+                  "x": 12646.95288352727,
+                  "y": 13849.999719086089
+              }
+          ]
+      },
+      {
+          "ID": "101C374E-EE6A-42F5-B1E8-EACF4EC27AB1",
+          "contour": [
+              {
+                  "x": -5349.999910419142,
+                  "y": 11088.424769090396
+              },
+              {
+                  "x": -5350.000089580858,
+                  "y": 12650
+              }
+          ]
+      },
+      {
+          "ID": "208454D1-BB7F-4E03-B73F-79115093F224",
+          "contour": [
+              {
+                  "x": 336.8164444261315,
+                  "y": 25074.983302885914
+              },
+              {
+                  "x": -601.9961713823643,
+                  "y": 25074.983296761806
+              }
+          ]
+      },
+      {
+          "ID": "218E9231-D30F-4548-B3EE-66E3576B1064",
+          "contour": [
+              {
+                  "x": -31100.000000000004,
+                  "y": 13383.333302008454
+              },
+              {
+                  "x": -31100.000000000004,
+                  "y": 13383.333287624566
+              },
+              {
+                  "x": -29600.000000000004,
+                  "y": 13383.333182142791
+              }
+          ]
+      },
+      {
+          "ID": "270F8AA7-59EB-4E91-B86F-FB701BEF151F",
+          "contour": [
+              {
+                  "x": -18150,
+                  "y": 28265.695591510637
+              },
+              {
+                  "x": -17200,
+                  "y": 28265.69528109272
+              }
+          ]
+      },
+      {
+          "ID": "6D53A013-ABE1-4D6B-81CC-5DB05910A617",
+          "contour": [
+              {
+                  "x": 10950.000161502216,
+                  "y": 13850.000076141123
+              },
+              {
+                  "x": 10949.999730110872,
+                  "y": 24400
+              }
+          ]
+      },
+      {
+          "ID": "73C250A9-77C4-4853-8331-F92F9E80B61E",
+          "contour": [
+              {
+                  "x": -10835.661001531658,
+                  "y": 11088.424911449054
+              },
+              {
+                  "x": -10835.660893109685,
+                  "y": 12700
+              }
+          ]
+      },
+      {
+          "ID": "7821B660-B316-4E05-B4B0-2FA6036B95EB",
+          "contour": [
+              {
+                  "x": 9975.000579301615,
+                  "y": 25850.00019079043
+              },
+              {
+                  "x": 10201.751215145665,
+                  "y": 24450
+              },
+              {
+                  "x": 12754.954788669069,
+                  "y": 24450.000547047544
+              },
+              {
+                  "x": 12949.99921544821,
+                  "y": 25850.000737837974
+              }
+          ]
+      },
+      {
+          "ID": "7B5B359C-8EEE-44E4-8F6C-FB954A6C65B7",
+          "contour": [
+              {
+                  "x": 11494.620973529873,
+                  "y": 25849.999919781658
+              },
+              {
+                  "x": 15209.089161453216,
+                  "y": 25850.00019079043
+              }
+          ]
+      },
+      {
+          "ID": "7F5D3946-6049-45D3-9D3F-7088486F9E45",
+          "contour": [
+              {
+                  "x": -900.0000350436076,
+                  "y": 14122.027251328904
+              },
+              {
+                  "x": -2596.322659726978,
+                  "y": 14122.026886656347
+              },
+              {
+                  "x": -2600.31487390296,
+                  "y": 13621.871459877515
+              }
+          ]
+      },
+      {
+          "ID": "8020BA2E-558E-40EC-A91F-A97399AAED57",
+          "contour": [
+              {
+                  "x": -20048.5290809606,
+                  "y": 26175.000186743666
+              },
+              {
+                  "x": -20048.529111930846,
+                  "y": 9600
+              }
+          ]
+      },
+      {
+          "ID": "85D407DF-73F3-4B0F-849B-874FE55BA1FF",
+          "contour": [
+              {
+                  "x": 1638.7271331346394,
+                  "y": 17749.870630348894
+              },
+              {
+                  "x": 1604.5793966313972,
+                  "y": 17749.870482800245
+              },
+              {
+                  "x": 4587.6611353262115,
+                  "y": 17979.750292989338
+              },
+              {
+                  "x": 4726.127813931945,
+                  "y": 22439.882206854956
+              },
+              {
+                  "x": 4792.4131294268,
+                  "y": 27385.596898331314
+              },
+              {
+                  "x": 4588.2866706208215,
+                  "y": 30034.86611831957
+              },
+              {
+                  "x": -949.9987239233952,
+                  "y": 30275.005740657423
+              }
+          ]
+      },
+      {
+          "ID": "981C6835-E44C-4EA6-AE08-018B7068D531",
+          "contour": [
+              {
+                  "x": -13636.354135352101,
+                  "y": 28349.999497554174
+              },
+              {
+                  "x": -13636.354280134194,
+                  "y": 25600
+              },
+              {
+                  "x": -15806.022992107599,
+                  "y": 25353.73867868634
+              },
+              {
+                  "x": -15806.02334484951,
+                  "y": 21950
+              },
+              {
+                  "x": -15806.023822520874,
+                  "y": 17887.49959453538
+              }
+          ]
+      },
+      {
+          "ID": "A86E3CA6-56FE-4E1E-A6B1-869970D8549E",
+          "contour": [
+              {
+                  "x": 336.8168712516876,
+                  "y": 23450.000523142382
+              },
+              {
+                  "x": -608.1075800204328,
+                  "y": 23450.000766448105
+              }
+          ]
+      },
+      {
+          "ID": "AB9F8A8C-D36E-49A7-BD7A-A4C5D4C6AF7B",
+          "contour": [
+              {
+                  "x": 404.61409591204387,
+                  "y": 21550
+              },
+              {
+                  "x": -550,
+                  "y": 21549.99963732042
+              }
+          ]
+      },
+      {
+          "ID": "C8627847-4DFC-4AFA-A30D-3D3CE6017156",
+          "contour": [
+              {
+                  "x": -30550,
+                  "y": 21449.999999147174
+              },
+              {
+                  "x": -28550,
+                  "y": 21450.00000085283
+              }
+          ]
+      },
+      {
+          "ID": "C9EFDBF5-AFE9-459E-AE21-92FCBB050CD8",
+          "contour": [
+              {
+                  "x": -20048.5291057371,
+                  "y": 11088.424480904314
+              },
+              {
+                  "x": -2009.282379274787,
+                  "y": 11162.112186324614
+              },
+              {
+                  "x": 1925.506282164054,
+                  "y": 11088.424562728333
+              },
+              {
+                  "x": 2301.948586791331,
+                  "y": 9905.59276125907
+              }
+          ]
+      },
+      {
+          "ID": "DFAB7324-03DA-428D-AD64-713F7AC0D93B",
+          "contour": [
+              {
+                  "x": 2900,
+                  "y": 28174.99972237132
+              },
+              {
+                  "x": 8950,
+                  "y": 28174.999685780407
+              }
+          ]
+      },
+      {
+          "ID": "F33BBB89-2421-425C-B299-DB0D25C45BBF",
+          "contour": [
+              {
+                  "x": -24050,
+                  "y": 9600.000016538072
+              },
+              {
+                  "x": -18250.000206850877,
+                  "y": 9600.00021724757
+              }
+          ]
+      },
+      {
+          "ID": "F3ACC6E2-50D3-46F6-B4F9-1A24B6581A46",
+          "contour": [
+              {
+                  "x": -30850.000146952258,
+                  "y": 13433.333333333574
+              },
+              {
+                  "x": -30849.99951015914,
+                  "y": 14083.333333333263
+              },
+              {
+                  "x": -30849.99926523871,
+                  "y": 14083.333333333023
+              }
+          ]
+      },
+      {
+          "ID": "0152536B-7048-493D-9DC3-495C3ECAD0A6",
+          "contour": [
+              {
+                  "x": 2900.000329147069,
+                  "y": 19150
+              },
+              {
+                  "x": 4550,
+                  "y": 19150.000461872136
+              }
+          ]
+      },
+      {
+          "ID": "21681983-4F73-40BC-BDE8-E79E13F5E630",
+          "contour": [
+              {
+                  "x": 3159.2708101723897,
+                  "y": 24249.93387507334
+              },
+              {
+                  "x": 4759.270319565018,
+                  "y": 24249.933819116482
+              }
+          ]
+      },
+      {
+          "ID": "70BBB9C6-0BBA-4CA8-B363-0428145AE203",
+          "contour": [
+              {
+                  "x": 613.0334611805827,
+                  "y": 17749.87108668539
+              },
+              {
+                  "x": 250,
+                  "y": 17749.871339313984
+              },
+              {
+                  "x": 16.304467912700858,
+                  "y": 18021.4702365686
+              },
+              {
+                  "x": 418.67925462246984,
+                  "y": 18999.871829488406
+              },
+              {
+                  "x": 1106.8434091721172,
+                  "y": 18999.87060404386
+              },
+              {
+                  "x": 1125.461615628441,
+                  "y": 19750
+              }
+          ]
+      },
+      {
+          "ID": "B9958259-ABA4-41A7-8CB0-4BEC3A589F4C",
+          "contour": [
+              {
+                  "x": 4759.270080078064,
+                  "y": 24000.000279265496
+              },
+              {
+                  "x": 6620.98660660538,
+                  "y": 24000.000605154906
+              }
+          ]
+      },
+      {
+          "ID": "D27913F8-13EE-4A25-94DF-7D36A6CDF677",
+          "contour": [
+              {
+                  "x": 4550,
+                  "y": 19150.000461872136
+              },
+              {
+                  "x": 6150,
+                  "y": 19150.00090187167
+              }
+          ]
+      },
+      {
+          "ID": "7FDA40D1-4CC5-4C1B-A13F-4073F7EB244A",
+          "contour": [
+              {
+                  "x": -20048.529344675022,
+                  "y": 14914.912338973181
+              },
+              {
+                  "x": -18250,
+                  "y": 14914.91191670215
+              }
+          ]
+      },
+      {
+          "ID": "96B4DAF2-0EBF-4615-83DE-AD46A405BFB6",
+          "contour": [
+              {
+                  "x": -7250.00014321891,
+                  "y": 11088.424105508033
+              },
+              {
+                  "x": -7249.99985678109,
+                  "y": 9750
+              }
+          ]
+      },
+      {
+          "ID": "E31AAA85-D34D-47B6-A43D-A057DF3117CE",
+          "contour": [
+              {
+                  "x": -4677.592385842234,
+                  "y": 11088.424338674382
+              },
+              {
+                  "x": -4677.592386706238,
+                  "y": 9800
+              }
+          ]
+      },
+      {
+          "ID": "B6694E4A-5913-4F19-BA03-9E70C7A2DBF4",
+          "contour": [
+              {
+                  "x": -2550.0000354685526,
+                  "y": 11088.424688668778
+              },
+              {
+                  "x": -2550.0003390557013,
+                  "y": 9750
+              }
+          ]
+      },
+      {
+          "ID": "500835DC-64AD-4167-A518-9357AA381947",
+          "contour": [
+              {
+                  "x": 8574.184772467826,
+                  "y": 16144.917707766439
+              },
+              {
+                  "x": 7950,
+                  "y": 16144.917736686231
+              },
+              {
+                  "x": 7442.387206028021,
+                  "y": 16144.917773784467
+              },
+              {
+                  "x": 7442.3871256359225,
+                  "y": 15044.91777378447
+              }
+          ]
+      },
+      {
+          "ID": "97F425E6-0764-4085-9B1C-C8DB9F2DD5FF",
+          "contour": [
+              {
+                  "x": 8675.000154360554,
+                  "y": 13849.9994410692
+              },
+              {
+                  "x": 8675.000503030175,
+                  "y": 12050
+              }
+          ]
+      },
+      {
+          "ID": "E79DF22E-20B5-4556-B9F3-D5B234F45965",
+          "contour": [
+              {
+                  "x": 9525.720187215473,
+                  "y": 16144.917822523435
+              },
+              {
+                  "x": 9576.028233119236,
+                  "y": 16144.91809690045
+              },
+              {
+                  "x": 10950,
+                  "y": 16144.918450649995
+              }
+          ]
+      },
+      {
+          "ID": "63E469C7-17ED-4EDD-93A3-E499D16E7D92",
+          "contour": [
+              {
+                  "x": -10750,
+                  "y": 28349.999912974512
+              },
+              {
+                  "x": -10750.000294377263,
+                  "y": 29750
+              }
+          ]
+      },
+      {
+          "ID": "A4D67C07-C26C-4D4B-A1B2-88D6F7C023C6",
+          "contour": [
+              {
+                  "x": -5900,
+                  "y": 28349.99997359543
+              },
+              {
+                  "x": -5899.999727973533,
+                  "y": 29700
+              }
+          ]
+      },
+      {
+          "ID": "13AE8D1C-28CD-4185-930B-AAD2DF13FD4D",
+          "contour": [
+              {
+                  "x": -21550,
+                  "y": 25600.00007694884
+              },
+              {
+                  "x": -20048.528850671883,
+                  "y": 25599.99992305116
+              }
+          ]
+      },
+      {
+          "ID": "36B546DA-4EBE-45F2-B412-EB8A87947FEF",
+          "contour": [
+              {
+                  "x": -20048.529096445724,
+                  "y": 19750.000206760626
+              },
+              {
+                  "x": -17500,
+                  "y": 19749.999793239378
+              }
+          ]
+      },
+      {
+          "ID": "40BDEB71-A2CA-435E-954C-E74CBF48AE6E",
+          "contour": [
+              {
+                  "x": -20048.528696027264,
+                  "y": 24049.99997880393
+              },
+              {
+                  "x": -18400,
+                  "y": 24049.999897143043
+              }
+          ]
+      },
+      {
+          "ID": "4E187F97-71EF-4DA8-A653-05A6CD1DE954",
+          "contour": [
+              {
+                  "x": -21200,
+                  "y": 21924.999613288586
+              },
+              {
+                  "x": -20048.528850671883,
+                  "y": 21924.99959638819
+              }
+          ]
+      },
+      {
+          "ID": "01E66400-CC70-4960-BDBE-930D1DD2B38C",
+          "contour": [
+              {
+                  "x": -25900.00037782012,
+                  "y": 28400.000022227236
+              },
+              {
+                  "x": -25899.999927588127,
+                  "y": 17400.000285813585
+              }
+          ]
+      },
+      {
+          "ID": "1676EBBD-B028-4DE1-8BB1-EFF4A0373B24",
+          "contour": [
+              {
+                  "x": -33510.1373706375,
+                  "y": 24050.000200092683
+              },
+              {
+                  "x": -24900,
+                  "y": 24049.999799907317
+              }
+          ]
+      },
+      {
+          "ID": "5E2FC932-008B-47D0-8311-BE0BEECE1434",
+          "contour": [
+              {
+                  "x": -27568.975026272605,
+                  "y": 21450.000324916396
+              },
+              {
+                  "x": -27495.784496126107,
+                  "y": 21450.00055946804
+              },
+              {
+                  "x": -25900.000000000065,
+                  "y": 21450.000944803065
+              }
+          ]
+      },
+      {
+          "ID": "6D094910-F54E-42A4-9349-FDD4E5D0F88C",
+          "contour": [
+              {
+                  "x": -33510.13751347238,
+                  "y": 19350.000209586866
+              },
+              {
+                  "x": -24800,
+                  "y": 19349.999790413134
+              }
+          ]
+      },
+      {
+          "ID": "D00FECB6-5B91-499B-B928-C3AD8E74541D",
+          "contour": [
+              {
+                  "x": -33510.13772271252,
+                  "y": 28399.999468402475
+              },
+              {
+                  "x": -24905.36619951768,
+                  "y": 28399.99961436448
+              }
+          ]
+      },
+      {
+          "ID": "36268912-F442-4645-B14F-CBECEA28037A",
+          "contour": [
+              {
+                  "x": -28550,
+                  "y": 13249.999900640356
+              },
+              {
+                  "x": -28492.638337208187,
+                  "y": 13246.298930457626
+              },
+              {
+                  "x": -27400,
+                  "y": 13249.999471766805
+              },
+              {
+                  "x": -27318.71725085017,
+                  "y": 9503.68289855568
+              },
+              {
+                  "x": -28080.032238194348,
+                  "y": 9200
+              },
+              {
+                  "x": -28142.21101753107,
+                  "y": 8582.9331470494
+              }
+          ]
+      },
+      {
+          "ID": "507CDEE6-8C73-4D3E-8162-A5C036DE31D7",
+          "contour": [
+              {
+                  "x": -27389.91718426927,
+                  "y": 10265.326900339323
+              },
+              {
+                  "x": -32914.05165207769,
+                  "y": 10265.326598284144
+              },
+              {
+                  "x": -33040.46337254075,
+                  "y": 8553.532816097206
+              }
+          ]
+      },
+      {
+          "ID": "44ACA6C5-8E43-4EF4-86B5-4A8EAC0A722B",
+          "contour": [
+              {
+                  "x": -15806.022772480732,
+                  "y": 23450
+              },
+              {
+                  "x": -14650,
+                  "y": 23450.00009740405
+              }
+          ]
+      },
+      {
+          "ID": "9E92F82C-6208-4E89-A978-97E08AF6496C",
+          "contour": [
+              {
+                  "x": -15806.023545637168,
+                  "y": 18200
+              },
+              {
+                  "x": -14700,
+                  "y": 18199.99997104158
+              }
+          ]
+      },
+      {
+          "ID": "C13C014C-EEA6-4480-9A33-3AD2F651DE06",
+          "contour": [
+              {
+                  "x": -15806.023373547636,
+                  "y": 21187.541769784362
+              },
+              {
+                  "x": -14650,
+                  "y": 21187.542221118805
+              }
+          ]
+      },
+      {
+          "ID": "6EA7C26F-4AF1-4C84-8DDF-2604DD010926",
+          "contour": [
+              {
+                  "x": 9522.615197714023,
+                  "y": 22100
+              },
+              {
+                  "x": 12100,
+                  "y": 22099.99965873204
+              }
+          ]
+      },
+      {
+          "ID": "9A721D0A-95B6-4ED5-91B0-F64A93FBD4FB",
+          "contour": [
+              {
+                  "x": 9522.615398063766,
+                  "y": 19769.495527839044
+              },
+              {
+                  "x": 12150,
+                  "y": 19769.495333750216
+              }
+          ]
+      }
+  ]
+
+  const rtus = [
+    {
+        "id": "964F09B7-E990-4E15-83C1-2D7D7023AA3D",
+        "x": 1450,
+        "y": 17550
+    },
+    {
+        "id": "C80C9647-1990-4413-A2A5-35C2943E9D34",
+        "x": -100,
+        "y": 14000
+    },
+    {
+        "id": "4F3D149E-2349-41C0-9441-F6EB7CB5A97A",
+        "x": 9350,
+        "y": 15900
+    },
+    {
+        "id": "400716D3-28C9-4F3D-AEDF-B97B6F1A5D6E",
+        "x": -16300,
+        "y": 28150
+    },
+    {
+        "id": "DE37237C-DEED-48CB-8C87-73638464258E",
+        "x": -27750,
+        "y": 21300
+    },
+    {
+        "id": "9182728A-26B2-4040-8740-7EB4E7221508",
+        "x": -28750,
+        "y": 13250
+    }
+  ];
+
+  function pipe_segments(pipe) {
+    return pipe.segments;
+  }
+  function *contour_segments(contour) {
+    let last = contour[0];
+    for (const p of contour.slice(1)) {
+      yield ({ lhs: last, rhs: p });
+      last = p;
+    }
+  }
+
+  for (const pipe of web) {
+    pipe.color = 'navy';
+  }
+
+
+  /* push all the lines out a little bit so we don't miss any junctions */
+  {
+    for (const pipe of web) {
+      const segments = JSON.parse(JSON.stringify([...contour_segments(pipe.contour)]));
+
+      /* create link shorthands between the nodes; obviously I could just juggle indices
+       * in the later code, but I find the shorthand and linked list mindset convenient */
+      for (let i = 0; i < segments.length; i++) {
+        segments[i].prev = segments[i - 1] ?? null;
+        segments[i].next = segments[i + 1] ?? null;
+      }
+
+      for (const seg of segments) {
+        let dx = seg.lhs.x - seg.rhs.x;
+        let dy = seg.lhs.y - seg.rhs.y;
+        let dlen = Math.sqrt(dx*dx + dy*dy);
+        dx /= dlen;
+        dy /= dlen;
+
+        seg.stretched_lhs = {};
+        seg.stretched_rhs = {};
+        seg.stretched_lhs.x = seg.lhs.x + dx * 200;
+        seg.stretched_lhs.y = seg.lhs.y + dy * 200;
+        seg.stretched_rhs.x = seg.rhs.x - dx * 200;
+        seg.stretched_rhs.y = seg.rhs.y - dy * 200;
+        seg.connections = [];
+      }
+
+      pipe.segments = segments;
+    }
+  }
+
+  /* find junctions */
+  const junctions = [];
+  {
+    for (const pipe of web) for (const pipe_seg of pipe_segments(pipe)) {
+      for (const near of web) if (near != pipe) for (const near_seg of pipe_segments(near)) {
+
+        if (pipe_seg.connections.some(x => x.segment == near_seg)) continue;
+
+        const j = line_hits_line(
+          pipe_seg.stretched_lhs, pipe_seg.stretched_rhs,
+          near_seg.stretched_lhs, near_seg.stretched_rhs
+        );
+
+        if (j) {
+          junctions.push(j)
+          pipe_seg.connections.push({ neighbor: near, segment: near_seg, junction: j });
+          near_seg.connections.push({ neighbor: pipe, segment: pipe_seg, junction: j });
+        }
+      }
+    }
+  }
+
+  let complete_paths = [];
+  {
+
+    for (const rtu of rtus) {
+    // for (const rtu of rtus.slice(1, 2)) {
+      for (const pipe of web) {
+
+        let closest_segment_dist = Infinity;
+        let closest_segment;
+        for (const pipe_segment of pipe_segments(pipe)) {
+          const dist = point_to_line(pipe_segment.lhs, pipe_segment.rhs, rtu.x, rtu.y);
+          if (dist > RTU_SIZE) continue;
+          if (dist > closest_segment_dist) continue;
+
+          closest_segment_dist = dist;
+          closest_segment      = pipe_segment;
+        }
+
+        if (!closest_segment) continue;
+
+        /* we found a pipe directly connected to an RTU
+         * now we want to recursively go to each of its outputs,
+         * and return a complete path from beginning to end for each possible one. */
+
+        pipe.color = 'blue';
+
+        const lhs_dist = point_to_point2(closest_segment.lhs.x, closest_segment.lhs.y, rtu.x, rtu.y);
+        const rhs_dist = point_to_point2(closest_segment.rhs.x, closest_segment.rhs.y, rtu.x, rtu.y);
+        const base = (lhs_dist < rhs_dist) ? closest_segment.lhs : closest_segment.rhs;
+
+        let seen = new Set();
+        let frontier = [];
+        {
+          const path = [base];
+          const segment = closest_segment;
+          const direction = (base == closest_segment.lhs) ? 'next' : 'prev';
+          frontier.push({ path, segment, direction });
+        }
+
+        while (frontier.length) {
+          let { path, segment, direction } = frontier.pop();
+
+          if (seen.has(segment)) continue;
+          seen.add(segment);
+
+          if (direction == 'next' || direction == 'both') {
+            if (segment.next) {
+              frontier.push({ path: [...path, segment.rhs], segment: segment.next, direction });
+            } else {
+              complete_paths.push([...contour_segments([...path, segment.rhs])]);
+            }
+          }
+
+          if (direction == 'prev' || direction == 'both') {
+            if (segment.prev) {
+              frontier.push({ path: [...path, segment.lhs], segment: segment.prev, direction });
+            } else {
+              complete_paths.push([...contour_segments([...path, segment.lhs])]);
+            }
+          }
+
+          for (const connection of segment.connections) {
+            frontier.push({ path: [...path, connection.junction], segment: connection.segment, direction: 'both' });
+          }
+        }
+
+        // while (frontier.length) {
+        //   let { path, segment } = frontier.pop();
+
+        //   if (seen.has(segment)) continue;
+        //   seen.add(segment);
+
+        //   if (segment.next) {
+        //     if (!seen.has(segment.next))
+        //       frontier.push({ path: [...path, segment.lhs, segment.rhs], segment: segment.next });
+        //   } else {
+        //     const last = path[path.length - 1];
+        //     path = [...path, (last == segment.lhs) ? segment.rhs : segment.lhs];
+        //   }
+
+        //   if (path.length > 1)
+        //     complete_paths.push([...contour_segments(path)]);
+
+        //   if (0) for (const link of segment.connections) {
+        //     if (seen.has(link.segment)) continue;
+        //     frontier.push({ path: [...path, link.junction], segment: link.segment });
+        //   }
+        // }
+
+        // (function walk(contour_from_start, segment, direction) {
+
+        //   const base = (direction == 'next') ? segment.lhs : segment.rhs;
+        //   const end  = (direction == 'next') ? segment.rhs : segment.lhs;
+        //   const dead_end = segment[direction] == null;
+        //   // contour_from_start
+
+        //   if (contour_from_start.some(j => j.x == base.x && j.y == base.y)) return;
+        //   if (contour_from_start.some(j => j.x ==  end.x && j.y ==  end.y)) return;
+
+        //   /* continue in this direction */
+        //   if (!dead_end) {
+        //     walk([...contour_from_start, base], segment[direction], direction);
+        //   }
+
+        //   /* walk connections */
+        //   for (const connection of segment.connections) {
+        //     const linked = connection.segment;
+        //     const junc   = connection.junction;
+        //     if (linked == segment) continue;
+
+        //     // if (linked.connections.length > 1) continue;
+
+        //     const drive_thru = [...contour_from_start, base, junc];
+
+        //     // complete_paths.push([...contour_segments([...drive_thru, linked.lhs])]);
+        //     // complete_paths.push([...contour_segments([...drive_thru, linked.rhs])]);
+
+        //     // walk(drive_thru, linked, 'next');
+        //     // walk(drive_thru, linked, 'prev');
+
+        //     for (const friends_friendship of linked.connections) {
+
+        //       const friend_of_friend = friends_friendship.segment;
+
+        //       if (friend_of_friend == segment) continue;
+
+        //       const turn = friends_friendship.junction;
+
+        //       // walk([...drive_thru, turn], friend_of_friend, 'next');
+        //       // walk([...drive_thru, turn], friend_of_friend, 'prev');
+
+        //       // complete_paths.push([...contour_segments([...drive_thru, turn, friend_of_friend.lhs])]);
+        //       // complete_paths.push([...contour_segments([...drive_thru, turn, friend_of_friend.rhs])]);
+        //     }
+
+        //     // walk([...contour_from_start, base, junc], linked, direction);
+        //     // walk([...contour_from_start, junc], linked, 'prev');
+        //   }
+
+        //   if (dead_end) {
+        //     contour_from_start = [...contour_from_start, base, end];
+        //     complete_paths.push([...contour_segments(contour_from_start)]);
+        //   }
+        // })([base], closest_segment, direction);
+
+
+        // break; /* TEMPORARY */
+
+      }
+    }
+  }
+  // complete_paths = [complete_paths[0]];
+
+  let ctx;
+  const canvas = document.createElement("canvas");
+  document.body.prepend(canvas);
+  (window.onresize = () => {
+    canvas.style.width  = window.innerWidth + 'px';
+    canvas.style.height = window.innerHeight + 'px';
+    canvas.width  = window.innerWidth  *  window.devicePixelRatio;
+    canvas.height = window.innerHeight *  window.devicePixelRatio;
+
+    ctx = canvas.getContext("2d");
+  })();
+
+  let cam_x = 9900;
+  let cam_y = 18000;
+  let cam_scale = 0.06;
+  let mouse_down_cam_x = 0;
+  let mouse_down_cam_y = 0;
+  let mouse_down_x = 0;
+  let mouse_down_y = 0;
+  let mouse_x = 0;
+  let mouse_y = 0;
+  let mouse_down = false;
+  canvas.onwheel = ev => {
+    cam_scale -= 0.0005*ev.deltaY*cam_scale;
+    cam_scale = Math.min(3.00, cam_scale);
+    cam_scale = Math.max(0.01, cam_scale);
+  }
+  canvas.onmousedown = ev => {
+    if (ev.button != 0) return;
+    mouse_down = true;
+    mouse_down_x = ev.clientX;
+    mouse_down_y = ev.clientY;
+    mouse_down_cam_x = cam_x;
+    mouse_down_cam_y = cam_y;
+  }
+  canvas.onmousemove = ev => {
+    mouse_x = ev.clientX * window.devicePixelRatio;
+    mouse_y = ev.clientY * window.devicePixelRatio;
+    if (!mouse_down) return;
+    const delta_x = ev.clientX - mouse_down_x;
+    const delta_y = ev.clientY - mouse_down_y;
+    cam_x = mouse_down_cam_x + delta_x * window.devicePixelRatio / cam_scale;
+    cam_y = mouse_down_cam_y + delta_y * window.devicePixelRatio / cam_scale;
+  }
+  window.onmouseup = ev => {
+    if (ev.button != 0) return;
+    mouse_down = false;
+  }
+
+  const particles = [];
+
+  let dt_accumulator = 0;
+  let last_ts;
+  requestAnimationFrame(function frame(ts) {
+    requestAnimationFrame(frame);
+
+    last_ts ??= ts;
+    const dt = ts - last_ts;
+    dt_accumulator += dt;
+    last_ts = ts;
+
+    if (dt_accumulator > 1000) {
+      // const path = complete_paths[Math.floor(Math.random() * complete_paths.length)];
+
+      for (const path of complete_paths) {
+        particles.push({ x: path[0].lhs.x, y: path[0].lhs.y, path, spawn_ts: ts });
+        dt_accumulator = 0;
+      }
+    }
+
+    for (let i = 0; i < particles.length; i++) {
+      const p = particles[i];
+      const t = ts - p.spawn_ts;
+
+      const speed = 1;
+      let progress = t * speed;
+      for (const { lhs, rhs } of p.path) {
+        const len = Math.sqrt((lhs.x - rhs.x)*(lhs.x - rhs.x) + (lhs.y - rhs.y)*(lhs.y - rhs.y));
+        if (progress > len) {
+          progress -= len;
+          continue;
+        }
+        p.x = lerp(lhs.x, rhs.x, progress / len);
+        p.y = lerp(lhs.y, rhs.y, progress / len);
+        progress -= len;
+        break;
+      }
+
+      if (progress > 0) {
+        particles.splice(i, 1);
+        i--;
+      }
+    }
+
+    ctx.save();
+    {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      ctx.translate( canvas.width*0.5,  canvas.height*0.5);
+      ctx.scale(cam_scale, cam_scale);
+      ctx.translate(-canvas.width*0.5, -canvas.height*0.5);
+
+      ctx.translate(cam_x, cam_y);
+
+      {
+        ctx.font = '600px monospace';
+        ctx.fillStyle = 'black';
+        const x = -33000;
+        const y = -6000;
+        const space = 1200;
+        ctx.fillText("This program takes two inputs, a list of contours (line segment arrays), and a list of hubs (shown here as blue circles).", x, y);
+        ctx.fillText("First, it finds the locations where the contours overlap (purple circles) and which contours touch the hubs (brighter blue lines).", x, y + space);
+        ctx.fillText("Finally, it walks the resulting graph and makes a set of paths. Red particles are then marched over these paths.", x, y + space * 2);
+      }
+
+      ctx.scale(1, -1);
+
+      const mouse = ctx.getTransform().inverse().transformPoint(new DOMPoint(mouse_x, mouse_y));
+      let hovered;
+
+      if (!mouse_down) {
+        for (const pipe of web) {
+          for (const segment of pipe_segments(pipe)) {
+            const { lhs, rhs } = segment;
+            ctx.beginPath()
+            ctx.moveTo(lhs.x, lhs.y);
+            ctx.lineTo(rhs.x, rhs.y);
+
+            const hover = point_to_line(lhs, rhs, mouse.x, mouse.y) < 100;
+            if (hover) hovered = segment;
+            ctx.lineWidth = 100;
+            ctx.strokeStyle = hover ? 'red' : pipe.color;
+            ctx.stroke();
+
+          }
+        }
+
+        for (const rtu of rtus) {
+
+          ctx.beginPath()
+          ctx.arc(rtu.x, rtu.y, RTU_SIZE, 0, Math.PI*2);
+          ctx.closePath();
+
+          ctx.fillStyle = "navy";
+          ctx.fill();
+        }
+
+        for (const j of junctions) {
+
+          ctx.beginPath()
+          ctx.arc(j.x, j.y, 130, 0, Math.PI*2);
+          ctx.closePath();
+
+          ctx.fillStyle = "magenta";
+          ctx.fill();
+        }
+
+        if (hovered) {
+          for (const c of hovered.connections) {
+            const { lhs, rhs } = c.segment;
+
+            ctx.beginPath()
+            ctx.moveTo(lhs.x, lhs.y);
+            ctx.lineTo(rhs.x, rhs.y);
+
+            ctx.lineWidth = 150;
+            ctx.strokeStyle = 'orange';
+            ctx.stroke();
+          }
+
+          for (let step = hovered; step = step.next;) {
+            const { lhs, rhs } = step;
+
+            ctx.beginPath()
+            ctx.moveTo(lhs.x, lhs.y);
+            ctx.lineTo(rhs.x, rhs.y);
+
+            ctx.lineWidth = 150;
+            ctx.strokeStyle = 'chartreuse';
+            ctx.stroke();
+          }
+
+          for (let step = hovered; step = step.prev;) {
+            const { lhs, rhs } = step;
+
+            ctx.beginPath()
+            ctx.moveTo(lhs.x, lhs.y);
+            ctx.lineTo(rhs.x, rhs.y);
+
+            ctx.lineWidth = 150;
+            ctx.strokeStyle = 'cyan';
+            ctx.stroke();
+          }
+
+          ctx.font = '600px monospace';
+          ctx.fillStyle = 'black';
+          ctx.translate(0, mouse.y);
+          ctx.scale(1, -1);
+          ctx.strokeStyle = 'white';
+          ctx.lineWidth = 75;
+          let str = hovered.connections.length + ' connections';
+          ctx.strokeText(str, mouse.x, 0);
+          ctx.fillText(str, mouse.x, 0);
+          ctx.scale(1, -1);
+          ctx.translate(0, -mouse.y);
+        }
+      } else {
+        ctx.globalAlpha = 0.1;
+        for (const path of complete_paths) {
+          for (const { lhs, rhs } of path) {
+            ctx.beginPath()
+            ctx.moveTo(lhs.x, lhs.y);
+            ctx.lineTo(rhs.x, rhs.y);
+
+            ctx.lineWidth = 100;
+            ctx.strokeStyle = 'black';
+            ctx.stroke();
+          }
+        }
+      }
+
+      for (const j of particles) {
+        ctx.beginPath()
+        ctx.arc(j.x, j.y, 130, 0, Math.PI*2);
+        ctx.closePath();
+
+        ctx.fillStyle = "red";
+        ctx.fill();
+      }
+
+    }
+    ctx.restore();
+  });
+}
+
+/* squared distance from point to point (dot product with itself) */
+function point_to_point2(x0, y0, x1, y1) {
+  return Math.pow(x0 - x1, 2) + Math.pow(y0 - y1, 2);
+}
+/* squared distance from point to line */
+function point_to_line2(v, w, p_x, p_y) {
+  const l2 = point_to_point2(v.x, v.y, w.x, w.y);
+  if (l2 == 0) return point_to_point2(p_x, p_y, v.x, v.y);
+
+  let t = ((p_x - v.x) * (w.x - v.x) + (p_y - v.y) * (w.y - v.y)) / l2;
+  t = Math.max(0, Math.min(1, t));
+  return point_to_point2(
+    p_x, p_y,
+    v.x + t * (w.x - v.x),
+    v.y + t * (w.y - v.y)
+  );
+}
+function point_to_point(x0, y0, x1, y1) { return Math.sqrt(point_to_point2(x0, y0, x1, y1)); }
+function point_to_line (from, to, x, y) { return Math.sqrt(point_to_line2 (from, to, x, y)); }
+function line_hits_line(from0, to0, from1, to1) {
+  const a = from0.x, b = from0.y,
+        c =   to0.x, d =   to0.y,
+        p = from1.x, q = from1.y,
+        r =   to1.x, s =   to1.y;
+  let det, gamma, lambda;
+  det = (c - a) * (s - q) - (r - p) * (d - b);
+  if (det === 0) {
+    return false;
+  } else {
+    lambda = ((s - q) * (r - a) + (p - r) * (s - b)) / det;
+    gamma = ((b - d) * (r - a) + (c - a) * (s - b)) / det;
+
+    if ((0 < lambda && lambda < 1) && (0 < gamma && gamma < 1))
+      return { x: lerp(from0.x, to0.x, lambda), y: lerp(from0.y, to0.y, lambda) };
+
+    return false;
+  }
+}
+/* returns distance from line to line */
+function line_to_line(from0, to0, from1, to1) {
+  if (line_hits_line(from0, to0, from1, to1))
+    return 0;
+  return Math.min(
+    point_to_line(from0, to0, from1.x, from1.y),
+    point_to_line(from0, to0,   to1.x,   to1.y),
+    point_to_line(from1, to1, from0.x, from0.y),
+    point_to_line(from1, to1,   to0.x,   to0.y)
+  );
+}
+
+function lerp(v0, v1, t) { return (1 - t) * v0 + t * v1; }
+
+    </script>
+  </body>
+</html>
