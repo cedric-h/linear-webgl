@@ -1,0 +1,349 @@
+<!-- vim: sw=4 ts=4 expandtab smartindent ft=javascript
+-->
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>ced's garden</title>
+    <style> document, body { margin: 0px; padding: 0px; overflow: hidden; background-color: black; } </style>
+  </head>
+
+  <body>
+    <canvas id="game_canvas"></canvas>
+    <script>"use strict";
+const DEBUG = false
+
+const canvas = document.getElementById("game_canvas");
+(window.onresize = () => {
+    canvas.height = window.innerHeight
+    canvas.width = window.innerWidth
+})()
+
+const ctx = canvas.getContext('2d');
+
+function center_fill_text(text, x, y) {
+    ctx.textBaseline = 'bottom';
+    const m = ctx.measureText(text);
+    const h = m.actualBoundingBoxAscent - m.actualBoundingBoxDescent;
+    ctx.fillText(text, x - m.width/2, y + h/2)
+    return m;
+}
+function center_fill_rect(x, y, w, h) { ctx.fillRect(x - w /2, y - h /2, w, h) }
+
+const save = {
+    bank: 0,
+
+    plants: [{ x: 0.5 * canvas.width +   0, y: 0.5 * canvas.height +   0, coins: 3, numb_max: 0 }],
+    ponds : [{ x: 0.5 * canvas.width + 300, y: 0.5 * canvas.height - 300 }],
+    jars  : [{ x: 0.5 * canvas.width - 300, y: 0.5 * canvas.height + 300 }],
+    shoes : [{ x: 0.5 * canvas.width - 400, y: 0.5 * canvas.height + 200, center_x: null, center_y: null }],
+    coins : [{ x: 0.5 * canvas.width - 300, y: 0.5 * canvas.height - 300 }],
+};
+
+let hovered_next   = null;                /* thing in the game that's hovered next frame */
+let hovered        = null;                /* thing in the game that's hovered this frame */
+let mouse_down     = false;               /* true while the mouse is down */
+let mouse_released = false;               /* true for one frame immediately after the mouse is released */
+let mouse_clicked  = false;               /* true for one frame immediately after the mouse is pressed down */
+let mouse_x        = 0, mouse_y      = 0;
+let mouse_down_x   = 0, mouse_down_y = 0; /* the mouse's position when the mouse went down */
+window.onmousedown = ev => {
+    mouse_x = mouse_down_x = ev.pageX;
+    mouse_y = mouse_down_y = ev.pageY;
+    mouse_clicked = mouse_down = true;
+}
+window.onmousemove = ev => {
+    mouse_x = ev.pageX;
+    mouse_y = ev.pageY;
+}
+window.onmouseup = ev => {
+    mouse_down     = false;
+    mouse_released = true;
+}
+
+function draw_item(emoji, size, x, y, is_hovered) {
+    ctx.font = size + 'px serif';
+
+
+    if (is_hovered) {
+        ctx.globalAlpha = 1.0;
+        ctx.filter = 'contrast(0) brightness(0) blur(1px)';
+        center_fill_text(emoji, x, y)
+    } else {
+        ctx.globalAlpha = 0.2;
+        ctx.filter = 'contrast(0) brightness(0) blur(3px)';
+        center_fill_text(emoji, x, y)
+    }
+
+    ctx.globalAlpha = 1.0;
+    ctx.filter = 'none';
+    const measure = center_fill_text(emoji, x, y)
+
+    let hover = true;
+    {
+        const mouse = ctx.getTransform().inverse().transformPoint(new DOMPoint(mouse_x, mouse_y));
+        const size_y = measure.actualBoundingBoxAscent - measure.actualBoundingBoxDescent;
+        const size_x = measure.width;
+        hover &&= ((mouse.x - x) > -size_x*0.5 && (mouse.x - x) < size_x*0.5);
+        hover &&= ((mouse.y - y) > -size_y*0.5 && (mouse.y - y) < size_y*0.5);
+    }
+    return hover;
+}
+
+let last_timestamp;
+requestAnimationFrame(function frame(timestamp) {
+    requestAnimationFrame(frame);
+
+    last_timestamp ??= timestamp;
+    const dt = (timestamp - last_timestamp)/1000;
+    last_timestamp = timestamp;
+
+    /* background */
+    {
+        ctx.filter = 'none';
+        ctx.fillStyle = 'hsl(125, 37%, 20%)'; /* background */
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+    }
+
+    /* bank counter */
+    {
+        const text = save.bank + '🪙';
+        ctx.font = '30px monospace';
+        ctx.textAlign = 'right';
+        ctx.textBaseline = 'top';
+        ctx.fillStyle = 'black';
+        ctx.strokeStyle = 'white';
+        ctx.lineWidth = 2;
+        ctx.strokeText(text, canvas.width, 8);
+        ctx.globalAlpha = 1.0;
+        ctx.fillText(text, canvas.width, 8);
+
+        ctx.textAlign = 'left';
+    }
+
+    hovered_next = null;
+    {
+        for (const plant of save.plants) {
+            let { x, y } = plant;
+
+            ctx.save();
+            if (hovered == plant && mouse_down) {
+                const pivot_y = -20;
+                y -= pivot_y;
+                ctx.translate(x, y - pivot_y);
+
+                let start_rot;
+                {
+                    const dx = x - mouse_down_x;
+                    const dy = Math.max(0, y - mouse_down_y);
+                    start_rot = Math.atan2(dy, dx) - Math.PI*0.5;
+                }
+
+                let now_rot;
+                {
+                    const dx = x - mouse_x;
+                    const dy = Math.max(0, y - mouse_y);
+                    now_rot = Math.atan2(dy, dx) - Math.PI*0.5;
+                }
+
+                const rot = now_rot - start_rot;
+                const clamped_rot = Math.max(-0.6, Math.min(0.6, rot));
+                ctx.rotate(clamped_rot);
+                if (rot != clamped_rot && Math.sign(rot) != plant.numb_max) {
+                    plant.numb_max = Math.sign(rot);
+                    if (plant.coins > 0) {
+                        plant.coins--;
+                        save.coins.push({ x: x + plant.numb_max * lerp(25, 80, Math.random()), y: y + 30 })
+                    }
+                }
+
+                x = 0;
+                y = pivot_y * 2;
+            }
+
+            if (draw_item('🪴', 100, x, y, hovered == plant)) {
+                hovered_next = plant;
+            }
+            switch (plant.coins) {
+                default:
+                case 3: ctx.font = '16px serif'; center_fill_text('🪙', x - 10, y -  5);
+                case 2: ctx.font = '18px serif'; center_fill_text('🪙', x - 20, y - 25);
+                case 1: ctx.font = '20px serif'; center_fill_text('🪙', x + 25, y - 15);
+                case 0: break;
+            }
+
+            ctx.restore();
+        }
+
+        for (const pond of save.ponds) {
+            const { x, y } = pond;
+
+            ctx.font = '40px serif';
+            center_fill_text('🌊', x +  0, y + 80);
+            center_fill_text('🌊', x + 30, y + 80);
+            center_fill_text('🌊', x - 30, y + 80);
+            if (draw_item('🎣', 80, x, y, hovered == pond)) {
+                hovered_next = pond;
+            }
+        }
+
+        for (const jar of save.jars) {
+            let { x, y } = jar;
+
+            if (hovered == jar && (mouse_down || mouse_released)) {
+                x += mouse_x - mouse_down_x;
+                y += mouse_y - mouse_down_y;
+
+                if (mouse_released) {
+                    jar.x = x;
+                    jar.y = y;
+                }
+            }
+
+            if (draw_item('🫙', 80, x, y, hovered ==  jar)) {
+                hovered_next = jar;
+            }
+        }
+
+        for (const shoe of save.shoes) {
+            let { x, y } = shoe;
+
+            const max_dist_from_mouse = 50;
+
+            if (hovered == shoe && (mouse_down || mouse_released)) {
+
+                ctx.filter = 'none';
+                ctx.fillStyle = 'black';
+                center_fill_rect(shoe.center_x, shoe.center_y, 10, 10);
+                
+                ctx.save();
+                ctx.translate(mouse_x, mouse_y);
+                {
+                    const dx = shoe.center_x - mouse_x;
+                    const dy = shoe.center_y - mouse_y;
+                    const rot = Math.atan2(dy, dx) - Math.PI*2;
+                    ctx.rotate(rot);
+                }
+
+                shoe.center_y += 1; /* gravity */
+
+                /* distance from mouse constraint */
+                {
+
+                    let dx = shoe.center_x - mouse_x;
+                    let dy = shoe.center_y - mouse_y;
+                    const len = Math.sqrt(dx*dx + dy*dy);
+
+                    if (len > max_dist_from_mouse) {
+                        dx /= len, dy /= len;
+                        shoe.center_x = mouse_x + dx * max_dist_from_mouse;
+                        shoe.center_y = mouse_y + dy * max_dist_from_mouse;
+                    }
+                }
+
+                if (mouse_released) {
+                    /* TODO: leave it EXACTLY where it needs to be */
+                    shoe.x = x + (mouse_x - mouse_down_x);
+                    shoe.y = y + (mouse_y - mouse_down_y);
+                }
+
+                if (draw_item('👞', 80, x - mouse_down_x, y - mouse_down_y, hovered == shoe)) {
+                    hovered_next = shoe;
+                    ctx.restore();
+                    continue;
+                }
+            }
+
+            ctx.save();
+
+
+            if (draw_item('👞', 80, x, y, hovered == shoe)) {
+                hovered_next = shoe;
+                shoe.center_x = mouse_x + max_dist_from_mouse;
+                shoe.center_y = mouse_y;
+            }
+
+            ctx.restore();
+        }
+
+        if (0) for (const shoe of save.shoes) {
+            let { x, y } = shoe;
+
+            if (hovered == shoe && (mouse_down || mouse_released)) {
+                x += mouse_x - mouse_down_x;
+                y += mouse_y - mouse_down_y;
+
+                ctx.save();
+                ctx.translate(mouse_x, mouse_y);
+                ctx.rotate(shoe.rot);
+                const relative = ctx.getTransform().inverse().transformPoint(new DOMPoint(x, y));
+                const relative_x = relative.x;
+                const relative_y = relative.y;
+
+                {
+                    let rot;
+                    {
+                        const dx = x - mouse_x;
+                        const dy = y - mouse_y;
+                        rot = Math.atan2(dy, -dx) - Math.PI*0.5;
+                    }
+
+                    let delta = Math.abs(radian_distance(shoe.rot, rot));
+                    if (delta != 0) {
+                        const t = Math.min(0.06, delta) / delta;
+                        shoe.rot = radian_lerp(shoe.rot, rot, t);
+                    }
+                }
+
+                if (draw_item('👞', 80, relative_x, relative_y, hovered == shoe)) {
+                    hovered_next = shoe;
+                }
+
+                if (mouse_released) {
+                    const p = ctx.getTransform().transformPoint(new DOMPoint(relative_x, relative_y));
+                    shoe.x = p.x;
+                    shoe.y = p.y;
+                }
+
+                ctx.restore();
+
+                continue;
+            }
+
+            ctx.save();
+            ctx.translate(x, y);
+            ctx.rotate(shoe.rot);
+            if (draw_item('👞', 80, 0, 0, hovered == shoe)) {
+                hovered_next = shoe;
+            }
+            ctx.restore();
+        }
+
+        for (let i = 0; i < save.coins.length; i++) {
+            let { x, y } = save.coins[i];
+
+            if (draw_item('🪙', 20, x, y, false)) {
+                save.bank++;
+                save.coins.splice(i--, 1);
+            }
+        }
+    }
+    if (!mouse_down) hovered = hovered_next;
+
+    mouse_released = false;
+    mouse_clicked = false;
+})
+
+function lerp(v0, v1, t) { return (1 - t) * v0 + t * v1; }
+function radian_distance(a, b) {
+    const fmodf = (l, r) => l % r;
+    let difference = fmodf(b - a, Math.PI*2.0);
+    return fmodf(2.0 * difference, Math.PI*2.0) - difference;
+}
+function radian_lerp(a, b, t) {
+    return a + radian_distance(a, b) * t;
+}
+
+    </script>
+  </body>
+</html>
