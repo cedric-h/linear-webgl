@@ -381,16 +381,17 @@ for (const floor of data.floors) {
 }
 
 let input = {
-  zoom:   Math.sqrt((bounds.x.min - bounds.x.max)*(bounds.x.min - bounds.x.max) +
-                    (bounds.y.min - bounds.y.max)*(bounds.y.min - bounds.y.max))*1.2,
+  // zoom:   Math.sqrt((bounds.x.min - bounds.x.max)*(bounds.x.min - bounds.x.max) +
+  //                   (bounds.y.min - bounds.y.max)*(bounds.y.min - bounds.y.max))*1.2,
+  zoom: 10,
   scroll: 0,
 
   pitch:  Math.PI*0.70,
   yaw:   -Math.PI*0.22,
   eye: [0, 0, 0, 1],
 
-  cam_pivot_x: (bounds.x.min + bounds.x.max) * 0.5,
-  cam_pivot_y: (bounds.y.min + bounds.y.max) * 0.5,
+  cam_pivot_x: 0,// (bounds.x.min + bounds.x.max) * 0.5,
+  cam_pivot_y: 0,// (bounds.y.min + bounds.y.max) * 0.5,
   cam_pivot_z: 0,
 
   dampedEvent: { button: 0, movementX: 0, movementY: 0 },
@@ -535,20 +536,9 @@ requestAnimationFrame(function render(timestamp) {
     }
   }
 
-  const ORTHO = false;
   const mvp = mat4_create();
   const scratch = mat4_create();
   {
-    const model = mat4_create();
-    {
-      // mat4_from_z_rotation(model, input.pitch);
-
-      // mat4_from_y_rotation(scratch, input.yaw);
-      // mat4_mul(model, scratch, model);
-
-      mat4_mul(model, scratch, model);
-    }
-
     {
       const FIELD_OF_VIEW = 50 / 180 * Math.PI;
       const ar = window.innerWidth / window.innerHeight;
@@ -580,7 +570,7 @@ requestAnimationFrame(function render(timestamp) {
       }
 
       mat4_mul(mvp, projection, view);
-      mat4_mul(mvp, mvp, model);
+      debugger;
     }
   }
 
