@@ -1,0 +1,29 @@
+<!-- vim: sw=2 ts=2 expandtab smartindent ft=javascript
+-->
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>css animation</title>
+    <style>
+document, body { margin: 0px; padding: 0px; overflow: hidden; }
+
+@keyframes loading_dots {
+    0% { content: ''; }
+   33% { content: '.'; }
+   66% { content: '..'; }
+  100% { content: '...'; }
+}
+
+.loading_dots::after {
+    content: '';
+    animation: 1s linear 0s infinite loading_dots;
+}
+
+    </style>
+  </head>
+
+  <body>
+    <div class="loading_dots"> hi </div>
+  </body>
+</html>
