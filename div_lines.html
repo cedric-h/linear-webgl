@@ -1,0 +1,87 @@
+<!-- vim: sw=2 ts=2 expandtab smartindent ft=javascript
+-->
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>drawing lines with divs</title>
+    <style> document, body { margin: 0px; padding: 0px; overflow: hidden; } </style>
+  </head>
+
+  <body>
+    <canvas id="glcanvas"></canvas>
+    <script>"use strict";
+
+const contours = [
+    [
+        { x: 100, y: 100 },
+        { x: 500, y: 100 },
+        { x: 500, y: 500 },
+        { x: 800, y: 500 },
+    ],
+]
+contours.push(contours[0].map(p => ({ x: p.x + 100, y: p.y + 100 })));
+contours.push(contours[0].map(p => ({ x: (p.x - 100) * 0.5 + 150, y: (p.y - 100) * 0.5 + 150 })));
+
+function *segments_from_contour(contour) {
+    let last = contour[0];
+    for (let i = 1; i < contour.length; i++) {
+        yield [last, contour[i]];
+        last = contour[i];
+    }
+}
+
+document.body.style.backgroundColor = '#999'
+for (const path of contours) {
+  for (const [lhs, rhs] of segments_from_contour(path)) {
+    let div_shadow, div = document.createElement('div');
+    const shadow_color = 'rgba(0, 0, 0, 0.7)';
+    {
+      div.style.position = 'absolute';
+
+      const size = 3;
+      div.style.left   = (Math.min(lhs.x, rhs.x) - size*0.5) + 'px';
+      div.style.top    = (Math.min(lhs.y, rhs.y) - size*0.5) + 'px';
+      div.style.width  = Math.abs(lhs.x - rhs.x) + size      + 'px';
+      div.style.height = Math.abs(lhs.y - rhs.y) + size      + 'px';
+
+      const direction = (Math.abs(lhs.x - rhs.x) > Math.abs(lhs.y - rhs.y)) ? 'left' : 'bottom';
+      div.style.backgroundImage = `repeating-linear-gradient(to ${direction}, white, white 5px, transparent 5px, transparent 10px)`;
+
+      div_shadow = div.cloneNode();
+      div_shadow.style.backgroundImage = `repeating-linear-gradient(to ${direction}, ${shadow_color}, ${shadow_color} 5px, transparent 5px, transparent 10px)`;
+      div_shadow.style.left   = parseInt(div.style.left) + 2.5 + 'px';
+      div_shadow.style.top    = parseInt(div.style.top ) + 2.5 + 'px';
+      div_shadow.style.filter = 'blur(4px)';
+    }
+
+    document.body.append(div_shadow, div);
+
+    for (const p of path) {
+      let circle_shadow, circle = document.createElement('div');
+      {
+        circle.style.position = 'absolute';
+        const size = 8 * 2;
+        const border_thickness = 2.5;
+        circle.style.border       = border_thickness + 'px solid white';
+        circle.style.borderRadius = '100%';
+        circle.style.left         = (p.x - size*0.5 - border_thickness) + 'px';
+        circle.style.top          = (p.y - size*0.5 - border_thickness) + 'px';
+        circle.style.width        = size + 'px';
+        circle.style.height       = size + 'px';
+
+        circle_shadow  = circle.cloneNode();
+        circle_shadow.style.left   = parseInt(circle.style.left) + 1 + 'px';
+        circle_shadow.style.top    = parseInt(circle.style.top ) + 3 + 'px';
+        circle_shadow.style.border = `${border_thickness}px solid ${shadow_color}`;
+        circle_shadow.style.opacity = 0.2;
+        circle_shadow.style.filter = 'blur(4px)';
+      }
+      document.body.append(circle_shadow, circle);
+    }
+  }
+}
+
+    </script>
+  </body>
+</html>
