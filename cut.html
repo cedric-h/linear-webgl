@@ -1,0 +1,67 @@
+<!-- vim: sw=2 ts=2 expandtab smartindent ft=javascript
+-->
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Canvas Demo</title>
+    <style> document, body { margin: 0px; padding: 0px; overflow: hidden; } </style>
+  </head>
+
+  <body>
+    <canvas id="glcanvas"></canvas>
+    <script>"use strict";
+
+const canvas = document.getElementById("glcanvas");
+const ctx = canvas.getContext('2d');
+(window.onresize = () => {
+   canvas.width = window.innerWidth*window.devicePixelRatio;
+   canvas.height = window.innerHeight*window.devicePixelRatio;
+   canvas.style.width = window.innerWidth + 'px';
+   canvas.style.height = window.innerHeight + 'px';
+ })();
+
+requestAnimationFrame(function render(now) {
+  requestAnimationFrame(render);
+
+  /* fill background */
+  ctx.fillStyle = '#555656';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  /* parameters for the cut */
+  const width     = 500.0;
+  const height    =   7.5;
+  const cut_taper = 100.0;
+  {
+    ctx.save();
+    ctx.translate(20, 20);
+
+    const gradient = ctx.createLinearGradient(0, 0, 0, height*2);
+    gradient.addColorStop(0.000, "#3d3d3d");
+    gradient.addColorStop(0.500, "#787878");
+    gradient.addColorStop(1.000, "#717171");
+
+    {
+      ctx.beginPath();
+      const l = 0 + (cut_taper / width);
+      const r = 1 - (cut_taper / width);
+
+      ctx.moveTo(   l*width, 0.0*height);
+      ctx.lineTo(0.00*width, 0.5*height);
+      ctx.lineTo(1.00*width, 0.5*height);
+      ctx.lineTo(   r*width, 0.0*height);
+
+      ctx.moveTo(   l*width, 1.0*height);
+      ctx.lineTo(0.00*width, 0.5*height);
+      ctx.lineTo(1.00*width, 0.5*height);
+      ctx.lineTo(   r*width, 1.0*height);
+      ctx.fillStyle = gradient;
+      ctx.fill();
+    }
+
+    ctx.restore();
+  }
+})
+    </script>
+  </body>
+</html>
