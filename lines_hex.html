@@ -1,0 +1,243 @@
+<!-- vim: sw=4 ts=4 expandtab smartindent ft=javascript
+-->
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>WebGL Demo</title>
+    <style> document, body { margin: 0px; padding: 0px; overflow: hidden; } </style>
+  </head>
+
+  <body>
+    <canvas id="glcanvas"></canvas>
+    <script>
+const canvas = document.getElementById('glcanvas');
+const gl = canvas.getContext('webgl2', {antialias: true});
+if (!gl) { alert('Failed to initialize WebGL'); }
+
+(window.onresize = () => {
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+
+    /* account for e.g. high-retina macbook screens */
+    if (window.devicePixelRatio > 1) {
+        canvas.style.width = `${canvas.width}px`;
+        canvas.style.height = `${canvas.height}px`;
+        canvas.width *= window.devicePixelRatio;
+        canvas.height *= window.devicePixelRatio;
+    }
+
+    gl.viewport(
+        0,
+        0,
+        canvas.width,
+        canvas.height
+    );
+})();
+
+const geo_vbuf_pos = gl.createBuffer();
+const geo_vbuf_col = gl.createBuffer();
+const geo_ibuf = gl.createBuffer();
+
+let shaders;
+/* compile shaders */
+{
+    const vs_geo = `
+        attribute vec3 a_pos;
+        attribute vec4 a_col;
+
+        varying vec4 v_col;
+
+        void main() {
+            gl_Position = vec4(a_pos.xyz, 1);
+            v_col = a_col;
+        }`;
+
+    const fs_geo = `
+        precision mediump float;
+
+        varying vec4 v_col;
+
+        void main() {
+            gl_FragColor = v_col;
+        }`;
+
+    function createProgram(gl, vertexSource, fragmentSource) {
+        function createShader(gl, type, source) {
+            const shader = gl.createShader(type);
+            gl.shaderSource(shader, source);
+            gl.compileShader(shader);
+            if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+                throw new Error(gl.getShaderInfoLog(shader));
+            }
+            return shader;
+        }
+
+        const program = gl.createProgram();
+
+        const vertexShader = createShader(gl, gl.VERTEX_SHADER, vertexSource);
+        const fragmentShader = createShader(gl, gl.FRAGMENT_SHADER, fragmentSource);
+
+        gl.attachShader(program, vertexShader);
+        gl.attachShader(program, fragmentShader);
+
+        gl.linkProgram(program);
+        if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+            throw new Error(gl.getProgramInfoLog(program));
+        }
+
+        const wrapper = {program};
+
+        const numAttributes = gl.getProgramParameter(program, gl.ACTIVE_ATTRIBUTES);
+        for (let i = 0; i < numAttributes; i++) {
+            const attribute = gl.getActiveAttrib(program, i);
+            wrapper[attribute.name] = gl.getAttribLocation(program, attribute.name);
+        }
+        const numUniforms = gl.getProgramParameter(program, gl.ACTIVE_UNIFORMS);
+        for (let i = 0; i < numUniforms; i++) {
+            const uniform = gl.getActiveUniform(program, i);
+            wrapper[uniform.name] = gl.getUniformLocation(program, uniform.name);
+        }
+
+        return wrapper;
+    }
+
+
+    shaders = {
+        geo: createProgram(gl, vs_geo, fs_geo)
+    }
+}
+
+let atlas = gl.createTexture();
+{
+    const canvas = document.createElement("canvas");
+    const SIZE = canvas.width = canvas.height = 500;
+    const ctx = canvas.getContext("2d");
+
+    const PAD = SIZE*0.05;
+    ctx.font = (SIZE - PAD*2) + 'px sans-serif';
+    ctx.fillText('🤨', PAD, SIZE - PAD*2);
+
+    gl.bindTexture(gl.TEXTURE_2D, atlas);
+    gl.texImage2D(
+        /* target         */ gl.TEXTURE_2D,
+        /* level          */ 0,
+        /* internalformat */ gl.RGBA,
+        /* width          */ canvas.width,
+        /* height         */ canvas.height,
+        /* border,        */ 0,
+        /* format,        */ gl.RGBA,
+        /* type,          */ gl.UNSIGNED_BYTE,
+        /* data           */ canvas
+    );
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+}
+
+requestAnimationFrame(function frame(timestamp) {
+    requestAnimationFrame(frame);
+
+    const geo_idx   = [];
+    const geo_pos   = [];
+    const geo_col = [];
+
+    function drawLine(x0, y0, x1, y1, thickness) {
+        geo_col.push(
+            255, 165, 50, 255,
+            255, 165, 50, 255,
+            255, 165, 50, 255,
+            255, 165, 50, 255,
+        );
+
+        const ar = canvas.width / canvas.height;
+
+        const dx = x0 - x1
+        const dy = y0 - y1
+        const dlen = Math.sqrt(dx*dx + dy*dy)
+        const px = -dy / dlen * thickness*0.5
+        const py =  dx / dlen * thickness*0.5
+
+        const vbuf_i = geo_pos.length / 3;
+        geo_pos.push(x0 + px, (y0 + py)*ar, 0.1);
+        geo_pos.push(x0 - px, (y0 - py)*ar, 0.1);
+        geo_pos.push(x1 + px, (y1 + py)*ar, 0.1);
+        geo_pos.push(x1 - px, (y1 - py)*ar, 0.1);
+
+        geo_idx.push(
+            vbuf_i + 0, vbuf_i + 1, vbuf_i + 2,
+            vbuf_i + 2, vbuf_i + 3, vbuf_i + 1
+        );
+    }
+
+    function drawHex(px, py, size, thickness) {
+        let vbuf_i = geo_pos.length / 3;
+
+        const outer_radius = size + thickness * 0.5;
+        const inner_radius = size - thickness * 0.5;
+        for (let i = 0; i < 7; i++) {
+            const x = Math.cos((i + 0) / 6 * Math.PI * 2);
+            const y = Math.sin((i + 0) / 6 * Math.PI * 2);
+
+            const ar = canvas.width / canvas.height;
+            geo_pos.push(px + x * inner_radius, py + y * inner_radius * ar, 0.1);
+            geo_pos.push(px + x * outer_radius, py + y * outer_radius * ar, 0.1);
+            geo_col.push(
+                255, 165, 50, 255,
+                255, 165, 50, 255,
+            );
+        }
+
+        for (let i = 0; i < 6; i++) {
+            geo_idx.push(
+                vbuf_i + 0, vbuf_i + 1, vbuf_i + 2,
+                vbuf_i + 2, vbuf_i + 3, vbuf_i + 1
+            );
+            vbuf_i += 2;
+        }
+    }
+    drawHex(0, 0, 0.15, 0.01);
+    drawLine(0.095, 0.095, 0.6, 0.41, 0.01)
+
+    {
+        /* set up premultiplied alpha */
+        gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
+        gl.enable(gl.BLEND);
+
+        gl.enable(gl.DEPTH_TEST);
+        gl.depthFunc(gl.LEQUAL);
+
+        /* clear all */
+        gl.clearColor(0, 0, 0, 1);
+        gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+
+        /* geo pass */
+        {
+            gl.useProgram(shaders.geo.program);
+            gl.enableVertexAttribArray(shaders.geo.a_pos);
+            gl.enableVertexAttribArray(shaders.geo.a_col);
+
+            /* upload/bind geometry */
+            {
+                gl.bindBuffer(gl.ARRAY_BUFFER, geo_vbuf_pos);
+                gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(geo_pos), gl.STATIC_DRAW);
+                gl.vertexAttribPointer(shaders.geo.a_pos, 3, gl.FLOAT, false, 0, 0);
+
+                gl.bindBuffer(gl.ARRAY_BUFFER, geo_vbuf_col);
+                gl.bufferData(gl.ARRAY_BUFFER, new Uint8Array(geo_col), gl.STATIC_DRAW);
+                gl.vertexAttribPointer(shaders.geo.a_col, 4, gl.UNSIGNED_BYTE, true, 0, 0);
+
+                gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, geo_ibuf);
+                gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, new Uint16Array(geo_idx), gl.STATIC_DRAW);
+            }
+
+            gl.drawElements(gl.TRIANGLES, geo_idx.length, gl.UNSIGNED_SHORT, 0);
+        }
+    }
+})
+
+
+    </script>
+  </body>
+</html>
