@@ -48,8 +48,11 @@ let shaders;
 
         varying vec4 v_col;
 
+        uniform vec2  u_camera_pos;
+        uniform float u_camera_zoom;
+
         void main() {
-            gl_Position = vec4(a_pos.xyz, 1);
+            gl_Position = vec4(a_pos.xy*u_camera_zoom + u_camera_pos, a_pos.z, 1);
             v_col = a_col;
         }`;
 
@@ -136,6 +139,85 @@ let atlas = gl.createTexture();
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
 }
 
+let camera = {
+    pos: { x: 0, y: 0 },
+    zoom: 1
+}
+
+let input = {
+    mouseDown: false,
+    mouseDownX: 0,
+    mouseDownY: 0,
+    mouseDownCameraX: 0,
+    mouseDownCameraY: 0,
+
+    mouseWorldX: 0,
+    mouseWorldY: 0,
+    mouseScreenX: 0,
+    mouseScreenY: 0,
+    updateMouseWorld() {
+        input.mouseWorldX = (input.mouseScreenX - camera.pos.x)/camera.zoom;
+        input.mouseWorldY = (input.mouseScreenY - camera.pos.y)/camera.zoom;
+    }
+};
+
+{
+    canvas.onmousedown = e => {
+        e.preventDefault();
+        input.mouseScreenX = input.mouseDownX = e.offsetX;
+        input.mouseScreenY = input.mouseDownY = e.offsetY;
+        input.updateMouseWorld();
+        input.mouseDownCameraX = camera.pos.x;
+        input.mouseDownCameraY = camera.pos.y;
+        input.mouseDown = true;
+    };
+    canvas.onmouseup = canvas.onmouseleave = e => {
+        e.preventDefault();
+        input.mouseDown = false;
+    };
+    canvas.onmousemove = e => {
+        input.mouseScreenX = e.offsetX;
+        input.mouseScreenY = e.offsetY;
+        input.updateMouseWorld();
+        if (!input.mouseDown) { return; }
+
+        e.preventDefault();
+        const deltaX = e.offsetX - input.mouseDownX;
+        const deltaY = e.offsetY - input.mouseDownY;
+        camera.pos.x = input.mouseDownCameraX + deltaX;
+        camera.pos.y = input.mouseDownCameraY + deltaY;
+        input.updateMouseWorld();
+    }
+    canvas.onwheel = e => {
+        e.preventDefault();
+
+        let nextZoom = camera.zoom * (1 - e.deltaY * 0.001);
+        nextZoom = Math.max(0.15, nextZoom);
+
+        /* offset camera.x such that it stays centered around the mouse,
+         * accounting for the new zoom */
+        {
+            const x_t = input.mouseWorldX / canvas.width;
+            const  nowSizeX = canvas.width * camera.zoom;
+            const nextSizeX = canvas.width * nextZoom;
+            const deltaX = nextSizeX - nowSizeX;
+            camera.pos.x -= deltaX * x_t;
+        }
+
+        /* ditto on the Y axis; keep the mouse as the focal point */
+        {
+            const y_t = input.mouseWorldY / canvas.height;
+            const  nowSizeY = canvas.height * camera.zoom;
+            const nextSizeY = canvas.height * nextZoom;
+            const deltaY = nextSizeY - nowSizeY;
+            camera.pos.y -= deltaY * y_t;
+        }
+
+        camera.zoom = nextZoom;
+        input.updateMouseWorld();
+    }
+}
+
 requestAnimationFrame(function frame(timestamp) {
     requestAnimationFrame(frame);
 
@@ -199,6 +281,16 @@ requestAnimationFrame(function frame(timestamp) {
     }
     drawHex(0, 0, 0.15, 0.01);
     drawLine(0.095, 0.095, 0.6, 0.41, 0.01)
+    drawHex(
+         2*(input.mouseWorldX / canvas.width ),
+        -2*(input.mouseWorldY / canvas.height),
+        0.015, 0.003
+    );
+    drawHex(
+         2*((canvas.width * 0.5) / canvas.width ),
+        -2*((canvas.height * 0.5) / canvas.height),
+        0.15, 0.01
+    );
 
     {
         /* set up premultiplied alpha */
@@ -217,6 +309,16 @@ requestAnimationFrame(function frame(timestamp) {
             gl.useProgram(shaders.geo.program);
             gl.enableVertexAttribArray(shaders.geo.a_pos);
             gl.enableVertexAttribArray(shaders.geo.a_col);
+
+            /* upload camera position */
+            {
+                gl.uniform2f(
+                    shaders.geo.u_camera_pos,
+                    2*(0 + camera.pos.x / canvas.width ) - 1,
+                    2*(1 - camera.pos.y / canvas.height) - 1
+                );
+                gl.uniform1f(shaders.geo.u_camera_zoom, camera.zoom);
+            }
 
             /* upload/bind geometry */
             {
