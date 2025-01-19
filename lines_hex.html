@@ -39,32 +39,9 @@ const geo_vbuf_pos = gl.createBuffer();
 const geo_vbuf_col = gl.createBuffer();
 const geo_ibuf = gl.createBuffer();
 
-let shaders;
+let shaders = {};
 /* compile shaders */
 {
-    const vs_geo = `
-        attribute vec3 a_pos;
-        attribute vec4 a_col;
-
-        varying vec4 v_col;
-
-        uniform vec2  u_camera_pos;
-        uniform float u_camera_zoom;
-
-        void main() {
-            gl_Position = vec4(a_pos.xy*u_camera_zoom + u_camera_pos, a_pos.z, 1);
-            v_col = a_col;
-        }`;
-
-    const fs_geo = `
-        precision mediump float;
-
-        varying vec4 v_col;
-
-        void main() {
-            gl_FragColor = v_col;
-        }`;
-
     function createProgram(gl, vertexSource, fragmentSource) {
         function createShader(gl, type, source) {
             const shader = gl.createShader(type);
@@ -89,54 +66,39 @@ let shaders;
             throw new Error(gl.getProgramInfoLog(program));
         }
 
-        const wrapper = {program};
-
-        const numAttributes = gl.getProgramParameter(program, gl.ACTIVE_ATTRIBUTES);
-        for (let i = 0; i < numAttributes; i++) {
-            const attribute = gl.getActiveAttrib(program, i);
-            wrapper[attribute.name] = gl.getAttribLocation(program, attribute.name);
-        }
-        const numUniforms = gl.getProgramParameter(program, gl.ACTIVE_UNIFORMS);
-        for (let i = 0; i < numUniforms; i++) {
-            const uniform = gl.getActiveUniform(program, i);
-            wrapper[uniform.name] = gl.getUniformLocation(program, uniform.name);
-        }
-
-        return wrapper;
+        return program;
     }
 
+    const vs_geo = `
+        attribute vec3 a_pos;
+        attribute vec4 a_col;
 
-    shaders = {
-        geo: createProgram(gl, vs_geo, fs_geo)
-    }
-}
+        varying vec4 v_col;
 
-let atlas = gl.createTexture();
-{
-    const canvas = document.createElement("canvas");
-    const SIZE = canvas.width = canvas.height = 500;
-    const ctx = canvas.getContext("2d");
+        uniform vec2  u_camera_pos;
+        uniform float u_camera_zoom;
 
-    const PAD = SIZE*0.05;
-    ctx.font = (SIZE - PAD*2) + 'px sans-serif';
-    ctx.fillText('🤨', PAD, SIZE - PAD*2);
+        void main() {
+            gl_Position = vec4(a_pos.xy*u_camera_zoom + u_camera_pos, a_pos.z, 1);
+            v_col = a_col;
+        }`;
 
-    gl.bindTexture(gl.TEXTURE_2D, atlas);
-    gl.texImage2D(
-        /* target         */ gl.TEXTURE_2D,
-        /* level          */ 0,
-        /* internalformat */ gl.RGBA,
-        /* width          */ canvas.width,
-        /* height         */ canvas.height,
-        /* border,        */ 0,
-        /* format,        */ gl.RGBA,
-        /* type,          */ gl.UNSIGNED_BYTE,
-        /* data           */ canvas
-    );
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    const fs_geo = `
+        precision mediump float;
+
+        varying vec4 v_col;
+
+        void main() {
+            gl_FragColor = v_col;
+        }`;
+
+    shaders.geo = { program: createProgram(gl, vs_geo, fs_geo) };
+    shaders.geo.inputs = {
+        a_col: gl.getAttribLocation(shaders.geo.program, 'a_col'),
+        a_pos: gl.getAttribLocation(shaders.geo.program, 'a_pos'),
+        u_camera_pos:  gl.getUniformLocation(shaders.geo.program, 'u_camera_pos'),
+        u_camera_zoom: gl.getUniformLocation(shaders.geo.program, 'u_camera_zoom')
+    };
 }
 
 let camera = {
@@ -191,7 +153,7 @@ let input = {
     canvas.onwheel = e => {
         e.preventDefault();
 
-        let nextZoom = camera.zoom * (1 - e.deltaY * 0.001);
+        let nextZoom = camera.zoom * (1 - e.deltaY * 0.0004);
         nextZoom = Math.max(0.15, nextZoom);
 
         /* offset camera.x such that it stays centered around the mouse,
@@ -307,28 +269,28 @@ requestAnimationFrame(function frame(timestamp) {
         /* geo pass */
         {
             gl.useProgram(shaders.geo.program);
-            gl.enableVertexAttribArray(shaders.geo.a_pos);
-            gl.enableVertexAttribArray(shaders.geo.a_col);
+            gl.enableVertexAttribArray(shaders.geo.inputs.a_pos);
+            gl.enableVertexAttribArray(shaders.geo.inputs.a_col);
 
             /* upload camera position */
             {
                 gl.uniform2f(
-                    shaders.geo.u_camera_pos,
+                    shaders.geo.inputs.u_camera_pos,
                     2*(0 + camera.pos.x / canvas.width ) - 1,
                     2*(1 - camera.pos.y / canvas.height) - 1
                 );
-                gl.uniform1f(shaders.geo.u_camera_zoom, camera.zoom);
+                gl.uniform1f(shaders.geo.inputs.u_camera_zoom, camera.zoom);
             }
 
             /* upload/bind geometry */
             {
                 gl.bindBuffer(gl.ARRAY_BUFFER, geo_vbuf_pos);
                 gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(geo_pos), gl.STATIC_DRAW);
-                gl.vertexAttribPointer(shaders.geo.a_pos, 3, gl.FLOAT, false, 0, 0);
+                gl.vertexAttribPointer(shaders.geo.inputs.a_pos, 3, gl.FLOAT, false, 0, 0);
 
                 gl.bindBuffer(gl.ARRAY_BUFFER, geo_vbuf_col);
                 gl.bufferData(gl.ARRAY_BUFFER, new Uint8Array(geo_col), gl.STATIC_DRAW);
-                gl.vertexAttribPointer(shaders.geo.a_col, 4, gl.UNSIGNED_BYTE, true, 0, 0);
+                gl.vertexAttribPointer(shaders.geo.inputs.a_col, 4, gl.UNSIGNED_BYTE, true, 0, 0);
 
                 gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, geo_ibuf);
                 gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, new Uint16Array(geo_idx), gl.STATIC_DRAW);
