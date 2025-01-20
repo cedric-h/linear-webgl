@@ -1,0 +1,125 @@
+<!-- vim: sw=4 ts=4 expandtab smartindent ft=javascript
+-->
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>WebGL Demo</title>
+    <style> document, body { margin: 0px; padding: 0px; overflow: hidden; } </style>
+  </head>
+
+  <body>
+    <canvas id="glcanvas"></canvas>
+    <script>
+
+const canvas = document.getElementById('glcanvas');
+const gl = canvas.getContext('webgl2', {antialias: true});
+if (!gl) { alert('Failed to initialize WebGL'); }
+
+(async () => {
+    const gl_programs = [];
+    const gl_buffers  = [];
+    const gl_shaders  = [];
+    const gl_uniforms = []
+
+    function read_str(str_ptr) {
+        let buf = new Uint8Array(wasm.memory.buffer, str_ptr);
+        buf = buf.slice(0, buf.findIndex(x => x == 0)); /* null terminated! */
+        return new TextDecoder().decode(buf);
+    }
+
+    const wasm_module = await WebAssembly.instantiateStreaming(
+        fetch("./hex.wasm"),
+        {
+            env: {
+                sqrtf: Math.sqrt,
+                cosf: Math.cos,
+                sinf: Math.sin,
+
+                gl_createProgram:          ( ) => gl_programs.push(gl.createProgram()) - 1,
+                gl_useProgram:             (i) => gl.useProgram(gl_programs[i]),
+                gl_linkProgram:            (i) => {
+                    let ret = gl.linkProgram(gl_programs[i]);
+
+                    if (!gl.getProgramParameter(gl_programs[i], gl.LINK_STATUS))
+                        throw new Error(gl.getProgramInfoLog(gl_programs[i]));
+
+                    return ret;
+                },
+
+                gl_createShader:           (type) => gl_shaders.push(gl.createShader(type)) - 1,
+                gl_shaderSource:           (i, s) => gl.shaderSource(gl_shaders[i], read_str(s)),
+                gl_compileShader:          (i   ) => {
+                    const ret = gl.compileShader(gl_shaders[i]);
+                    if (!gl.getShaderParameter(gl_shaders[i], gl.COMPILE_STATUS))
+                        throw new Error(gl.getShaderInfoLog(gl_shaders[i]));
+                    return ret;
+                },
+                gl_attachShader:           (p, s) => gl.attachShader(gl_programs[p], gl_shaders[s]),
+
+                gl_getAttribLocation:       (p, s) => gl.getAttribLocation(gl_programs[p], read_str(s)),
+
+                gl_getUniformLocation:     (p, s) => {
+                    return gl_uniforms.push(gl.getUniformLocation(gl_programs[p], read_str(s))) - 1;
+                },
+                gl_uniform1f:              (u, f) => gl.uniform1f(gl_uniforms[u], f),
+                gl_uniform2f:              (u, f, f0) => gl.uniform2f(gl_uniforms[u], f, f0),
+
+                gl_linkProgram:             i => gl.linkProgram(gl_programs[i]),
+
+                gl_createBuffer: () => gl_buffers.push(gl.createBuffer()) - 1,
+                gl_bindBuffer: (kind, buf_i) => gl.bindBuffer(kind, gl_buffers[buf_i]),
+                gl_bufferData: (kind, buf_ptr, buf_len, usage) => {
+                    gl.bufferData(kind, new Uint8Array(wasm.memory.buffer, buf_ptr, buf_len), usage);
+                },
+                gl_drawElements: gl.drawElements.bind(gl),
+
+                gl_viewport:                gl.viewport.bind(gl),
+                gl_createTexture:           gl.createTexture.bind(gl),
+                gl_bindTexture:             gl.bindTexture.bind(gl),
+                gl_texImage2D:              gl.texImage2D.bind(gl),
+                gl_texParameteri:           gl.texParameteri.bind(gl),
+                gl_blendFunc:               gl.blendFunc.bind(gl),
+                gl_enable:                  gl.enable.bind(gl),
+                gl_depthFunc:               gl.depthFunc.bind(gl),
+                gl_clearColor:              gl.clearColor.bind(gl),
+                gl_clear:                   gl.clear.bind(gl),
+                gl_enableVertexAttribArray: gl.enableVertexAttribArray.bind(gl),
+                gl_vertexAttribPointer:     gl.vertexAttribPointer.bind(gl),
+            }
+        }
+    );
+
+    const wasm = wasm_module.instance.exports;
+
+    wasm.init();
+
+    (window.onresize = () => {
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
+
+        /* account for e.g. high-retina macbook screens */
+        if (window.devicePixelRatio > 1) {
+            canvas.style.width = `${canvas.width}px`;
+            canvas.style.height = `${canvas.height}px`;
+            canvas.width *= window.devicePixelRatio;
+            canvas.height *= window.devicePixelRatio;
+        }
+
+        wasm.resize(canvas.width, canvas.height);
+    })();
+
+    canvas.onmousedown = e => wasm.mousedown(e.offsetX, e.offsetY);
+    canvas.onmouseup = canvas.onmouseleave = () => wasm.mouseup();
+    canvas.onmousemove = e => wasm.mousemove(e.offsetX, e.offsetY) && e.preventDefault();
+    canvas.onwheel = e => wasm.mousewheel(e.deltaY) && e.preventDefault();
+
+    requestAnimationFrame(function frame(timestamp) {
+        requestAnimationFrame(frame);
+        wasm.frame(timestamp);
+    });
+})();
+
+    </script>
+  </body>
+</html>
