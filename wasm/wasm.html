@@ -109,9 +109,10 @@ if (!gl) { alert('Failed to initialize WebGL'); }
         wasm.resize(canvas.width, canvas.height);
     })();
 
-    canvas.onmousedown = e => wasm.mousedown(e.offsetX, e.offsetY);
+    let dpi = window.devicePixelRatio
+    canvas.onmousedown = e => wasm.mousedown(e.offsetX * dpi, e.offsetY * dpi);
     canvas.onmouseup = canvas.onmouseleave = () => wasm.mouseup();
-    canvas.onmousemove = e => wasm.mousemove(e.offsetX, e.offsetY) && e.preventDefault();
+    canvas.onmousemove = e => wasm.mousemove(e.offsetX * dpi, e.offsetY * dpi) && e.preventDefault();
     canvas.onwheel = e => wasm.mousewheel(e.deltaY) && e.preventDefault();
 
     requestAnimationFrame(function frame(timestamp) {
