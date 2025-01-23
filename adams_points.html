@@ -6,11 +6,19 @@
     <meta charset="utf-8" />
     <title>WebGL Demo</title>
     <style> document, body { margin: 0px; padding: 0px; overflow: hidden; } </style>
+    <script type="importmap">
+      {
+        "imports": {
+          "earcut": "https://unpkg.com/earcut@3.0.1/src/earcut.js"
+        }
+      }
+    </script>
   </head>
 
   <body>
     <canvas id="glcanvas"></canvas>
-    <script>"use strict";
+    <script type="module">"use strict";
+import earcut from "earcut";
 
 const canvas = document.getElementById("glcanvas");
 const ctx = canvas.getContext('2d');
@@ -154,6 +162,15 @@ requestAnimationFrame(function render(now) {
       avg_y /= points.length;
 
       ctx.fillText("avg", avg_x, avg_y);
+    }
+
+    if (points.length >= 2) {
+      const flat = [...points.flatMap(x => [x.x, x.y]), mouse_world_x, mouse_world_y];
+      const tris = earcut(flat).reverse();
+      const x = (flat[tris[0]*2 + 0] + flat[tris[1]*2 + 0] + flat[tris[2]*2 + 0]) / 3;
+      const y = (flat[tris[0]*2 + 1] + flat[tris[1]*2 + 1] + flat[tris[2]*2 + 1]) / 3;
+      ctx.fillStyle = 'magenta';
+      ctx.fillRect(x - 5, y - 5, 10, 10);
     }
   }
   ctx.restore();
