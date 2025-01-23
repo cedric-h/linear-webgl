@@ -1,0 +1,255 @@
+<!-- vim: sw=2 ts=2 expandtab smartindent ft=javascript
+-->
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>WebGL Demo</title>
+    <style> document, body { margin: 0px; padding: 0px; overflow: hidden; } </style>
+    <script type="importmap">
+      {
+        "imports": {
+          "earcut": "https://unpkg.com/earcut@3.0.1/src/earcut.js"
+        }
+      }
+    </script>
+  </head>
+
+  <body>
+    <canvas id="glcanvas"></canvas>
+    <script type="module">"use strict";
+import earcut from "earcut";
+
+const canvas = document.getElementById("glcanvas");
+const ctx = canvas.getContext('2d');
+(window.onresize = () => {
+   canvas.width = window.innerWidth*window.devicePixelRatio,
+   canvas.height = window.innerHeight*window.devicePixelRatio
+   canvas.style.width = window.innerWidth + 'px';
+   canvas.style.height = window.innerHeight + 'px';
+ })();
+
+let mouse_x = 0;
+let mouse_y = 0;
+let mouse_world_x = 0;
+let mouse_world_y = 0;
+const CENTER_ACTION_NONE  = 0;
+const CENTER_ACTION_HOVER = 1;
+const CENTER_ACTION_DRAG  = 2;
+let center_action = CENTER_ACTION_NONE;
+let center_x = 0
+let center_y = 0
+let damped_progress = 0;
+let transform;
+
+let demo_points = [{"x":1440,"y":-1176},{"x":1506,"y":-1178},{"x":1816,"y":-1190},{"x":2038,"y":-1194},{"x":2154,"y":-1146},{"x":2152,"y":-966},{"x":2176,"y":-772},{"x":2130,"y":-464},{"x":2116,"y":-438},{"x":1996,"y":-482},{"x":1990,"y":-564},{"x":1982,"y":-744},{"x":1822,"y":-754},{"x":1570,"y":-726},{"x":1576,"y":-562},{"x":1506,"y":-438},{"x":1356,"y":-394},{"x":1250,"y":-334},{"x":1206,"y":-284},{"x":1068,"y":-212},{"x":844,"y":-162},{"x":704,"y":-76},{"x":494,"y":-14},{"x":288,"y":66},{"x":30,"y":114},{"x":-264,"y":194},{"x":-290,"y":282},{"x":-404,"y":500},{"x":-302,"y":630},{"x":-170,"y":636},{"x":-54,"y":646},{"x":290,"y":604},{"x":472,"y":558},{"x":686,"y":554},{"x":816,"y":622},{"x":822,"y":746},{"x":820,"y":818},{"x":814,"y":838},{"x":584,"y":856},{"x":308,"y":886},{"x":198,"y":906},{"x":58,"y":924},{"x":-152,"y":926},{"x":-534,"y":908},{"x":-726,"y":872},{"x":-870,"y":868},{"x":-970,"y":838},{"x":-1034,"y":736},{"x":-1018,"y":568},{"x":-992,"y":428},{"x":-994,"y":296},{"x":-906,"y":220},{"x":-836,"y":72},{"x":-732,"y":44},{"x":-566,"y":2},{"x":-294,"y":-26},{"x":14,"y":-16},{"x":122,"y":-56},{"x":286,"y":-158},{"x":582,"y":-278},{"x":1200,"y":-552},{"x":1196,"y":-636},{"x":1218,"y":-1144},{"x":1462,"y":-1168}].map(x => ({ x: x.x * 0.7, y: x.y * 0.7 }));
+let points = [];
+(async () => {
+  while (demo_points.length) {
+    await new Promise(p => setTimeout(p, 500));
+
+    const p = demo_points.shift();
+    points.unshift(p);
+
+    mouse_world_x = p.x;
+    mouse_world_y = p.y;
+    if (transform) {
+      const m = transform.transformPoint(new DOMPoint(mouse_world_x, mouse_world_y));
+      mouse_x = m.x;
+      mouse_y = m.y;
+    }
+  }
+})();
+
+window.onmousemove = e => {
+  if (center_action == CENTER_ACTION_DRAG) {
+    center_x = mouse_world_x;
+    center_y = mouse_world_y;
+  }
+
+  mouse_x = e.offsetX * window.devicePixelRatio;
+  mouse_y = e.offsetY * window.devicePixelRatio;
+}
+
+window.onmouseup = e => {
+  center_action = CENTER_ACTION_DRAG ? CENTER_ACTION_HOVER : center_action;
+}
+window.onmousedown = e => {
+  if (center_action == CENTER_ACTION_HOVER) {
+    center_action = CENTER_ACTION_DRAG;
+  } else {
+    points.unshift({ x: mouse_world_x, y: mouse_world_y });
+  }
+}
+
+let last_ts;
+requestAnimationFrame(function render(now) {
+  requestAnimationFrame(render);
+
+  now *= 0.001;
+  last_ts ??= now;
+  const dt = now - last_ts;
+  last_ts = now;
+
+  ctx.fillStyle = "white";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  ctx.save();
+  {
+    {
+      let y = 300;
+
+      let sum = 0;
+
+      ctx.fillStyle = 'black';
+      ctx.font = '70px sans-serif';
+
+      let compare_x = mouse_world_x;
+      let compare_y = mouse_world_y;
+      for (const point of points) {
+
+        let angle_a;
+        {
+          const dx = compare_x - center_x;
+          const dy = compare_y - center_y;
+          angle_a = Math.atan2(dy, dx);
+        }
+
+        let angle_b;
+        {
+          const dx = point.x - center_x;
+          const dy = point.y - center_y;
+          angle_b = Math.atan2(dy, dx);
+        }
+
+        const dist = rads_distance(angle_a, angle_b);
+        const percentage = Math.abs(dist) / Math.PI;
+
+        ctx.fillText(percentage.toFixed(2), canvas.width - 300, y);
+        sum += dist;
+        y += 75;
+
+        compare_x = point.x;
+        compare_y = point.y;
+      }
+      let val = Math.min(98, Math.abs(sum / (Math.PI * 2) * 100));
+      if (isNaN(val)) val = 0;
+
+      damped_progress = lerp(damped_progress, val, Math.pow(0.1, 60 * dt));
+      if (isNaN(damped_progress)) debugger;
+
+      if (window.SHOW_UNDAMPED) {
+        ctx.fillStyle = "green";
+        ctx.fillText(val.toFixed(2) + '%', canvas.width - 300, 200);
+      }
+
+      ctx.fillStyle = "blue";
+      ctx.fillText(damped_progress.toFixed(2) + '%', canvas.width - 300, 125);
+    }
+
+    ctx.translate(canvas.width/2, canvas.height/2);
+    transform = structuredClone(ctx.getTransform());
+    const mouse = ctx.getTransform().inverse().transformPoint(new DOMPoint(mouse_x, mouse_y));
+    mouse_world_x = mouse.x;
+    mouse_world_y = mouse.y;
+
+    {
+      const min_x = center_x - 50;
+      const min_y = center_y - 50;
+      const max_x = center_x + 50;
+      const max_y = center_y + 50;
+      const hover = (mouse.x > min_x && mouse.x < max_x) &&
+                    (mouse.y > min_y && mouse.y < max_y);
+
+      center_action = (center_action == CENTER_ACTION_DRAG) ? center_action : hover;
+
+      ctx.fillStyle = hover ? "rgba(255, 0, 0, 0.5)" : "red";
+      ctx.fillRect(min_x, min_y, max_x - min_x, max_y - min_y);
+    }
+
+    {
+      ctx.beginPath()
+      ctx.moveTo(mouse.x, mouse.y);
+      for (const { x, y } of points) {
+        ctx.lineTo(x, y);
+      }
+
+      ctx.lineWidth = 5;
+      ctx.strokeStyle = 'black';
+      ctx.stroke();
+    }
+
+    if (center_action == CENTER_ACTION_NONE) {
+      ctx.fillStyle = "blue";
+      ctx.fillRect(mouse.x-25, mouse.y-25, 50, 50);
+    }
+
+    let avg_x = 0
+    let avg_y = 0
+    {
+      for (const { x, y } of points) {
+        avg_x += x;
+        avg_y += y;
+      }
+      avg_x /= points.length;
+      avg_y /= points.length;
+
+      ctx.fillText("avg", avg_x, avg_y);
+    }
+
+    if (points.length >= 2) {
+      const flat = [...points.flatMap(x => [x.x, x.y]), mouse_world_x, mouse_world_y];
+      const tris = earcut(flat).reverse();
+
+      const dist = (x0, y0, x1, y1) => {
+        const dx = x0 - x1;
+        const dy = y0 - y1;
+        return Math.sqrt(dx*dx + dy*dy);
+      }
+
+      let closest_x, closest_y;
+      for (let tri = 0; tri < tris.length; tri += 3) {
+        const a_x = flat[tris[tri + 0]*2 + 0];
+        const a_y = flat[tris[tri + 0]*2 + 1];
+        const b_x = flat[tris[tri + 1]*2 + 0];
+        const b_y = flat[tris[tri + 1]*2 + 1];
+        const c_x = flat[tris[tri + 2]*2 + 0];
+        const c_y = flat[tris[tri + 2]*2 + 1];
+
+        const x = (a_x + b_x + c_x) / 3;
+        const y = (a_y + b_y + c_y) / 3;
+        closest_x ??= x;
+        closest_y ??= y;
+        if (dist(x, y, avg_x, avg_y) <= dist(closest_x, closest_y, avg_x, avg_y)) {
+          closest_x = x;
+          closest_y = y;
+        }
+
+        ctx.beginPath();
+        ctx.fillStyle = 'rgba(255, 0, 0, 0.1)';
+        ctx.moveTo(a_x, a_y)
+        ctx.lineTo(b_x, b_y)
+        ctx.lineTo(c_x, c_y)
+        ctx.fill();
+
+        ctx.fillStyle = 'magenta';
+        ctx.fillRect(x - 5, y - 5, 10, 10);
+      }
+      center_x = closest_x;
+      center_y = closest_y;
+    }
+  }
+  ctx.restore();
+})
+
+function lerp(v0, v1, t) { return (1 - t) * v0 + t * v1; }
+function inv_lerp(min, max, p) { return (p - min) / (max - min); }
+function rads_distance(a, b) {
+    const fmodf = (l, r) => l % r;
+    let difference = fmodf(b - a, Math.PI*2.0),
+          distance = fmodf(2.0 * difference, Math.PI*2.0) - difference;
+  return distance;
+}
+    </script>
+  </body>
+</html>
