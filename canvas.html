@@ -21,6 +21,22 @@ const ctx = canvas.getContext('2d');
    canvas.style.height = window.innerHeight + 'px';
  })();
 
+let mouse_x = 0;
+let mouse_y = 0;
+let mouse_world_x = 0;
+let mouse_world_y = 0;
+
+let points = [];
+
+window.onmousemove = e => {
+  mouse_x = e.offsetX * window.devicePixelRatio;
+  mouse_y = e.offsetY * window.devicePixelRatio;
+}
+
+window.onmousedown = e => {
+  points.unshift({ x: mouse_world_x, y: mouse_world_y });
+}
+
 requestAnimationFrame(function render(now) {
   requestAnimationFrame(render);
 
@@ -29,16 +45,87 @@ requestAnimationFrame(function render(now) {
 
   ctx.save();
   {
+    {
+      let y = 300;
+
+      let sum = 0;
+
+      ctx.fillStyle = 'black';
+      ctx.font = '70px sans-serif';
+
+      let compare_x = mouse_world_x;
+      let compare_y = mouse_world_y;
+      for (const point of points) {
+
+        const center_x = 0
+        const center_y = 0
+
+        let angle_a;
+        {
+          const dx = compare_x - center_x;
+          const dy = compare_y - center_y;
+          angle_a = Math.atan2(dy, dx);
+        }
+
+        let angle_b;
+        {
+          const dx = point.x - center_x;
+          const dy = point.y - center_y;
+          angle_b = Math.atan2(dy, dx);
+        }
+
+        const dist = rads_distance(angle_a, angle_b);
+        const percentage = Math.abs(dist) / Math.PI;
+
+        ctx.fillText(percentage.toFixed(2), canvas.width - 300, y);
+        sum += dist;
+        y += 75;
+
+        compare_x = point.x;
+        compare_y = point.y;
+      }
+      ctx.fillStyle = "green";
+      ctx.fillText(Math.abs(sum / (Math.PI * 2) * 100).toFixed(2) + '%', canvas.width - 300, y);
+    }
+
     ctx.translate(canvas.width/2, canvas.height/2);
+    const mouse = ctx.getTransform().inverse().transformPoint(new DOMPoint(mouse_x, mouse_y));
+    mouse_world_x = mouse.x;
+    mouse_world_y = mouse.y;
 
     ctx.fillStyle = "red";
     ctx.fillRect(-50, -50, 100, 100);
+
+    {
+      ctx.beginPath()
+      ctx.moveTo(mouse.x, mouse.y);
+      for (const { x, y } of points) {
+        ctx.lineTo(x, y);
+      }
+
+      ctx.lineWidth = 5;
+      ctx.strokeStyle = 'black';
+      ctx.stroke();
+
+      ctx.fillStyle = 'rgba(255, 0, 0, 0.1)';
+      ctx.lineTo(0, 0)
+      ctx.fill();
+    }
+
+    ctx.fillStyle = "blue";
+    ctx.fillRect(mouse.x-25, mouse.y-25, 50, 50);
   }
   ctx.restore();
 })
 
 function lerp(v0, v1, t) { return (1 - t) * v0 + t * v1; }
 function inv_lerp(min, max, p) { return (p - min) / (max - min); }
+function rads_distance(a, b) {
+    const fmodf = (l, r) => l % r;
+    let difference = fmodf(b - a, Math.PI*2.0),
+          distance = fmodf(2.0 * difference, Math.PI*2.0) - difference;
+  return distance;
+}
     </script>
   </body>
 </html>

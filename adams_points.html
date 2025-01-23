@@ -25,16 +25,34 @@ let mouse_x = 0;
 let mouse_y = 0;
 let mouse_world_x = 0;
 let mouse_world_y = 0;
+const CENTER_ACTION_NONE  = 0;
+const CENTER_ACTION_HOVER = 1;
+const CENTER_ACTION_DRAG  = 2;
+let center_action = CENTER_ACTION_NONE;
+let center_x = 0
+let center_y = 0
 
 let points = [];
 
 window.onmousemove = e => {
+  if (center_action == CENTER_ACTION_DRAG) {
+    center_x = mouse_world_x;
+    center_y = mouse_world_y;
+  }
+
   mouse_x = e.offsetX * window.devicePixelRatio;
   mouse_y = e.offsetY * window.devicePixelRatio;
 }
 
+window.onmouseup = e => {
+  center_action = CENTER_ACTION_DRAG ? CENTER_ACTION_HOVER : center_action;
+}
 window.onmousedown = e => {
-  points.unshift({ x: mouse_world_x, y: mouse_world_y });
+  if (center_action == CENTER_ACTION_HOVER) {
+    center_action = CENTER_ACTION_DRAG;
+  } else {
+    points.unshift({ x: mouse_world_x, y: mouse_world_y });
+  }
 }
 
 requestAnimationFrame(function render(now) {
@@ -56,9 +74,6 @@ requestAnimationFrame(function render(now) {
       let compare_x = mouse_world_x;
       let compare_y = mouse_world_y;
       for (const point of points) {
-
-        const center_x = 0
-        const center_y = 0
 
         let angle_a;
         {
@@ -93,8 +108,19 @@ requestAnimationFrame(function render(now) {
     mouse_world_x = mouse.x;
     mouse_world_y = mouse.y;
 
-    ctx.fillStyle = "red";
-    ctx.fillRect(-50, -50, 100, 100);
+    {
+      const min_x = center_x - 50;
+      const min_y = center_y - 50;
+      const max_x = center_x + 50;
+      const max_y = center_y + 50;
+      const hover = (mouse.x > min_x && mouse.x < max_x) &&
+                    (mouse.y > min_y && mouse.y < max_y);
+
+      center_action = (center_action == CENTER_ACTION_DRAG) ? center_action : hover;
+
+      ctx.fillStyle = hover ? "rgba(255, 0, 0, 0.5)" : "red";
+      ctx.fillRect(min_x, min_y, max_x - min_x, max_y - min_y);
+    }
 
     {
       ctx.beginPath()
@@ -108,12 +134,14 @@ requestAnimationFrame(function render(now) {
       ctx.stroke();
 
       ctx.fillStyle = 'rgba(255, 0, 0, 0.1)';
-      ctx.lineTo(0, 0)
+      ctx.lineTo(center_x, center_y)
       ctx.fill();
     }
 
-    ctx.fillStyle = "blue";
-    ctx.fillRect(mouse.x-25, mouse.y-25, 50, 50);
+    if (center_action == CENTER_ACTION_NONE) {
+      ctx.fillStyle = "blue";
+      ctx.fillRect(mouse.x-25, mouse.y-25, 50, 50);
+    }
   }
   ctx.restore();
 })
