@@ -142,6 +142,19 @@ requestAnimationFrame(function render(now) {
       ctx.fillStyle = "blue";
       ctx.fillRect(mouse.x-25, mouse.y-25, 50, 50);
     }
+
+    {
+      let avg_x = 0
+      let avg_y = 0
+      for (const { x, y } of points) {
+        avg_x += x;
+        avg_y += y;
+      }
+      avg_x /= points.length;
+      avg_y /= points.length;
+
+      ctx.fillText("avg", avg_x, avg_y);
+    }
   }
   ctx.restore();
 })
