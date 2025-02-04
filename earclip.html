@@ -49,7 +49,8 @@ document, body { margin: 0px; padding: 0px; overflow: hidden; }
     </div>
     <div class="description">
       <p> Earclipping is a technique used to <a href="https://en.wikipedia.org/wiki/Tessellation_(computer_graphics)">tesselate</a> shapes. </p>
-      <p> This page is a minimal shape editor and earclipping visualizer. </p>
+      <p> You can use it for <a href="https://www.chrishecker.com/My_Liner_Notes_for_Spore#cite_ref-3">creature creation</a> and other generative graphics tasks. </p>
+      <p> This page is a minimal shape editor and earclipping visualizer. It helps you to understand how earclipping works. </p>
       <p> Click and drag a <span style="color: magenta">diamond shaped midpoint</span> to add and begin moving a new vertex. </p>
       <p> Click and drag a <span style="color: rgb(150, 50, 150)">circular vertex</span> to manipulate the shape, or hover and use Backspace to remove a vertex. </p>
       <p> Click the "next" button to begin the earclipping process. </p>
@@ -77,6 +78,8 @@ const state = {
   hovered_vertex: null,
   hovered_midpoint: null,
   shape: [],
+  ms_to_triangulate: Infinity,
+  self_intersecting: false,
 
   earclip_progress: {
     active_tri_color: [100, 20, 100],
@@ -93,11 +96,53 @@ const state = {
     state.earclip_progress.indices = [];
     state.earclip_progress.vertices = structuredClone(state.shape);
 
-    const vertices = structuredClone(state.shape);
-    const p = performance.now();
-    let runs = 1000;
-    for (let i = 0; i < runs; i++) earclip(vertices);
-    state.ms_to_triangulate = (performance.now() - p) / runs;
+    {
+      function line_hits_line(from0, to0, from1, to1) {
+        const a = from0.x, b = from0.y,
+              c =   to0.x, d =   to0.y,
+              p = from1.x, q = from1.y,
+              r =   to1.x, s =   to1.y;
+        let det, gamma, lambda;
+        det = (c - a) * (s - q) - (r - p) * (d - b);
+        if (det === 0) {
+          return false;
+        } else {
+          lambda = ((s - q) * (r - a) + (p - r) * (s - b)) / det;
+          gamma = ((b - d) * (r - a) + (c - a) * (s - b)) / det;
+
+          return (0.001 < lambda && lambda < 0.999) && (0.001 < gamma && gamma < 0.999);
+          // return { x: lerp(from0.x, to0.x, lambda), y: lerp(from0.y, to0.y, lambda) };
+        }
+      }
+
+      const shape = state.shape;
+      let hit = false;
+      self_intersection:
+      for (let i = 0; i < shape.length; i++) {
+        const a = (i + 0) % shape.length;
+        const b = (i + 1) % shape.length;
+
+        for (let j = 0; j < shape.length; j++) {
+          const c = (j + 0) % shape.length;
+          const d = (j + 1) % shape.length;
+          if (a == c && b == d) continue;
+          if (line_hits_line(shape[a], shape[b], shape[c], shape[d])) {
+            hit = true;
+            break self_intersection;
+          }
+        }
+      }
+      state.self_intersection = hit;
+
+    }
+
+    if (!state.self_intersection) {
+      const vertices = structuredClone(state.shape);
+      const p = performance.now();
+      let runs = 1000;
+      for (let i = 0; i < runs; i++) earclip(vertices);
+      state.ms_to_triangulate = (performance.now() - p) / runs;
+    }
   },
 
 };
@@ -143,6 +188,30 @@ const state = {
     const y = Math.sin(i / 20 * Math.PI * 2) * 300;
     return ({ x, y });
   }));
+  presets.set("abomination", [
+    { "x": 573, "y": -16 }, { "x": 705, "y": -68 }, { "x": 687, "y": 22 }, { "x": 787, "y": 0 }, { "x": 807, "y": 54 }, { "x": 769, "y": 90 },
+    { "x": 801, "y": 148 }, { "x": 763, "y": 182 }, { "x": 681, "y": 124 }, { "x": 657, "y": 208 }, { "x": 601, "y": 182 }, { "x": 551, "y": 172 },
+    { "x": 615, "y": 76 }, { "x": 537, "y": 90 }, { "x": 443, "y": 62 }, { "x": 300, "y": 0 }, { "x": 285.31695488854604, "y": 92.70509831248422 },
+    { "x": 242.70509831248424, "y": 176.33557568774194 }, { "x": 176.33557568774194, "y": 242.70509831248424 }, { "x": 267, "y": 352 }, { "x": 347, "y": 358 },
+    { "x": 427, "y": 406 }, { "x": 327, "y": 500 }, { "x": 439, "y": 488 }, { "x": 517, "y": 440 }, { "x": 667, "y": 460 }, { "x": 723, "y": 508 }, { "x": 769, "y": 588 },
+    { "x": 653, "y": 618 }, { "x": 503, "y": 634 }, { "x": 405, "y": 614 }, { "x": 283, "y": 662 }, { "x": 105, "y": 684 }, { "x": 77, "y": 568 }, { "x": 237, "y": 526 },
+    { "x": 143, "y": 488 }, { "x": 69, "y": 446 }, { "x": 97, "y": 404 }, { "x": 121, "y": 382 }, { "x": 175, "y": 372 }, { "x": 92.70509831248424, "y": 285.31695488854604 },
+    { "x": 1.8369701987210297e-14, "y": 300 }, { "x": -92.7050983124842, "y": 285.3169548885461 }, { "x": -176.3355756877419, "y": 242.70509831248424 },
+    { "x": -242.7050983124842, "y": 176.33557568774197 }, { "x": -285.31695488854604, "y": 92.70509831248425 }, { "x": -577, "y": 96 }, { "x": -567, "y": 332 },
+    { "x": -321, "y": 326 }, { "x": -327, "y": 394 }, { "x": -559, "y": 394 }, { "x": -551, "y": 524 }, { "x": -635, "y": 526 }, { "x": -653, "y": 100 }, { "x": -901, "y": 94 },
+    { "x": -901, "y": -2 }, { "x": -619, "y": 2 }, { "x": -631, "y": -456 }, { "x": -543, "y": -460 }, { "x": -529, "y": -90 }, { "x": -439, "y": -86 }, { "x": -429, "y": 24 },
+    { "x": -363, "y": 22 }, { "x": -365, "y": -84 }, { "x": -285.31695488854604, "y": -92.70509831248432 }, { "x": -381, "y": -158 }, { "x": -333, "y": -244 }, { "x": -365, "y": -358 },
+    { "x": -265, "y": -386 }, { "x": -163, "y": -374 }, { "x": -195, "y": -176 }, { "x": -179, "y": -52 }, { "x": -83, "y": -74 }, { "x": -1, "y": -4 }, { "x": -97, "y": 54 },
+    { "x": -7, "y": 100 }, { "x": -91, "y": 160 }, { "x": 7, "y": 164 }, { "x": 37, "y": 222 }, { "x": 99, "y": 228 }, { "x": 121, "y": 164 }, { "x": 157, "y": 124 }, { "x": 73, "y": 30 },
+    { "x": 187, "y": -8 }, { "x": 79, "y": -90 }, { "x": 71, "y": -182 }, { "x": -65, "y": -152 }, { "x": -92.70509831248427, "y": -285.31695488854604 }, { "x": -5.510910596163089e-14, "y": -300 },
+    { "x": 59, "y": -480 }, { "x": -197, "y": -572 }, { "x": -173, "y": -638 }, { "x": 87, "y": -550 }, { "x": 125, "y": -654 }, { "x": 297, "y": -598 },
+    { "x": 176.33557568774188, "y": -242.70509831248427 }, { "x": 242.7050983124842, "y": -176.335575687742 }, { "x": 277, "y": -108 }, { "x": 389, "y": -122 }, { "x": 469, "y": -334 },
+    { "x": 361, "y": -440 }, { "x": 399, "y": -524 }, { "x": 441, "y": -442 }, { "x": 537, "y": -404 }, { "x": 655, "y": -464 }, { "x": 513, "y": -548 }, { "x": 611, "y": -572 },
+    { "x": 615, "y": -622 }, { "x": 525, "y": -656 }, { "x": 681, "y": -668 }, { "x": 819, "y": -684 }, { "x": 909, "y": -636 }, { "x": 809, "y": -552 }, { "x": 941, "y": -536 },
+    { "x": 1015, "y": -440 }, { "x": 1049, "y": -264 }, { "x": 895, "y": -378 }, { "x": 893, "y": -272 }, { "x": 773, "y": -294 }, { "x": 817, "y": -364 }, { "x": 755, "y": -380 },
+    { "x": 759, "y": -456 }, { "x": 689, "y": -404 }, { "x": 671, "y": -346 }, { "x": 537, "y": -300 }, { "x": 615, "y": -284 }, { "x": 575, "y": -222 }, { "x": 665, "y": -250 },
+    { "x": 779, "y": -198 }, { "x": 687, "y": -170 }, { "x": 467, "y": -122 }, { "x": 565, "y": -128 }
+  ]);
 
   const dropdown = earclip_vis_preset_shape;
   for (const example of presets.keys()) {
@@ -414,19 +483,28 @@ requestAnimationFrame(function render(now) {
     if (state.earclip_progress.phase) {
       ctx.fillStyle = 'turquoise';
       ctx.font = '75px sans-serif';
-      const text = 'phase: ' + state.earclip_progress.phase;
+      const text = state.earclip_progress.phase;
       ctx.fillText(text, canvas.width - ctx.measureText(text).width - 30, y);
+      y += 100
     }
-    y += 100
 
-    {
+    if (!state.self_intersection) {
       ctx.font = '50px sans-serif';
       ctx.fillStyle = 'chartreuse';
       const text = 'triangulated in ' + state.ms_to_triangulate.toFixed(5) + 'ms';
       const w = ctx.measureText(text)
       ctx.fillText(text, canvas.width - w.width - 30, y);
+      y += 70
     }
-    y += 100
+
+    if (state.self_intersection) {
+      ctx.font = '50px sans-serif';
+      ctx.fillStyle = 'red';
+      const text = 'self intersection!';
+      const w = ctx.measureText(text)
+      ctx.fillText(text, canvas.width - w.width - 30, y);
+      y += 70
+    }
   }
 
   ctx.save();
