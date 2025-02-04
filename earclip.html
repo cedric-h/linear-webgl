@@ -17,6 +17,7 @@ document, body { margin: 0px; padding: 0px; overflow: hidden; }
   gap: 0.4rem;
 }
 .description {
+  a { color: turquoise; }
   position: absolute;
   padding: 0.4rem;
   p { margin: 0px; }
@@ -39,17 +40,22 @@ document, body { margin: 0px; padding: 0px; overflow: hidden; }
 
   <body>
     <div class="hud">
-      <button id="earclip_vis_next">next</button>
+      <button id="earclip_vis_next">next (hold)</button>
       <button id="earclip_vis_restart">restart</button>
+      <div style="background-color:white;font-family:sans-serif;">
+        <label for="earclip_vis_preset_shape">Example:</label>
+        <select id="earclip_vis_preset_shape"></select>
+      </div>
     </div>
     <div class="description">
-      <p> Earclipping is a technique used to tesselate shapes. </p>
+      <p> Earclipping is a technique used to <a href="https://en.wikipedia.org/wiki/Tessellation_(computer_graphics)">tesselate</a> shapes. </p>
       <p> This page is a minimal shape editor and earclipping visualizer. </p>
       <p> Click and drag a <span style="color: magenta">diamond shaped midpoint</span> to add and begin moving a new vertex. </p>
-      <p> Click and drag a <span style="color: rgb(150, 50, 150)">circular vertex</span> to manipulate the shape. </p>
+      <p> Click and drag a <span style="color: rgb(150, 50, 150)">circular vertex</span> to manipulate the shape, or hover and use Backspace to remove a vertex. </p>
       <p> Click the "next" button to begin the earclipping process. </p>
     </div>
     <div class="legend">
+      <b> Legend </b>
       <p style="color: rgb(255, 100, 100)"> Triangle is concave (innie, dip), not convex (outie, ear). </p>
       <p style="color: rgb(100, 100, 255)"> This triangle is convex, but has other points inside it. </p>
       <p style="color: rgb(100, 255, 100)"> Good triangle! It's an ear! </p>
@@ -70,14 +76,7 @@ const ctx = canvas.getContext('2d');
 const state = {
   hovered_vertex: null,
   hovered_midpoint: null,
-  shape: [
-    { "x":  -45, "y":  248 },
-    { "x":  183, "y":  140 },
-    { "x":   65, "y": -504 },
-    { "x":   89, "y":   68 },
-    { "x":  -27, "y":  118 },
-    { "x": -691, "y":  -38 }
-  ],
+  shape: [],
 
   earclip_progress: {
     active_tri_color: [100, 20, 100],
@@ -86,8 +85,77 @@ const state = {
     vertices: [],
     phase: ""
   },
+
+  restart() {
+    state.triangulator = step_triangulate(state.shape);
+    state.earclip_progress.phase = '';
+    state.earclip_progress.active_tri = null;
+    state.earclip_progress.indices = [];
+    state.earclip_progress.vertices = structuredClone(state.shape);
+
+    const vertices = structuredClone(state.shape);
+    const p = performance.now();
+    let runs = 1000;
+    for (let i = 0; i < runs; i++) earclip(vertices);
+    state.ms_to_triangulate = (performance.now() - p) / runs;
+  },
+
 };
-state.triangulator = step_triangulate(state.shape);
+{
+  const presets = new Map();
+  presets.set("W", [
+    { "x":   97, "y":  220 }, { "x":   13, "y":   60 }, { "x":  183, "y":  140 }, { "x":   65, "y": -504 },
+    { "x":  105, "y":   50 }, { "x": -315, "y": -472 }, { "x":  -27, "y":  118 }, { "x": -691, "y":  -38 }
+  ]);
+  presets.set("blade", [
+    { "x":  -45, "y":  248 }, { "x":   71, "y":  224 }, { "x":  355, "y":  714 }, { "x":  423, "y":  672 },
+    { "x":  127, "y":  214 }, { "x":  183, "y":  140 }, { "x":  359, "y":    6 }, { "x":  253, "y":  -76 },
+    { "x":   89, "y":   68 }, { "x":  -73, "y": -208 }, { "x":  -15, "y": -326 }, { "x": -149, "y": -308 },
+    { "x": -291, "y": -564 }, { "x": -579, "y": -926 }, { "x": -389, "y": -548 }, { "x": -215, "y": -274 },
+    { "x": -313, "y": -112 }, { "x": -149, "y": -160 }, { "x":  -27, "y":  118 }, { "x": -337, "y":  180 },
+    { "x": -319, "y":  326 }
+  ]);
+  presets.set("box", [
+    { "x": -150, "y": -150 },
+    { "x": -150, "y":  150 },
+    { "x":  150, "y":  150 },
+    { "x":  150, "y": -150 }
+  ]);
+  presets.set("spacestation", [
+    { "x": 573, "y": -16 }, { "x": 300, "y": 0 }, { "x": 285.31695488854604, "y": 92.70509831248422 },
+    { "x": 242.70509831248424, "y": 176.33557568774194 }, { "x": 176.33557568774194, "y": 242.70509831248424 },
+    { "x": 327, "y": 500 }, { "x": 517, "y": 440 }, { "x": 569, "y": 552 }, { "x": 105, "y": 684 }, { "x": 77, "y": 568 },
+    { "x": 237, "y": 526 }, { "x": 92.70509831248424, "y": 285.31695488854604 }, { "x": 1.8369701987210297e-14, "y": 300 },
+    { "x": -92.7050983124842, "y": 285.3169548885461 }, { "x": -176.3355756877419, "y": 242.70509831248424 },
+    { "x": -242.7050983124842, "y": 176.33557568774197 }, { "x": -285.31695488854604, "y": 92.70509831248425 },
+    { "x": -577, "y": 96 }, { "x": -567, "y": 332 }, { "x": -339, "y": 322 }, { "x": -327, "y": 394 }, { "x": -559, "y": 394 },
+    { "x": -553, "y": 530 }, { "x": -571, "y": 522 }, { "x": -635, "y": 526 }, { "x": -653, "y": 100 }, { "x": -901, "y": 94 },
+    { "x": -901, "y": -2 }, { "x": -619, "y": 2 }, { "x": -631, "y": -456 }, { "x": -543, "y": -460 }, { "x": -529, "y": -90 },
+    { "x": -285.31695488854604, "y": -92.70509831248432 }, { "x": -242.70509831248427, "y": -176.3355756877419 },
+    { "x": -176.33557568774197, "y": -242.7050983124842 }, { "x": -92.70509831248427, "y": -285.31695488854604 },
+    { "x": -5.510910596163089e-14, "y": -300 }, { "x": 59, "y": -480 }, { "x": -197, "y": -572 }, { "x": -173, "y": -638 },
+    { "x": 87, "y": -550 }, { "x": 125, "y": -654 }, { "x": 297, "y": -598 }, { "x": 176.33557568774188, "y": -242.70509831248427 },
+    { "x": 242.7050983124842, "y": -176.335575687742 }, { "x": 277, "y": -108 }, { "x": 389, "y": -122 }, { "x": 361, "y": -440 },
+    { "x": 441, "y": -442 }, { "x": 467, "y": -122 }, { "x": 565, "y": -128 }
+  ]);
+  presets.set("circle", Array.from({ length: 20 }, (_, i) => {
+    const x = Math.cos(i / 20 * Math.PI * 2) * 300;
+    const y = Math.sin(i / 20 * Math.PI * 2) * 300;
+    return ({ x, y });
+  }));
+
+  const dropdown = earclip_vis_preset_shape;
+  for (const example of presets.keys()) {
+    const option = document.createElement("option");
+    option.textContent = example;
+    option.value = example;
+    dropdown.appendChild(option);
+  }
+  (dropdown.oninput = () => {
+    state.shape = structuredClone(presets.get(dropdown.value));
+    state.restart();
+  })()
+}
 
 function *step_triangulate(shape) {
   const vertices = structuredClone(shape);
@@ -96,25 +164,15 @@ function *step_triangulate(shape) {
 
   /* reverse shape if necessary */
   {
-    let forwards_determinant_sum = 0;
+    let sum = 0;
 
-    for (let i = 0; i < shape.length; i++) {
-      const a = (i + 0) % shape.length;
-      const b = (i + 1) % shape.length;
-      const c = (i + 2) % shape.length;
-
-      let d1x = shape[a].x - shape[b].x;
-      let d1y = shape[a].y - shape[b].y;
-      d1x /= Math.sqrt(d1x*d1x + d1y*d1y);
-      d1y /= Math.sqrt(d1x*d1x + d1y*d1y);
-      let d2x = shape[b].x - shape[c].x;
-      let d2y = shape[b].y - shape[c].y;
-      d2x /= Math.sqrt(d2x*d2x + d2y*d2y);
-      d2y /= Math.sqrt(d2x*d2x + d2y*d2y);
-      forwards_determinant_sum += (d1x*d2y - d1y*d2x);
+    /* signed area! */
+    for (let i = 0, j = shape.length - 1; i < shape.length; i++) {
+        sum += (shape[j].x - shape[i].x) * (shape[i].y + shape[j].y);
+        j = i;
     }
 
-    if (forwards_determinant_sum < 0)
+    if (sum < 0)
       vertices.reverse();
   }
 
@@ -163,87 +221,42 @@ function *step_triangulate(shape) {
   }
 
   let indices = [];
-
-  /* loop through all verts, find ears */
-  for (let i = 0; i < vertices.length; i++) {
-    const a = (i + 0) % vertices.length;
-    const b = (i + 1) % vertices.length;
-    const c = (i + 2) % vertices.length;
-    const result = set_is_ear(a, b, c);
-    yield ({
-      phase: 'initial triangulation',
-      vertices,
-      active_tri_color: ({
-        [REJECTION_NONE       ]: [100, 255, 100],
-        [REJECTION_DETERMINANT]: [255,   0,   0],
-        [REJECTION_TRI_INSIDE ]: [  0,   0, 255],
-      })[result],
-      active_tri: [
-        original_index.get(vertices[a]),
-        original_index.get(vertices[b]),
-        original_index.get(vertices[c])
-      ],
-      known_ears: vertices.filter(x => is_ear.get(x)).map(x => {
-        const v_idx = vertices.indexOf(x);
-        return [
-          original_index.get(vertices.at(v_idx - 1)),
-          original_index.get(vertices.at(v_idx + 0)),
-          original_index.get(vertices.at((v_idx + 1) % vertices.length))
-        ];
-      }),
-      indices
-    })
-  }
-
   while (vertices.length >= 3) {
     for (let i = 0; i < vertices.length; i++) {
       const a = (i + 0) % vertices.length;
       const b = (i + 1) % vertices.length;
       const c = (i + 2) % vertices.length;
 
+      const result = set_is_ear(a, b, c);
+      yield ({
+        phase: (vertices.length - 2) + ' remaining',
+        vertices,
+        active_tri_color: ({
+          [REJECTION_NONE       ]: [100, 255, 100],
+          [REJECTION_DETERMINANT]: [255,   0,   0],
+          [REJECTION_TRI_INSIDE ]: [  0,   0, 255],
+        })[result],
+        active_tri: [
+          original_index.get(vertices[a]),
+          original_index.get(vertices[b]),
+          original_index.get(vertices[c])
+        ],
+        known_ears: vertices.filter(x => is_ear.get(x)).map(x => {
+          const v_idx = vertices.indexOf(x);
+          return [
+            original_index.get(vertices.at(v_idx - 1)),
+            original_index.get(vertices.at(v_idx + 0)),
+            original_index.get(vertices.at((v_idx + 1) % vertices.length))
+          ];
+        }),
+        indices
+      })
+
       if (is_ear.get(vertices[b])) {
         indices.push(original_index.get(vertices[a]),
                      original_index.get(vertices[b]),
                      original_index.get(vertices[c]));
         vertices.splice(b, 1);
-
-        yield evaluate_adjacent(
-          i == 0 ? vertices.length - 1 : i - 1,
-          (i + 0) % vertices.length,
-          (i + 1) % vertices.length
-        );
-        yield evaluate_adjacent(
-          (i + 1) % vertices.length,
-          (i + 2) % vertices.length,
-          (i + 3) % vertices.length
-        )
-
-        function evaluate_adjacent(a, b, c) {
-          const result = set_is_ear(a, b, c);
-          return ({
-            phase: 'clipping ...',
-            vertices,
-            active_tri_color: ({
-              [REJECTION_NONE       ]: [100, 255, 100],
-              [REJECTION_DETERMINANT]: [255,   0,   0],
-              [REJECTION_TRI_INSIDE ]: [  0,   0, 255],
-            })[result],
-            active_tri: [
-              original_index.get(vertices[a]),
-              original_index.get(vertices[b]),
-              original_index.get(vertices[c])
-            ],
-            known_ears: [] /* vertices.filter(x => is_ear.get(x)).map(x => {
-              const v_idx = vertices.indexOf(x);
-              return [
-                original_index.get(vertices.at(v_idx - 1)),
-                original_index.get(vertices.at(v_idx + 0)),
-                original_index.get(vertices.at((v_idx + 1) % vertices.length))
-              ];
-            })*/,
-            indices
-          })
-        }
 
         break;
       }
@@ -275,6 +288,7 @@ canvas.onmousemove = e => {
 
     state.hovered_vertex.x = mouse_screen_x;
     state.hovered_vertex.y = mouse_screen_y;
+    state.restart()
   }
 }
 {
@@ -287,24 +301,104 @@ canvas.onmousemove = e => {
       state.earclip_progress.phase = 'done!';
     }
   }
-  function restart() {
-    state.triangulator = step_triangulate(state.shape);
-    state.earclip_progress.active_tri = null;
-    state.earclip_progress.indices = [];
-    state.earclip_progress.vertices = structuredClone(state.shape);
-  }
 
   earclip_vis_next.onclick = next;
-  earclip_vis_restart.onclick = restart;
+  earclip_vis_next.onmousedown = () => {
+    let skip_first = true;
+    const x = setInterval(() => {
+      if (skip_first) { skip_first = false; return; }
+      next();
+    }, 100);
+    earclip_vis_next.onmouseup = () => clearInterval(x);
+  }
+  earclip_vis_restart.onclick = () => state.restart();
 
   window.onkeydown = e => {
     if (state.hovered_vertex && e.key == "Backspace" || e.key == "Delete") {
-      shape.splice(shape.indexOf(state.hovered_vertex), 1);
+      state.shape.splice(state.shape.indexOf(state.hovered_vertex), 1);
+      state.restart();
     }
 
     if (e.key == " ") next();
-    if (e.key == "Escape") restart()
+    if (e.key == "Escape") state.restart()
   }
+}
+
+/* naive copy-pastable version of this algorithm, used for performance timing */
+function earclip(vertices) {
+  const original_index = new Map(vertices.map((x, i) => [x, i]));
+
+  /* reverse shape if necessary */
+  {
+    let sum = 0;
+
+    /* signed area! */
+    for (let i = 0, j = vertices.length - 1; i < vertices.length; i++) {
+        sum += (vertices[j].x - vertices[i].x) * (vertices[i].y + vertices[j].y);
+        j = i;
+    }
+
+    if (sum < 0)
+      vertices.reverse();
+  }
+
+  function is_ear(a, b, c) {
+    /* it's an ear if the determinant is negative (convex) and there are no points inside of it */
+
+     /* convex check */
+     {
+       const d1x = vertices[a].x - vertices[b].x;
+       const d1y = vertices[a].y - vertices[b].y;
+       const d2x = vertices[b].x - vertices[c].x;
+       const d2y = vertices[b].y - vertices[c].y;
+       if ((d1x*d2y - d1y*d2x) < 0) {
+         return false;
+       }
+     }
+
+     /* make sure the triangle is empty inside */
+     let hit = false;
+     /* make sure no points from other triangles are inside this triangle */
+     for (let j = 0; j < vertices.length; j++) {
+       if (j == a || j == b || j == c) continue;
+
+       const p = vertices[j], v1 = vertices[a], v2 = vertices[b], v3 = vertices[c];
+       const alpha = ((v2.y - v3.y) * ( p.x - v3.x) + (v3.x - v2.x) * ( p.y - v3.y)) /
+                     ((v2.y - v3.y) * (v1.x - v3.x) + (v3.x - v2.x) * (v1.y - v3.y));
+       const beta = ((v3.y - v1.y) * ( p.x - v3.x) + (v1.x - v3.x) * ( p.y - v3.y)) /
+                    ((v2.y - v3.y) * (v1.x - v3.x) + (v3.x - v2.x) * (v1.y - v3.y));
+       const gamma = 1.0 - alpha - beta;
+       const contained = (alpha > 0 && beta > 0 && gamma > 0)
+
+       if (contained) {
+         hit = true;
+         break;
+       }
+     }
+     return !hit;
+  }
+
+  let indices = [];
+  let escape_hatch = 0;
+  while (vertices.length >= 3) {
+    for (let i = 0; i < vertices.length; i++) {
+      const a = (i + 0) % vertices.length;
+      const b = (i + 1) % vertices.length;
+      const c = (i + 2) % vertices.length;
+
+      if (is_ear(a, b, c)) {
+        indices.push(original_index.get(vertices[a]),
+                     original_index.get(vertices[b]),
+                     original_index.get(vertices[c]));
+        vertices.splice(b, 1);
+
+        break;
+      }
+    }
+
+    if (escape_hatch++ > 1e6) break;
+  }
+  return indices;
 }
 
 requestAnimationFrame(function render(now) {
@@ -315,41 +409,24 @@ requestAnimationFrame(function render(now) {
 
   const shape = state.shape;
   {
-    ctx.font = '75px sans-serif';
-
     let y = 100;
-    ctx.fillStyle = 'turquoise';
+
     if (state.earclip_progress.phase) {
+      ctx.fillStyle = 'turquoise';
+      ctx.font = '75px sans-serif';
       const text = 'phase: ' + state.earclip_progress.phase;
-      const w = ctx.measureText(text)
-      ctx.fillText(text, canvas.width - w.width - 30, y);
+      ctx.fillText(text, canvas.width - ctx.measureText(text).width - 30, y);
     }
     y += 100
 
     {
-      let forwards_determinant_sum = 0;
-
-      for (let i = 0; i < shape.length; i++) {
-        const a = (i + 0) % shape.length;
-        const b = (i + 1) % shape.length;
-        const c = (i + 2) % shape.length;
-
-        let d1x = shape[a].x - shape[b].x;
-        let d1y = shape[a].y - shape[b].y;
-        d1x /= Math.sqrt(d1x*d1x + d1y*d1y);
-        d1y /= Math.sqrt(d1x*d1x + d1y*d1y);
-        let d2x = shape[b].x - shape[c].x;
-        let d2y = shape[b].y - shape[c].y;
-        d2x /= Math.sqrt(d2x*d2x + d2y*d2y);
-        d2y /= Math.sqrt(d2x*d2x + d2y*d2y);
-        forwards_determinant_sum += (d1x*d2y - d1y*d2x);
-      }
-
       ctx.font = '50px sans-serif';
-      ctx.fillStyle = 'green';
-      ctx.fillText(forwards_determinant_sum, canvas.width - 200, y);
-      y += 80
+      ctx.fillStyle = 'chartreuse';
+      const text = 'triangulated in ' + state.ms_to_triangulate.toFixed(5) + 'ms';
+      const w = ctx.measureText(text)
+      ctx.fillText(text, canvas.width - w.width - 30, y);
     }
+    y += 100
   }
 
   ctx.save();
@@ -357,14 +434,20 @@ requestAnimationFrame(function render(now) {
     ctx.translate(canvas.width*0.5, canvas.height*0.5);
     canvas_transform = ctx.getTransform().inverse();
 
-    if (!mouse_down) {
-      state.hovered_midpoint = false;
-      state.hovered_vertex = false;
-    }
-
     ctx.lineWidth = 5;
     ctx.strokeStyle = 'white';
     {
+
+      let hovered_dist = Infinity;
+      if (state.hovered_vertex)
+        hovered_dist = Math.sqrt((state.hovered_vertex.x - mouse_screen_x)*(state.hovered_vertex.x - mouse_screen_x) +
+                                 (state.hovered_vertex.y - mouse_screen_y)*(state.hovered_vertex.y - mouse_screen_y));
+      if (state.hovered_midpoint)
+        hovered_dist = Math.sqrt((state.hovered_midpoint.x - mouse_screen_x)*(state.hovered_midpoint.x - mouse_screen_x) +
+                                 (state.hovered_midpoint.y - mouse_screen_y)*(state.hovered_midpoint.y - mouse_screen_y));
+
+      let hovered_vertex, hovered_midpoint;
+
       for (let i = 0; i < shape.length; i++) {
         const last = shape.at(i - 1);
         const next = shape.at(i);
@@ -377,11 +460,12 @@ requestAnimationFrame(function render(now) {
         const center_y = lerp(last.y, next.y, 0.5);
         const dist = Math.sqrt((center_x - mouse_screen_x)*(center_x - mouse_screen_x) +
                                (center_y - mouse_screen_y)*(center_y - mouse_screen_y));
-        const hover = dist < 30 && !mouse_down;
+        const hover = state.hovered_midpoint && (state.hovered_midpoint.x == center_x && state.hovered_midpoint.y == center_y);
         const size = (hover) ? 25 : 15;
-        if (hover) {
-          state.hovered_vertex = next;
-          state.hovered_midpoint = { x: center_x, y: center_y };
+        if ((dist < 30) && dist <= hovered_dist) {
+          hovered_vertex = next;
+          hovered_dist = dist;
+          hovered_midpoint = { x: center_x, y: center_y };
         }
         ctx.fillStyle = "magenta";
         ctx.translate(center_x, center_y);
@@ -395,9 +479,12 @@ requestAnimationFrame(function render(now) {
         const p = shape.at(i);
         const dist = Math.sqrt((p.x - mouse_screen_x)*(p.x - mouse_screen_x) +
                                (p.y - mouse_screen_y)*(p.y - mouse_screen_y));
-        const hover = dist < 30 && !mouse_down;
+        const hover = state.hovered_vertex == p && !state.hovered_midpoint;
         const size = hover ? 27 : 20;
-        if (hover) state.hovered_vertex = p;
+        if ((dist < 30) && dist <= hovered_dist) {
+          hovered_dist = dist;
+          hovered_vertex = p;
+        }
         ctx.fillStyle = "rgb(150, 50, 150)";
         ctx.beginPath()
         ctx.arc(p.x, p.y, size, 0, Math.PI*2);
@@ -426,6 +513,9 @@ requestAnimationFrame(function render(now) {
           ctx.fillText(det.toFixed(2), p.x + 20, p.y + 12);
         }
       }
+
+      state.hovered_vertex = hovered_vertex;
+      state.hovered_midpoint = hovered_midpoint;
     }
 
     if (state.earclip_progress.active_tri) {
@@ -460,6 +550,8 @@ requestAnimationFrame(function render(now) {
       }
     }
 
+    // state.earclip_progress.indices = earclip(structuredClone(shape));
+
     {
       const indices = state.earclip_progress.indices;
       for (let idx = 0; idx < indices.length; idx += 3) {
@@ -469,6 +561,19 @@ requestAnimationFrame(function render(now) {
         ctx.lineTo(shape[indices[idx + 2]].x, shape[indices[idx + 2]].y);
         ctx.fillStyle = 'rgba(100, 20, 100, 0.4)';
         ctx.fill();
+      }
+    }
+
+    {
+      const indices = state.earclip_progress.indices;
+      for (let idx = 0; idx < indices.length; idx += 3) {
+        ctx.beginPath();
+        ctx.moveTo(shape[indices[idx + 0]].x, shape[indices[idx + 0]].y);
+        ctx.lineTo(shape[indices[idx + 1]].x, shape[indices[idx + 1]].y);
+        ctx.lineTo(shape[indices[idx + 2]].x, shape[indices[idx + 2]].y);
+        ctx.lineTo(shape[indices[idx + 0]].x, shape[indices[idx + 0]].y);
+        ctx.strokeStyle = 'rgba(100, 20, 100, 0.2)';
+        ctx.stroke();
       }
     }
 
