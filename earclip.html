@@ -42,18 +42,23 @@ document, body { margin: 0px; padding: 0px; overflow: hidden; }
     <div class="hud">
       <button id="earclip_vis_next">next (hold)</button>
       <button id="earclip_vis_restart">restart</button>
-      <div style="background-color:white;font-family:sans-serif;">
+      <div style="color:white;font-family:sans-serif;">
         <label for="earclip_vis_preset_shape">Example:</label>
         <select id="earclip_vis_preset_shape"></select>
       </div>
+      <div style="color:white;font-family:sans-serif;">
+        <label for="earclip_vis_show_det">Show <span style="color:orange">determinant</span>:</label>
+        <input checked=true type="checkbox" id="earclip_vis_show_det"></input>
+      </div>
     </div>
     <div class="description">
-      <p> Earclipping is a technique used to <a href="https://en.wikipedia.org/wiki/Tessellation_(computer_graphics)">tesselate</a> shapes. </p>
+      <p> Earclipping is a technique used to <a href="https://en.wikipedia.org/wiki/Tessellation_(computer_graphics)">tesselate</a> shapes.  </p>
       <p> You can use it for <a href="https://www.chrishecker.com/My_Liner_Notes_for_Spore#cite_ref-3">creature creation</a> and other generative graphics tasks. </p>
       <p> This page is a minimal shape editor and earclipping visualizer. It helps you to understand how earclipping works. </p>
       <p> Click and drag a <span style="color: magenta">diamond shaped midpoint</span> to add and begin moving a new vertex. </p>
       <p> Click and drag a <span style="color: rgb(150, 50, 150)">circular vertex</span> to manipulate the shape, or hover and use Backspace to remove a vertex. </p>
-      <p> Click the "next" button to begin the earclipping process. </p>
+      <p> Click the "next" button to begin the earclipping process.
+          See also: <a href="https://github.com/memononen/libtess2">libtess</a>, <a href="https://github.com/mapbox/earcut">earcut</a>. </p>
     </div>
     <div class="legend">
       <b> Legend </b>
@@ -80,6 +85,7 @@ const state = {
   shape: [],
   ms_to_triangulate: Infinity,
   self_intersecting: false,
+  show_determinant: true,
 
   earclip_progress: {
     active_tri_color: [100, 20, 100],
@@ -224,6 +230,9 @@ const state = {
     state.shape = structuredClone(presets.get(dropdown.value));
     state.restart();
   })()
+  earclip_vis_show_det.oninput = () => {
+    state.show_determinant = earclip_vis_show_det.checked;
+  }
 }
 
 function *step_triangulate(shape) {
@@ -568,7 +577,7 @@ requestAnimationFrame(function render(now) {
         ctx.arc(p.x, p.y, size, 0, Math.PI*2);
         ctx.fill()
         
-        {
+        if (state.show_determinant) {
           const a = i == 0 ? shape.length - 1 : i - 1;
           const b = i;
           const c = (i + 1) % shape.length;
