@@ -4,11 +4,57 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <title>WebGL Demo</title>
-    <style> document, body { margin: 0px; padding: 0px; overflow: hidden; } </style>
+    <title>Earclipping Impl + Vis</title>
+    <style>
+document, body { margin: 0px; padding: 0px; overflow: hidden; }
+.hud {
+  position: absolute;
+  top: 0px;
+  left: 0px;
+  padding: 0.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+.description {
+  position: absolute;
+  padding: 0.4rem;
+  p { margin: 0px; }
+  bottom: 0px;
+  left: 0px;
+  font-family: sans-serif;
+  color: white;
+}
+.legend {
+  position: absolute;
+  padding: 0.4rem;
+  p { margin: 0px; }
+  bottom: 0px;
+  right: 0px;
+  font-family: sans-serif;
+  color: white;
+}
+</style>
   </head>
 
   <body>
+    <div class="hud">
+      <button id="earclip_vis_next">next</button>
+      <button id="earclip_vis_restart">restart</button>
+    </div>
+    <div class="description">
+      <p> Earclipping is a technique used to tesselate shapes. </p>
+      <p> This page is a minimal shape editor and earclipping visualizer. </p>
+      <p> Click and drag a <span style="color: magenta">diamond shaped midpoint</span> to add and begin moving a new vertex. </p>
+      <p> Click and drag a <span style="color: rgb(150, 50, 150)">circular vertex</span> to manipulate the shape. </p>
+      <p> Click the "next" button to begin the earclipping process. </p>
+    </div>
+    <div class="legend">
+      <p style="color: rgb(255, 100, 100)"> Triangle is concave (innie, dip), not convex (outie, ear). </p>
+      <p style="color: rgb(100, 100, 255)"> This triangle is convex, but has other points inside it. </p>
+      <p style="color: rgb(100, 255, 100)"> Good triangle! It's an ear! </p>
+      <p style="color: orange"> Determinant of this vertex; used to determine concavity. </p>
+    </div>
     <canvas id="glcanvas"></canvas>
     <script>"use strict";
 
@@ -21,47 +67,243 @@ const ctx = canvas.getContext('2d');
    canvas.style.height = window.innerHeight + 'px';
  })();
 
-let hovered_vertex = null;
-let hovered_midpoint = null;
-let shape = [
-  { "x":  -45, "y":  248 },
-  { "x":  183, "y":  140 },
-  { "x":   65, "y": -504 },
-  { "x":   89, "y":   68 },
-  { "x":  -27, "y":  118 },
-  { "x": -691, "y":  -38 }
-];
+const state = {
+  hovered_vertex: null,
+  hovered_midpoint: null,
+  shape: [
+    { "x":  -45, "y":  248 },
+    { "x":  183, "y":  140 },
+    { "x":   65, "y": -504 },
+    { "x":   89, "y":   68 },
+    { "x":  -27, "y":  118 },
+    { "x": -691, "y":  -38 }
+  ],
 
+  earclip_progress: {
+    active_tri_color: [100, 20, 100],
+    active_tri: null,
+    indices: [],
+    vertices: [],
+    phase: ""
+  },
+};
+state.triangulator = step_triangulate(state.shape);
+
+function *step_triangulate(shape) {
+  const vertices = structuredClone(shape);
+  const is_ear         = new Map(vertices.map(x => [x, false]));
+  const original_index = new Map(vertices.map((x, i) => [x, i]));
+
+  /* reverse shape if necessary */
+  {
+    let forwards_determinant_sum = 0;
+
+    for (let i = 0; i < shape.length; i++) {
+      const a = (i + 0) % shape.length;
+      const b = (i + 1) % shape.length;
+      const c = (i + 2) % shape.length;
+
+      let d1x = shape[a].x - shape[b].x;
+      let d1y = shape[a].y - shape[b].y;
+      d1x /= Math.sqrt(d1x*d1x + d1y*d1y);
+      d1y /= Math.sqrt(d1x*d1x + d1y*d1y);
+      let d2x = shape[b].x - shape[c].x;
+      let d2y = shape[b].y - shape[c].y;
+      d2x /= Math.sqrt(d2x*d2x + d2y*d2y);
+      d2y /= Math.sqrt(d2x*d2x + d2y*d2y);
+      forwards_determinant_sum += (d1x*d2y - d1y*d2x);
+    }
+
+    if (forwards_determinant_sum < 0)
+      vertices.reverse();
+  }
+
+  const REJECTION_NONE        = 0
+  const REJECTION_DETERMINANT = 1
+  const REJECTION_TRI_INSIDE  = 2
+  function set_is_ear(a, b, c) {
+    /* it's an ear if the determinant is negative (convex)
+     * and there are no points inside of it */
+
+     /* convex check */
+     {
+       const d1x = vertices[a].x - vertices[b].x;
+       const d1y = vertices[a].y - vertices[b].y;
+       const d2x = vertices[b].x - vertices[c].x;
+       const d2y = vertices[b].y - vertices[c].y;
+       if ((d1x*d2y - d1y*d2x) < 0) {
+         is_ear.set(vertices[b], false);
+         return REJECTION_DETERMINANT;
+       }
+     }
+
+     /* make sure the triangle is empty inside, akin to this author */
+     let hit = false;
+     {
+       /* make sure no points from other triangles are inside this triangle */
+       for (let j = 0; j < vertices.length; j++) {
+         if (j == a || j == b || j == c) continue;
+
+         const p = vertices[j], v1 = vertices[a], v2 = vertices[b], v3 = vertices[c];
+         const alpha = ((v2.y - v3.y) * ( p.x - v3.x) + (v3.x - v2.x) * ( p.y - v3.y)) /
+                       ((v2.y - v3.y) * (v1.x - v3.x) + (v3.x - v2.x) * (v1.y - v3.y));
+         const beta = ((v3.y - v1.y) * ( p.x - v3.x) + (v1.x - v3.x) * ( p.y - v3.y)) /
+                      ((v2.y - v3.y) * (v1.x - v3.x) + (v3.x - v2.x) * (v1.y - v3.y));
+         const gamma = 1.0 - alpha - beta;
+         const contained = (alpha > 0 && beta > 0 && gamma > 0)
+
+         if (contained) {
+           hit = true;
+           break;
+         }
+       }
+     }
+     is_ear.set(vertices[b], !hit);
+     return hit ? REJECTION_TRI_INSIDE : REJECTION_NONE;
+  }
+
+  let indices = [];
+
+  /* loop through all verts, find ears */
+  for (let i = 0; i < vertices.length; i++) {
+    const a = (i + 0) % vertices.length;
+    const b = (i + 1) % vertices.length;
+    const c = (i + 2) % vertices.length;
+    const result = set_is_ear(a, b, c);
+    yield ({
+      phase: 'initial triangulation',
+      vertices,
+      active_tri_color: ({
+        [REJECTION_NONE       ]: [100, 255, 100],
+        [REJECTION_DETERMINANT]: [255,   0,   0],
+        [REJECTION_TRI_INSIDE ]: [  0,   0, 255],
+      })[result],
+      active_tri: [
+        original_index.get(vertices[a]),
+        original_index.get(vertices[b]),
+        original_index.get(vertices[c])
+      ],
+      known_ears: vertices.filter(x => is_ear.get(x)).map(x => {
+        const v_idx = vertices.indexOf(x);
+        return [
+          original_index.get(vertices.at(v_idx - 1)),
+          original_index.get(vertices.at(v_idx + 0)),
+          original_index.get(vertices.at((v_idx + 1) % vertices.length))
+        ];
+      }),
+      indices
+    })
+  }
+
+  while (vertices.length >= 3) {
+    for (let i = 0; i < vertices.length; i++) {
+      const a = (i + 0) % vertices.length;
+      const b = (i + 1) % vertices.length;
+      const c = (i + 2) % vertices.length;
+
+      if (is_ear.get(vertices[b])) {
+        indices.push(original_index.get(vertices[a]),
+                     original_index.get(vertices[b]),
+                     original_index.get(vertices[c]));
+        vertices.splice(b, 1);
+
+        yield evaluate_adjacent(
+          i == 0 ? vertices.length - 1 : i - 1,
+          (i + 0) % vertices.length,
+          (i + 1) % vertices.length
+        );
+        yield evaluate_adjacent(
+          (i + 1) % vertices.length,
+          (i + 2) % vertices.length,
+          (i + 3) % vertices.length
+        )
+
+        function evaluate_adjacent(a, b, c) {
+          const result = set_is_ear(a, b, c);
+          return ({
+            phase: 'clipping ...',
+            vertices,
+            active_tri_color: ({
+              [REJECTION_NONE       ]: [100, 255, 100],
+              [REJECTION_DETERMINANT]: [255,   0,   0],
+              [REJECTION_TRI_INSIDE ]: [  0,   0, 255],
+            })[result],
+            active_tri: [
+              original_index.get(vertices[a]),
+              original_index.get(vertices[b]),
+              original_index.get(vertices[c])
+            ],
+            known_ears: [] /* vertices.filter(x => is_ear.get(x)).map(x => {
+              const v_idx = vertices.indexOf(x);
+              return [
+                original_index.get(vertices.at(v_idx - 1)),
+                original_index.get(vertices.at(v_idx + 0)),
+                original_index.get(vertices.at((v_idx + 1) % vertices.length))
+              ];
+            })*/,
+            indices
+          })
+        }
+
+        break;
+      }
+    }
+  }
+}
 let canvas_transform;
 let mouse_screen_x = 0;
 let mouse_screen_y = 0;
 let mouse_down = false;
-window.onmouseup = e => {
+canvas.onmouseup = e => {
   mouse_down = false;
 }
-window.onmousedown = e => {
+canvas.onmousedown = e => {
   mouse_down = true;
 }
-window.onmousemove = e => {
+canvas.onmousemove = e => {
   if (!canvas_transform) return;
   const mouse = canvas_transform.transformPoint(new DOMPoint(e.offsetX * window.devicePixelRatio, e.offsetY * window.devicePixelRatio))
   mouse_screen_x = mouse.x;
   mouse_screen_y = mouse.y;
 
-  if (mouse_down && hovered_vertex) {
-    if (hovered_midpoint) {
-      shape.splice(shape.indexOf(hovered_vertex), 0, hovered_midpoint);
-      hovered_vertex = hovered_midpoint;
-      hovered_midpoint = null;
+  if (mouse_down && state.hovered_vertex) {
+    if (state.hovered_midpoint) {
+      state.shape.splice(state.shape.indexOf(state.hovered_vertex), 0, state.hovered_midpoint);
+      state.hovered_vertex = state.hovered_midpoint;
+      state.hovered_midpoint = null;
     }
 
-    hovered_vertex.x = mouse_screen_x;
-    hovered_vertex.y = mouse_screen_y;
+    state.hovered_vertex.x = mouse_screen_x;
+    state.hovered_vertex.y = mouse_screen_y;
   }
 }
-window.onkeydown = e => {
-  if (hovered_vertex && e.key == "Backspace" || e.key == "Delete") {
-    shape.splice(shape.indexOf(hovered_vertex), 1);
+{
+  function next() {
+    const progress = state.triangulator.next().value;
+    if (progress) {
+      state.earclip_progress = progress;
+    } else {
+      state.earclip_progress.active_tri = null;
+      state.earclip_progress.phase = 'done!';
+    }
+  }
+  function restart() {
+    state.triangulator = step_triangulate(state.shape);
+    state.earclip_progress.active_tri = null;
+    state.earclip_progress.indices = [];
+    state.earclip_progress.vertices = structuredClone(state.shape);
+  }
+
+  earclip_vis_next.onclick = next;
+  earclip_vis_restart.onclick = restart;
+
+  window.onkeydown = e => {
+    if (state.hovered_vertex && e.key == "Backspace" || e.key == "Delete") {
+      shape.splice(shape.indexOf(state.hovered_vertex), 1);
+    }
+
+    if (e.key == " ") next();
+    if (e.key == "Escape") restart()
   }
 }
 
@@ -71,37 +313,43 @@ requestAnimationFrame(function render(now) {
   ctx.fillStyle = "black";
   ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-  let needs_flip = false;
+  const shape = state.shape;
   {
     ctx.font = '75px sans-serif';
 
-    let dets = [0, 0];
+    let y = 100;
+    ctx.fillStyle = 'turquoise';
+    if (state.earclip_progress.phase) {
+      const text = 'phase: ' + state.earclip_progress.phase;
+      const w = ctx.measureText(text)
+      ctx.fillText(text, canvas.width - w.width - 30, y);
+    }
+    y += 100
 
-    for (let det = 0; det < dets.length; det++) {
+    {
+      let forwards_determinant_sum = 0;
+
       for (let i = 0; i < shape.length; i++) {
         const a = (i + 0) % shape.length;
         const b = (i + 1) % shape.length;
         const c = (i + 2) % shape.length;
 
-        const d1x = shape[a].x - shape[b].x;
-        const d1y = shape[a].y - shape[b].y;
-        const d2x = shape[b].x - shape[c].x;
-        const d2y = shape[b].y - shape[c].y;
-        dets[det] += (d1x*d2y - d1y*d2x);
+        let d1x = shape[a].x - shape[b].x;
+        let d1y = shape[a].y - shape[b].y;
+        d1x /= Math.sqrt(d1x*d1x + d1y*d1y);
+        d1y /= Math.sqrt(d1x*d1x + d1y*d1y);
+        let d2x = shape[b].x - shape[c].x;
+        let d2y = shape[b].y - shape[c].y;
+        d2x /= Math.sqrt(d2x*d2x + d2y*d2y);
+        d2y /= Math.sqrt(d2x*d2x + d2y*d2y);
+        forwards_determinant_sum += (d1x*d2y - d1y*d2x);
       }
-      shape.reverse();
+
+      ctx.font = '50px sans-serif';
+      ctx.fillStyle = 'green';
+      ctx.fillText(forwards_determinant_sum, canvas.width - 200, y);
+      y += 80
     }
-
-    if (dets[1] > 0) needs_flip = true;
-
-    let y = 100;
-    ctx.fillStyle = 'turquoise';
-    ctx.fillText(dets[0].toFixed(2), canvas.width - 400, y);
-    y += 100
-
-    ctx.fillStyle = 'orange';
-    ctx.fillText(dets[1].toFixed(2), canvas.width - 400, y);
-    y += 100
   }
 
   ctx.save();
@@ -109,130 +357,119 @@ requestAnimationFrame(function render(now) {
     ctx.translate(canvas.width*0.5, canvas.height*0.5);
     canvas_transform = ctx.getTransform().inverse();
 
-    ctx.fillStyle = "red";
-    ctx.fillRect(mouse_screen_x - 5, mouse_screen_y - 5, 10, 10);
-
     if (!mouse_down) {
-      hovered_midpoint = false;
-      hovered_vertex = false;
+      state.hovered_midpoint = false;
+      state.hovered_vertex = false;
     }
 
     ctx.lineWidth = 5;
     ctx.strokeStyle = 'white';
-    for (let i = 0; i < shape.length; i++) {
-      const last = shape.at(i - 1);
-      const next = shape.at(i);
-      ctx.beginPath();
-      ctx.moveTo(last.x, last.y)
-      ctx.lineTo(next.x, next.y)
-      ctx.stroke();
-
-      const center_x = lerp(last.x, next.x, 0.5);
-      const center_y = lerp(last.y, next.y, 0.5);
-      const dist = Math.sqrt((center_x - mouse_screen_x)*(center_x - mouse_screen_x) +
-                             (center_y - mouse_screen_y)*(center_y - mouse_screen_y));
-      const hover = dist < 30 && !mouse_down;
-      const size = (hover) ? 25 : 15;
-      if (hover) {
-        hovered_vertex = next;
-        hovered_midpoint = { x: center_x, y: center_y };
-      }
-      ctx.fillStyle = "magenta";
-      ctx.translate(center_x, center_y);
-      ctx.rotate(-Math.PI*0.25)
-      ctx.fillRect(-size*0.5, -size*0.5, size, size);
-      ctx.rotate( Math.PI*0.25)
-      ctx.translate(-center_x, -center_y);
-    }
-
-    for (let i = 0; i < shape.length; i++) {
-      const p = shape.at(i);
-      const dist = Math.sqrt((p.x - mouse_screen_x)*(p.x - mouse_screen_x) +
-                             (p.y - mouse_screen_y)*(p.y - mouse_screen_y));
-      const hover = dist < 30 && !mouse_down;
-      const size = hover ? 27 : 20;
-      if (hover) hovered_vertex = p;
-      ctx.fillStyle = "purple";
-      ctx.beginPath()
-      ctx.arc(p.x, p.y, size, 0, Math.PI*2);
-      ctx.fill()
-    }
-
-    const indices = [];
     {
-      const vertices = structuredClone(shape);
-      if (needs_flip) vertices.reverse();
-      const is_ear         = new Map(vertices.map(x => [x, false]));
-      const original_index = new Map(vertices.map((x, i) => [x, i]));
+      for (let i = 0; i < shape.length; i++) {
+        const last = shape.at(i - 1);
+        const next = shape.at(i);
+        ctx.beginPath();
+        ctx.moveTo(last.x, last.y)
+        ctx.lineTo(next.x, next.y)
+        ctx.stroke();
 
-      function set_is_ear(a, b, c) {
-        /* it's an ear if the determinant is negative (convex)
-         * and there are no points inside of it */
-
-         /* convex check */
-         {
-           const d1x = vertices[a].x - vertices[b].x;
-           const d1y = vertices[a].y - vertices[b].y;
-           const d2x = vertices[b].x - vertices[c].x;
-           const d2y = vertices[b].y - vertices[c].y;
-           if ((d1x*d2y - d1y*d2x) < 0) {
-             is_ear.set(vertices[b], false);
-             return;
-           }
-         }
-
-         /* make sure the triangle is empty inside, akin to this author */
-         let hit = false;
-         for (let j = 0; j < vertices.length; j++) {
-           if (j == a || j == b || j == c) continue;
-
-           const p = vertices[j], v1 = vertices[a], v2 = vertices[b], v3 = vertices[c];
-           const alpha = ((v2.y - v3.y) * ( p.x - v3.x) + (v3.x - v2.x) * ( p.y - v3.y)) /
-                         ((v2.y - v3.y) * (v1.x - v3.x) + (v3.x - v2.x) * (v1.y - v3.y));
-           const beta = ((v3.y - v1.y) * ( p.x - v3.x) + (v1.x - v3.x) * ( p.y - v3.y)) /
-                        ((v2.y - v3.y) * (v1.x - v3.x) + (v3.x - v2.x) * (v1.y - v3.y));
-           const gamma = 1.0 - alpha - beta;
-           const contained = (alpha > 0 && beta > 0 && gamma > 0)
-
-           if (contained) {
-             hit = true;
-             break;
-           }
-         }
-         is_ear.set(vertices[b], !hit);
+        const center_x = lerp(last.x, next.x, 0.5);
+        const center_y = lerp(last.y, next.y, 0.5);
+        const dist = Math.sqrt((center_x - mouse_screen_x)*(center_x - mouse_screen_x) +
+                               (center_y - mouse_screen_y)*(center_y - mouse_screen_y));
+        const hover = dist < 30 && !mouse_down;
+        const size = (hover) ? 25 : 15;
+        if (hover) {
+          state.hovered_vertex = next;
+          state.hovered_midpoint = { x: center_x, y: center_y };
+        }
+        ctx.fillStyle = "magenta";
+        ctx.translate(center_x, center_y);
+        ctx.rotate(-Math.PI*0.25)
+        ctx.fillRect(-size*0.5, -size*0.5, size, size);
+        ctx.rotate( Math.PI*0.25)
+        ctx.translate(-center_x, -center_y);
       }
 
-      while (vertices.length >= 3) {
+      for (let i = 0; i < shape.length; i++) {
+        const p = shape.at(i);
+        const dist = Math.sqrt((p.x - mouse_screen_x)*(p.x - mouse_screen_x) +
+                               (p.y - mouse_screen_y)*(p.y - mouse_screen_y));
+        const hover = dist < 30 && !mouse_down;
+        const size = hover ? 27 : 20;
+        if (hover) state.hovered_vertex = p;
+        ctx.fillStyle = "rgb(150, 50, 150)";
+        ctx.beginPath()
+        ctx.arc(p.x, p.y, size, 0, Math.PI*2);
+        ctx.fill()
+        
+        {
+          const a = i == 0 ? shape.length - 1 : i - 1;
+          const b = i;
+          const c = (i + 1) % shape.length;
 
-         /* loop through all verts, find ears */
-         for (let i = 0; i < vertices.length; i++) 
-           set_is_ear((i + 0) % vertices.length,
-                      (i + 1) % vertices.length,
-                      (i + 2) % vertices.length);
+          let det;
+          {
+             let d1x = shape[a].x - shape[b].x;
+             let d1y = shape[a].y - shape[b].y;
+             d1x /= Math.sqrt(d1x*d1x + d1y*d1y);
+             d1y /= Math.sqrt(d1x*d1x + d1y*d1y);
+             let d2x = shape[b].x - shape[c].x;
+             let d2y = shape[b].y - shape[c].y;
+             d2x /= Math.sqrt(d2x*d2x + d2y*d2y);
+             d2y /= Math.sqrt(d2x*d2x + d2y*d2y);
+             det = (d1x*d2y - d1y*d2x);
+          }
 
-         for (let i = 0; i < vertices.length; i++) {
-           const a = (i + 0) % vertices.length;
-           const b = (i + 1) % vertices.length;
-           const c = (i + 2) % vertices.length;
-
-           if (is_ear.get(vertices[i])) {
-             indices.push(original_index.get(vertices[a]),
-                          original_index.get(vertices[b]),
-                          original_index.get(vertices[c]));
-             vertices.splice(b, 1);
-
-             break;
-           }
-         }
+          ctx.fillStyle = 'orange';
+          ctx.font = '50px sans-serif';
+          ctx.fillText(det.toFixed(2), p.x + 20, p.y + 12);
+        }
       }
     }
-    for (let idx = 0; idx < indices.length; idx += 3) {
-      ctx.beginPath();
-      ctx.moveTo(shape[indices[idx + 0]].x, shape[indices[idx + 0]].y);
-      ctx.lineTo(shape[indices[idx + 1]].x, shape[indices[idx + 1]].y);
-      ctx.lineTo(shape[indices[idx + 2]].x, shape[indices[idx + 2]].y);
-      ctx.fillStyle = 'rgba(100, 20, 100, 0.2)';
-      ctx.fill();
+
+    if (state.earclip_progress.active_tri) {
+      const { vertices, active_tri, active_tri_color } = state.earclip_progress;
+
+      for (let i = 0; i < vertices.length; i++) {
+        const last = vertices.at(i - 1);
+        const next = vertices.at(i);
+        ctx.beginPath();
+        ctx.moveTo(last.x, last.y)
+        ctx.lineTo(next.x, next.y)
+        ctx.strokeStyle = 'turquoise';
+        ctx.stroke();
+      }
+
+      {
+        ctx.beginPath();
+        ctx.moveTo(shape[active_tri[0]].x, shape[active_tri[0]].y);
+        ctx.lineTo(shape[active_tri[1]].x, shape[active_tri[1]].y);
+        ctx.lineTo(shape[active_tri[2]].x, shape[active_tri[2]].y);
+        ctx.fillStyle = 'rgba(' + active_tri_color.join(', ') + ', 0.4)';
+        ctx.fill();
+      }
+
+      for (const ear of state.earclip_progress.known_ears) {
+        ctx.beginPath();
+        ctx.moveTo(shape[ear[0]].x, shape[ear[0]].y);
+        ctx.lineTo(shape[ear[1]].x, shape[ear[1]].y);
+        ctx.lineTo(shape[ear[2]].x, shape[ear[2]].y);
+        ctx.fillStyle = 'rgba(100, 255, 100, 0.2)';
+        ctx.fill();
+      }
+    }
+
+    {
+      const indices = state.earclip_progress.indices;
+      for (let idx = 0; idx < indices.length; idx += 3) {
+        ctx.beginPath();
+        ctx.moveTo(shape[indices[idx + 0]].x, shape[indices[idx + 0]].y);
+        ctx.lineTo(shape[indices[idx + 1]].x, shape[indices[idx + 1]].y);
+        ctx.lineTo(shape[indices[idx + 2]].x, shape[indices[idx + 2]].y);
+        ctx.fillStyle = 'rgba(100, 20, 100, 0.4)';
+        ctx.fill();
+      }
     }
 
   }
