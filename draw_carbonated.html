@@ -39,38 +39,10 @@ window.onmousemove = e => {
 
         const path = raw_paths[raw_paths.length - 1];
         if (path.length > 2) {
-            const d_norm = (a, b) => {
-                let dx = a.x - b.x;
-                let dy = a.y - b.y;
-                const dlen = Math.sqrt(dx*dx + dy*dy);
-                if (dlen > 0) {
-                    dx /= dlen;
-                    dy /= dlen;
-                }
-                return { x: dx, y: dy };
-            }
-            const dot = (a, b) => a.x*b.x + a.y*b.y;
 
-            let current_dnorm = d_norm(path[0], path[1]);
-            let current_start = path[0];
-            let new_line = false;
             const out = [path[0]];
             for (const p of path) {
-                if (new_line) {
-                    current_dnorm = d_norm(current_start, p);
-                    new_line = false;
-                    continue;
-                }
-
-                const new_dnorm = d_norm(current_start, p);
-                if (new_dnorm.x == 0 && new_dnorm.y == 0) continue;
-
-                console.log(dot(current_dnorm, new_dnorm));
-                if (dot(current_dnorm, new_dnorm) < 0.98) {
-                    out.push(p);
-                    current_start = p;
-                    new_line = true;
-                }
+                out.push({ x: p.x + Math.random() * 10, y: p.y + Math.random() * 10 });
             }
 
             out.push(mouse);
