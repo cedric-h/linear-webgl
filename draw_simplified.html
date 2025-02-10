@@ -78,6 +78,11 @@ segments_example.onclick = () => {
     }
 }
 
+const extractValue = (value) => {
+    value = parseFloat(value);
+    if (isNaN(value)) return 0;
+    return value;
+}
 function add_point(mouse, raw_path_index=(raw_paths.length - 1), add_raw=true) {
     if (add_raw) raw_paths[raw_path_index].push(mouse);
 
@@ -114,7 +119,7 @@ function add_point(mouse, raw_path_index=(raw_paths.length - 1), add_raw=true) {
 
             const dot = to_start_x*current_delta_x + to_start_y*current_delta_y;
             if (isNaN(dot)) debugger;
-            if (Math.abs(1 - dot) > parseFloat(segment_angle.value)) {
+            if (Math.abs(1 - dot) > extractValue(segment_angle.value)) {
                 let broke = false;
                 
                 for (let next_i = i + 1; ; next_i++){
@@ -122,7 +127,7 @@ function add_point(mouse, raw_path_index=(raw_paths.length - 1), add_raw=true) {
                     current_delta_x = this_p.x - path[next_i].x;
                     current_delta_y = this_p.y - path[next_i].y;
                     const len = Math.sqrt(current_delta_x*current_delta_x + current_delta_y*current_delta_y);
-                    if (len <= parseFloat(segment_threshold.value)) continue;
+                    if (len <= extractValue(segment_threshold.value)) continue;
                     current_delta_x /= len;
                     current_delta_y /= len;
                     broke = true;
