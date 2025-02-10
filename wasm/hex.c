@@ -115,6 +115,8 @@ WASM_EXPORT("resize")
 void resize(float size_x, float size_y) {
     canvas.size_x = size_x;
     canvas.size_y = size_y;
+    camera.pos.x = size_x * 0.5;
+    camera.pos.y = size_y * 0.5;
     gl_viewport(0, 0, size_x, size_y);
 }
 
