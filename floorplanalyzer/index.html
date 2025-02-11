@@ -243,19 +243,26 @@ function analyze_floorplan(img) {
     const cost_from = new Map();
 
     const debug = floorplans.save.debug;
-    const radius = Math.ceil(10 * UI_SCALE);
-    for (let box_x = -radius; box_x <= radius; box_x++) {
-      for (let box_y = -radius; box_y <= radius; box_y++) {
-        if (Math.abs(box_x) != radius && Math.abs(box_y) != radius) continue;
-        const x = debug.pos.x + box_x;
-        const y = debug.pos.y + box_y;
+    for (let y = bbox.min.y; y <= bbox.max.y; y += 1) {
+      for (let x = bbox.min.x; x <= bbox.max.x; x += 1) {
+        const is_min = x == bbox.min.x || y == bbox.min.y;
+        const is_max = x == bbox.max.x || y == bbox.max.y;
+        const is_x   = x == bbox.min.x || x == bbox.max.x;
+        const is_y   = y == bbox.min.y || y == bbox.max.y;
+        if (!is_min && !is_max) continue;
+        if (is_x && is_y) continue; /* I hate edge cases */
         if (!in_bounds(x, y)) continue;
 
         const i = (y*size_x + x)*4 + 1;
         if (pixels[i] >= 250) continue;
         const pt = { x, y, traced_back: false };
         frontier.push(pt);
-        came_from.set(pt, null);
+
+        let origin_x = x;
+        let origin_y = y;
+        if (is_x) origin_x += is_min ? -1 : 1;
+        if (is_y) origin_y += is_min ? -1 : 1;
+        came_from.set(pt, { x: origin_x, y: origin_y });
         cost_from.set(pt, 0);
         pixels[i] = 255;
       }
@@ -273,92 +280,94 @@ function analyze_floorplan(img) {
        * best way to do that? keep going in the direction that gave good results
        */
       const parent = came_from.get(pt);
-      const pdx = parent ? pt.x - parent.x : 1;
-      const pdy = parent ? pt.y - parent.y : 0;
-
-      /* ZIG-ZAG MODE */
-      /* I think this works better than straight lines because
-       * we sort by "number of steps from start" after this step. */
-      // if (Math.abs(pdx) > Math.abs(pdy)) {
-      //   eval_pt(pt.x + pdx, pt.y + 0);
-      //   eval_pt(pt.x - pdx, pt.y + 0);
-      //   eval_pt(pt.x +   0, pt.y + 1);
-      //   eval_pt(pt.x +   0, pt.y - 1);
-      // } else {
-      //   eval_pt(pt.x + 0, pt.y + pdy);
-      //   eval_pt(pt.x + 0, pt.y - pdy);
-      //   eval_pt(pt.x + 1, pt.y +   0);
-      //   eval_pt(pt.x - 1, pt.y +   0);
-      // }
+      const pdx = Math.sign(parent.x - pt.x);
+      const pdy = Math.sign(parent.y - pt.y);
 
       /* STRAIGHT MODE */
       if (Math.abs(pdx) > Math.abs(pdy)) {
         eval_pt(pt.x +   0, pt.y + 1);
         eval_pt(pt.x +   0, pt.y - 1);
-        eval_pt(pt.x + pdx, pt.y + 0);
         eval_pt(pt.x - pdx, pt.y + 0);
+        eval_pt(pt.x + pdx, pt.y + 0);
       } else {
         eval_pt(pt.x + 1, pt.y +   0);
         eval_pt(pt.x - 1, pt.y +   0);
-        eval_pt(pt.x + 0, pt.y + pdy);
         eval_pt(pt.x + 0, pt.y - pdy);
+        eval_pt(pt.x + 0, pt.y + pdy);
       }
 
       function eval_pt(x, y) {
         if (in_bounds(x, y) && pixels[(y*size_x + x)*4 + 1] < 250) {
           pixels[(y*size_x + x)*4 + 1] = 255;
           const new_pt = { x, y, traced_back: false };
-          frontier.push(new_pt);
+          frontier.unshift(new_pt);
           came_from.set(new_pt, pt);
           cost_from.set(new_pt, cost_from.get(pt) + 1);
         }
       }
     }
 
-    let start = { x: debug.pos.x, y: debug.pos.y };
     lines = []
 
     /* make a tree by walking back through each "came_from"
      * and making sure each unique segment is in the list o' lines */
-    const step_size = 100; /* lever to control LOD */
 
     const most_distal = [...cost_from.entries()].sort((a, b) => b[1] - a[1]);
-    for (let [step, _] of most_distal) {
-      const path = [step];
+    for (let [me, _] of most_distal) {
+      const path = [me];
       let trunk = null;
 
-      let ancestor = came_from.get(step);
-      if (ancestor) {
-        let last_dx = ancestor.x - step.x;
-        let last_dy = ancestor.y - step.y;
+      let parent = came_from.get(me);
+      let grandparent = came_from.get(parent);
 
-        for (; ancestor = came_from.get(ancestor); ) {
-          if (ancestor.traced_back) {
-            path.push(ancestor);
-            trunk = ancestor;
+      if (parent && grandparent) {
+        parent.traced_back = true;
+
+        let last_dx = grandparent.x - me.x;
+        let last_dy = grandparent.y - me.y;
+
+        while (grandparent) {
+          if (grandparent.traced_back) {
+            path.push(grandparent);
+            trunk = grandparent;
             break;
           }
 
-          let dx = Math.sign(ancestor.x - step.x);
-          let dy = Math.sign(ancestor.y - step.y);
-          if ((dx || dy) && dx != last_dx || dy != last_dy) {
-            step = ancestor;
+          let dx = grandparent.x - me.x;
+          let dy = grandparent.y - me.y;
+          if (dx != last_dx ||
+              dy != last_dy) {
             last_dx = dx;
             last_dy = dy;
-            path.push(step);
+            path.push(me);
           }
 
-          ancestor.traced_back = true;
+          grandparent.traced_back = true;
+
+          me = parent;
+          parent = grandparent;
+          grandparent = came_from.get(grandparent);
         }
       }
 
-      if (path.length > 2)
-        lines.push({ trunk, path });
+      if (path.length > 2) {
+        const coarseness = 5;
+        const round = ({ x, y }) => ({ x: Math.round(x / coarseness) * coarseness, y: Math.round(y / coarseness) * coarseness });
+        const lerpv = (a, b, t) => ({ x: lerp(a.x, b.x, t), y: lerp(a.y, b.y, t) });
+        const t = -1;
+
+        for (let i = 1; i < path.length; i++) {
+          const from = round(path[i-1]);
+          const to = round(path[i]);
+          lines.push([lerpv(from, to, t), lerpv(to, from, t)]);
+        }
+      }
     }
 
   }
 
-  // lines = lines.slice(1); // [lines[0]];
+  // lines = lines.slice(1);
+  // lines = lines.slice(0, 1);
 
   /* simplify the overly detailed raster lines */
   if (0) {
@@ -521,28 +530,20 @@ requestAnimationFrame(function render(now) {
           world_transform = ctx.getTransform().inverse();
         }
 
-        for (const { trunk, path } of floorplans.analysis.lines) {
-
-          /* draw trunk */
-          if (trunk) {
-            ctx.fillStyle = "magenta";
-            const size = 15 * UI_SCALE;
-            ctx.fillRect(trunk.x - size*0.5, trunk.y - size*0.5, size, size);
-          }
-
+        for (const line of floorplans.analysis.lines) {
           ctx.beginPath();
-          ctx.moveTo(path[0].x, path[0].y);
-          for (let i = 0; i < path.length; i++) {
-            const p = path[i];
+          ctx.moveTo(line[0].x, line[0].y);
+          for (let i = 0; i < line.length; i++) {
+            const p = line[i];
 
             ctx.lineTo(p.x, p.y);
 
             ctx.fillStyle = "blue";
-            const size = 5 * UI_SCALE;
+            const size = 2 * UI_SCALE;
             ctx.fillRect(p.x - size*0.5, p.y - size*0.5, size, size);
           }
           ctx.strokeStyle = 'purple';
-          ctx.lineWidth = 2*UI_SCALE;
+          ctx.lineWidth = 1*UI_SCALE;
           ctx.stroke();
         }
       }
