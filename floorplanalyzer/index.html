@@ -35,7 +35,6 @@ document, body { margin: 0px; padding: 0px; overflow: hidden; }
 
 #side_canvas {
   position: absolute;
-  top: calc((100% - 400px)/2);
   right: 50px;
 }
     </style>
@@ -291,8 +290,10 @@ function analyze_floorplan(img) {
       let dx = a.x - b.x;
       let dy = a.y - b.y;
       const dist = Math.sqrt(dx*dx + dy*dy);
-      if (dist < 25) continue;
+      if (dist < 10) continue;
       const extension_len = 175;
+
+      /* TODO: right now we only check the side of one line */
 
       // lines.push([{ x: a.x + dx, y: b.y + dy }, a]);
 
@@ -620,11 +621,20 @@ requestAnimationFrame(function render(now) {
 
 {
   const side_canvas = document.getElementById("side_canvas");
-  const size = 400;
-  side_canvas.width = size*window.devicePixelRatio;
-  side_canvas.height = size*window.devicePixelRatio;
-  side_canvas.style.width = size + 'px';
-  side_canvas.style.height = size + 'px';
+
+  const resize = () => {
+    const size = Math.min(window.innerWidth - WORKING_SCALE, window.innerWidth * 0.5);
+    side_canvas.style.top = (window.innerHeight - size) * 0.5 + 'px';
+    side_canvas.width = size*window.devicePixelRatio;
+    side_canvas.height = size*window.devicePixelRatio;
+    side_canvas.style.width = size + 'px';
+    side_canvas.style.height = size + 'px';
+  }
+  window.addEventListener("resize", resize);
+  resize();
+
+  let lines_lo = [];
+  let lines_hi = [];
   canvas3D(
     side_canvas,
     {
@@ -639,42 +649,52 @@ requestAnimationFrame(function render(now) {
       ctx.lineWidth = 0.15 * 40;
       ctx.miterLimit = 1; /* prevents lines from looking wobbly at oblique angles */
 
-      let p = new DOMPoint();
-      const t = (pt, z) => {
-        p.x =  WORKING_SCALE*0.5 - pt.x;
-        p.y = -WORKING_SCALE*0.5 + pt.y;
-        p.z = z;
-        p = transform(p);
-        return p;
-      }
-
       if (!floorplans.analysis?.lines) return;
+
       const floorplan = floorplans.active();
+
+      const size_x = WORKING_SCALE;
+      const size_y = WORKING_SCALE * (floorplan.height / floorplan.width);
+      const t = (pt, z) => 
+        transform(new DOMPoint(
+           size_x*0.5 - pt.x,
+          -size_y*0.5 + pt.y,
+          z
+        ));
+
+
+      const WALL_HEIGHT = 150;
+      for (let i = 0; i < floorplans.analysis.lines.length; i++) {
+        lines_lo[i*2 + 0] = t(floorplans.analysis.lines[i][0], 0);
+        lines_lo[i*2 + 1] = t(floorplans.analysis.lines[i][1], 0);
+        lines_hi[i*2 + 0] = t(floorplans.analysis.lines[i][0], WALL_HEIGHT);
+        lines_hi[i*2 + 1] = t(floorplans.analysis.lines[i][1], WALL_HEIGHT);
+      }
 
       /* draw bbox */
       {
         const bbox = floorplans.analysis.bbox;
         ctx.beginPath();
         let pt = { x: 0, y: 0 };
-        pt.x = bbox.min.x, pt.y = bbox.min.y; t(pt, 0); ctx.moveTo(p.x, p.y);
-        pt.x = bbox.min.x, pt.y = bbox.max.y; t(pt, 0); ctx.lineTo(p.x, p.y);
-        pt.x = bbox.max.x, pt.y = bbox.max.y; t(pt, 0); ctx.lineTo(p.x, p.y);
-        pt.x = bbox.max.x, pt.y = bbox.min.y; t(pt, 0); ctx.lineTo(p.x, p.y);
+
+        const bl = t({ x: bbox.min.x, y: bbox.min.y }, 0);
+        const tl = t({ x: bbox.min.x, y: bbox.max.y }, 0);
+        const tr = t({ x: bbox.max.x, y: bbox.max.y }, 0);
+        const br = t({ x: bbox.max.x, y: bbox.min.y }, 0);
+        ctx.moveTo(bl.x, bl.y);
+        ctx.lineTo(tl.x, tl.y);
+        ctx.lineTo(tr.x, tr.y);
+        ctx.lineTo(br.x, br.y);
         ctx.fillStyle = 'black';
         ctx.fill();
       }
 
       /* draw tops and bottoms of walls */
-      const WALL_HEIGHT = 150;
-      for (const z of [0, WALL_HEIGHT]) {
-        for (const line of floorplans.analysis.lines) {
+      for (const lines of [lines_lo, lines_hi]) {
+        for (let i = 0; i < floorplans.analysis.lines.length; i++) {
           ctx.beginPath();
-          ctx.moveTo(t(line[0], z).x, t(line[0], z).y);
-          for (let i = 0; i < line.length; i++) {
-            const p = t(line[i], z);
-
-            ctx.lineTo(p.x, p.y);
-          }
+          ctx.moveTo(lines[i*2 + 0].x, lines[i*2 + 0].y);
+          ctx.lineTo(lines[i*2 + 1].x, lines[i*2 + 1].y);
           ctx.strokeStyle = 'orange';
           ctx.lineWidth = 2;
           ctx.stroke();
@@ -682,21 +702,12 @@ requestAnimationFrame(function render(now) {
       }
 
       /* draw walls themselves */
-      for (const line of floorplans.analysis.lines) {
+      for (let i = 0; i < floorplans.analysis.lines.length; i++) {
         ctx.beginPath();
-        ctx.moveTo(t(line[0], 0).x, t(line[0], 0).y);
-        for (let i = 0; i < line.length; i++) {
-          const p = t(line[i], 0);
-
-          ctx.lineTo(p.x, p.y);
-        }
-
-        for (let i = 0; i < line.length; i++) {
-          const p = t(line[line.length - i - 1], WALL_HEIGHT);
-
-          ctx.lineTo(p.x, p.y);
-        }
-
+        ctx.moveTo(lines_lo[i*2 + 0].x, lines_lo[i*2 + 0].y);
+        ctx.lineTo(lines_lo[i*2 + 1].x, lines_lo[i*2 + 1].y);
+        ctx.lineTo(lines_hi[i*2 + 1].x, lines_hi[i*2 + 1].y);
+        ctx.lineTo(lines_hi[i*2 + 0].x, lines_hi[i*2 + 0].y);
         ctx.fillStyle = 'orange';
         ctx.globalAlpha = 0.05;
         ctx.fill();
@@ -715,8 +726,8 @@ requestAnimationFrame(function render(now) {
       zoom:   opts.zoom ?? 10,
       scroll: 0,
 
-      pitch:  Math.PI*0.70,
-      yaw:   -Math.PI*0.12,
+      pitch:  Math.PI*0.90,
+      yaw:   -Math.PI*0.25,
       eye: new DOMPoint(0, 0, 0, 1),
       cam_pivot: new DOMPoint(0, 0, 0, 1),
 
@@ -747,8 +758,6 @@ requestAnimationFrame(function render(now) {
             if (ev.button == 2) input.rmb_down = true;
         }, opts);
         window.addEventListener('mousemove', ev => {
-            ev.preventDefault();
-
             if (input.lmb_down || input.rmb_down) {
                 input.dampedEvent.movementX += ev.movementX;
                 input.dampedEvent.movementY += ev.movementY;
