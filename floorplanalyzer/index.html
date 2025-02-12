@@ -109,7 +109,6 @@ const floorplans = new (class FloorPlanUI {
         { "on": true,  "blur_px": 2.50, "threshold":    1000 },
         { "on": true,  "blur_px": 2.00, "threshold": 1000000 }
       ],
-      // debug: { pos: { x: 0, y: 0 } }
     };
   }
   static get_save() {
@@ -119,7 +118,6 @@ const floorplans = new (class FloorPlanUI {
     if (stored) {
       stored = JSON.parse(stored);
       stored = Object.assign(fallback(), stored);
-      // stored.debug = Object.assign(fallback().debug, stored.debug);
       return stored;
     }
 
@@ -543,31 +541,18 @@ function analyze_floorplan(img) {
 
 let mouse_down = false;
 let mouse = new DOMPoint();
-// let debug_hovered = false;
-// let debug_dragging = false;
 let world_transform;
 canvas.onmousedown = e => {
-  // if (debug_hovered) {
-  //   debug_dragging = true;
-  // }
   mouse_down = true;
 }
 window.onmouseup = e => {
   mouse_down = false;
-  // debug_dragging = false;
 }
 window.onmousemove = e => {
   if (world_transform) {
       mouse.x = e.offsetX * window.devicePixelRatio;
       mouse.y = e.offsetY * window.devicePixelRatio;
       mouse = world_transform.transformPoint(mouse);
-
-      // if (debug_dragging) {
-      //   floorplans.save.debug.pos.x = Math.floor(mouse.x);
-      //   floorplans.save.debug.pos.y = Math.floor(mouse.y);
-      //   floorplans.do_save();
-      //   floorplans.analysis = analyze_floorplan(floorplans.active());
-      // }
   }
 };
 
@@ -607,21 +592,6 @@ requestAnimationFrame(function render(now) {
         const w = a.bbox.max.x - a.bbox.min.x;
         const h = a.bbox.max.y - a.bbox.min.y;
         ctx.strokeRect(a.bbox.min.x, a.bbox.min.y, w, h);
-
-        /* DeBug is drawn in the space of the working canvas,
-         * because that's what DeBug debugs. */
-        // {
-        //   const debug = floorplans.save.debug;
-        //   const dist = Math.sqrt((mouse.x - debug.pos.x)*(mouse.x - debug.pos.x) + 
-        //                          (mouse.y - debug.pos.y)*(mouse.y - debug.pos.y));
-        //   debug_hovered = dist < 15*UI_SCALE;
-        //   const font_size = (debug_hovered ? 30 : 20) * UI_SCALE;
-        //   ctx.font = font_size + 'px monospace';
-        //   ctx.textBaseline = 'middle';
-        //   const text = '🕷️';
-        //   ctx.fillText(text, debug.pos.x - ctx.measureText(text).width*0.5, debug.pos.y);
-        //   world_transform = ctx.getTransform().inverse();
-        // }
 
         for (const line of floorplans.analysis.lines) {
           ctx.beginPath();
