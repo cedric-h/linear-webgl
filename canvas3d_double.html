@@ -1,0 +1,405 @@
+<!-- vim: sw=2 ts=2 expandtab smartindent ft=javascript
+-->
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Canvas Demo</title>
+    <style>
+document, body { margin: 0px; padding: 0px; overflow: hidden; }
+
+#side_canvas {
+  position: absolute;
+  top: 0px;
+  right: 0px;
+}
+    </style>
+  </head>
+
+  <body>
+    <canvas id="glcanvas"></canvas>
+    <canvas id="side_canvas"></canvas>
+    <script>"use strict";
+
+{
+  const side_canvas = document.getElementById("side_canvas");
+  const size = 300;
+  side_canvas.width = size*window.devicePixelRatio;
+  side_canvas.height = size*window.devicePixelRatio;
+  side_canvas.style.width = size + 'px';
+  side_canvas.style.height = size + 'px';
+  canvas3D(
+    side_canvas,
+    {
+      fullscreen: false,
+      clear_color: "rgb(40 50 60)"
+    },
+    (ctx, timestamp, transform) => {
+
+      ctx.globalAlpha = 0.5;
+      ctx.lineWidth = 0.15 * 40;
+
+      function circle(color, radius, k) {
+        ctx.beginPath();
+        let p = new DOMPoint();
+        const detail = 20;
+        for (let i = 0; i < (detail + 1); i++) {
+          const r = i/detail * Math.PI * 2;
+
+          if (k == 0) {
+            p.x = Math.cos(r) * radius;
+            p.y = Math.sin(r) * radius;
+            p.z = 0;
+          } else if (k == 1) {
+            p.x = 0;
+            p.y = Math.cos(r) * radius;
+            p.z = Math.sin(r) * radius;
+          } else {
+            p.x = Math.cos(r) * radius;
+            p.y = 0;
+            p.z = Math.sin(r) * radius;
+          }
+          p = transform(p);
+
+          if (i == 0) ctx.moveTo(p.x, p.y);
+          else        ctx.lineTo(p.x, p.y);
+        }
+        ctx.strokeStyle = color;
+        ctx.stroke();
+      }
+
+      ctx.miterLimit = 1;
+      circle('chartreuse', 0.5, 2);
+      circle('magenta', 1.0, 1);
+      circle('orange', 1.5, 0);
+      ctx.miterLimit = 10;
+
+      ctx.globalAlpha = 1.0;
+    }
+  );
+}
+
+canvas3D(document.getElementById("glcanvas"), { fullscreen: true }, (ctx, timestamp, transform) => {
+  ctx.beginPath();
+
+  ctx.globalAlpha = 0.5;
+  ctx.lineWidth = 0.15 * 40;
+  ctx.strokeStyle = 'teal';
+
+  function *spiral(direction) {
+    let p = new DOMPoint();
+
+    const lines  = 81;
+    const loops  = 2;
+    const height = 6;
+    const radius = 0.5;
+
+    let last = null;
+    for (let i = 0; i < lines; i++) {
+      const t = i / (lines - 1);
+      const r = t * Math.PI * 2 * loops - direction * Math.PI*0.5;
+      p.x = Math.cos(r) * radius;
+      p.y = Math.sin(r) * radius;
+      p.z = height * (0.5 - t);
+      p = transform(p);
+
+      if (last === null) {
+        last = new DOMPoint();
+      } else {
+        yield [last, p];
+      }
+
+      last.x = p.x;
+      last.y = p.y;
+      last.z = p.z;
+      last.w = p.w;
+    }
+  }
+
+  const lhs_spiral = spiral( 1);
+  const rhs_spiral = spiral(-1);
+  while (true) {
+    const lhs = lhs_spiral.next();
+    const rhs = rhs_spiral.next();
+    if (lhs.done || rhs.done) break;
+
+    ctx.beginPath();
+    ctx.moveTo(lhs.value[0].x, lhs.value[0].y);
+    ctx.lineTo(lhs.value[1].x, lhs.value[1].y);
+    ctx.stroke();
+
+    ctx.beginPath();
+    ctx.moveTo(rhs.value[0].x, rhs.value[0].y);
+    ctx.lineTo(rhs.value[1].x, rhs.value[1].y);
+    ctx.stroke();
+
+    ctx.beginPath();
+    ctx.moveTo(lhs.value[0].x, lhs.value[0].y);
+    ctx.lineTo(rhs.value[0].x, rhs.value[0].y);
+    ctx.stroke();
+  }
+
+  ctx.globalAlpha = 1.0;
+});
+
+function canvas3D(canvas, opts, render_cb) {
+  const fullscreen = opts.fullscreen ?? false;
+
+  let input = {
+    zoom:   10,
+    scroll: 0,
+
+    pitch:  Math.PI*0.70,
+    yaw:   -Math.PI*0.12,
+    eye: new DOMPoint(0, 0, 0, 1),
+    cam_pivot: new DOMPoint(0, 0, 0, 1),
+
+    dampedEvent: { button: 0, movementX: 0, movementY: 0 },
+
+    lmb_down: false,
+    rmb_down: false,
+    mouse_x:  0,
+    mouse_y:  0,
+  }
+
+  /* mouse controls */
+  {
+      const opts = { passive: false };
+
+      canvas.addEventListener('wheel', e => {
+          e.preventDefault();
+
+          if (input.mouse_down) return;
+          input.scroll += e.deltaY;
+      }, opts);
+      canvas.addEventListener('mousedown', ev => {
+          ev.preventDefault();
+
+          input.dampedEvent.button = ev.button ? 2 : 0;
+
+          if (ev.button == 0) input.lmb_down = true;
+          if (ev.button == 2) input.rmb_down = true;
+      }, opts);
+      window.addEventListener('mousemove', ev => {
+          ev.preventDefault();
+
+          if (input.lmb_down || input.rmb_down) {
+              input.dampedEvent.movementX += ev.movementX;
+              input.dampedEvent.movementY += ev.movementY;
+          }
+
+          input.mouse_x = ev.offsetX*window.devicePixelRatio;
+          input.mouse_y = ev.offsetY*window.devicePixelRatio;
+      }, opts);
+      window.addEventListener("contextmenu", ev => {
+          ev.preventDefault();
+      }, opts);
+      window.addEventListener('mouseup', ev => {
+          ev.preventDefault();
+
+          if (ev.button == 0) input.lmb_down = false;
+          if (ev.button == 2) input.rmb_down = false;
+      }, opts);
+      window.addEventListener('mouseleave', ev => {
+          if (ev.button == 0) input.lmb_down = false;
+          if (ev.button == 2) input.rmb_down = false;
+      }, opts);
+  }
+
+  /* touch controls */
+  {
+      const opts = { passive: false };
+
+      let touch_x = 0;
+      let touch_y = 0;
+      window.addEventListener("touchstart", ev => {
+          ev.preventDefault();
+
+          touch_x = ev.changedTouches[0].clientX;
+          touch_y = ev.changedTouches[0].clientY;
+
+          input.lmb_down = true;
+      }, opts);
+
+      window.addEventListener("touchmove", ev => {
+          ev.preventDefault();
+          input.dampedEvent.button = 0;
+
+          input.dampedEvent.movementX += ev.changedTouches[0].clientX - touch_x;
+          input.dampedEvent.movementY += ev.changedTouches[0].clientY - touch_y;
+
+          touch_x = ev.changedTouches[0].clientX;
+          touch_y = ev.changedTouches[0].clientY;
+      }, opts);
+
+      window.addEventListener("touchend", ev => {
+          ev.preventDefault();
+
+          input.lmb_down = false;
+      }, opts);
+  }
+
+  const ctx = canvas.getContext('2d');
+  if (fullscreen) (window.onresize = () => {
+     canvas.width = window.innerWidth*window.devicePixelRatio,
+     canvas.height = window.innerHeight*window.devicePixelRatio
+     canvas.style.width = window.innerWidth + 'px';
+     canvas.style.height = window.innerHeight + 'px';
+   })();
+
+  let last_timestamp;
+  requestAnimationFrame(function render(timestamp) {
+    requestAnimationFrame(render);
+
+    timestamp *= 0.001;
+    last_timestamp ??= timestamp;
+    const deltaTime = timestamp - last_timestamp;
+    last_timestamp = timestamp;
+
+    {
+      const ev = input.dampedEvent;
+
+      /* based on the assumption that if you're zoomed in more,
+       * you're doing finer-detailed work and want more precise movements. */
+      const zoom_fudge = Math.sqrt(input.zoom/10.0)*2.0;
+
+      if (ev.button == 0) {
+        input.pitch -= ev.movementX * 0.0005 * zoom_fudge;
+        input.yaw   -= ev.movementY * 0.0005 * zoom_fudge;
+        input.yaw = Math.max(-Math.PI*0.5 + 0.01, Math.min(Math.PI*0.5 - 0.01, input.yaw));
+      }
+      if (ev.button == 2) {
+        const unit = new DOMPoint(0, -ev.movementX*0.00075*zoom_fudge, ev.movementY*0.00075*zoom_fudge, 1)
+          .matrixTransform(new DOMMatrix().rotateSelf(0, input.yaw / Math.PI * 180, input.pitch / Math.PI * 180));
+
+        input.cam_pivot.x += unit.x;
+        input.cam_pivot.y += unit.y;
+        input.cam_pivot.z += unit.z;
+      }
+
+      ev.movementX *= Math.pow(1 - 0.17, 60*deltaTime);
+      ev.movementY *= Math.pow(1 - 0.17, 60*deltaTime);
+
+      {
+        const t = Math.cbrt(Math.abs(input.scroll)) * Math.sign(input.scroll);
+
+        input.zoom += 0.005*t*input.zoom;
+        input.scroll *= Math.pow(1 - 0.5, 60*deltaTime);
+        input.zoom = Math.min(200, input.zoom);
+      }
+    }
+
+    let mvp;
+    {
+      const FIELD_OF_VIEW = 50 / 180 * Math.PI;
+      const ar = canvas.width / canvas.height;
+      const projection = mat4_perspective(new DOMMatrix(), FIELD_OF_VIEW, ar, 0.01, 100.0);
+
+      const view = new DOMMatrix().rotateSelf(0, input.yaw / Math.PI * 180, input.pitch / Math.PI * 180);
+      {
+        const eye = input.eye = new DOMPoint(input.zoom, 0, 0, 1).matrixTransform(view);
+
+        eye.x += input.cam_pivot.x;
+        eye.y += input.cam_pivot.y;
+        eye.z += input.cam_pivot.z;
+        mat4_target_to(view, eye, input.cam_pivot, new DOMPoint(0, 0, 1));
+        view.invertSelf();
+      }
+
+      mvp = new DOMMatrix(projection).multiplySelf(view);
+    }
+
+    ctx.globalAlpha = 1.0;
+    ctx.fillStyle = opts.clear_color ?? "rgb(30 40 50)";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.globalAlpha = 1.0;
+
+    const transform = (p) => {
+      p.w = 1;
+      p = p.matrixTransform(mvp);
+      const w = p.w;
+      p.x = (0 + (p.x/w*0.5 + 0.5))*canvas.width;
+      p.y = (1 - (p.y/w*0.5 + 0.5))*canvas.height;
+      return p;
+    }
+
+    render_cb(ctx, timestamp, transform);
+
+  })
+
+  function mat4_perspective(out, fovy, aspect, near, far) {
+      let f = 1.0 / Math.tan(fovy / 2),
+          nf;
+      out.m11 = f / aspect;
+      out.m12 = 0;
+      out.m13 = 0;
+      out.m14 = 0;
+      out.m21 = 0;
+      out.m22 = f;
+      out.m23 = 0;
+      out.m24 = 0;
+      out.m31 = 0;
+      out.m32 = 0;
+      out.m33 = 0;
+      out.m34 = -1;
+      out.m41 = 0;
+      out.m42 = 0;
+      out.m43 = 0;
+      out.m44 = 0;
+      if (far != null && far !== Infinity) {
+          nf = 1 / (near - far);
+          out.m33 = (far + near) * nf;
+          out.m43 = 2 * far * near * nf;
+      } else {
+          out.m33 = -1;
+          out.m43 = -2 * near;
+      }
+      return out;
+  }
+
+  function mat4_target_to(out, eye, target, up) {
+      let z0 = eye.x - target.x,
+          z1 = eye.y - target.y,
+          z2 = eye.z - target.z;
+      let len = z0 * z0 + z1 * z1 + z2 * z2;
+      if (len > 0) {
+          len = 1 / Math.sqrt(len);
+          z0 *= len;
+          z1 *= len;
+          z2 *= len;
+      }
+      let x0 = up.y * z2 - up.z * z1,
+          x1 = up.z * z0 - up.x * z2,
+          x2 = up.x * z1 - up.y * z0;
+      len = x0 * x0 + x1 * x1 + x2 * x2;
+      if (len > 0) {
+          len = 1 / Math.sqrt(len);
+          x0 *= len;
+          x1 *= len;
+          x2 *= len;
+      }
+      out.m11 = x0;
+      out.m12 = x1;
+      out.m13 = x2;
+      out.m14 = 0;
+      out.m21 = z1 * x2 - z2 * x1;
+      out.m22 = z2 * x0 - z0 * x2;
+      out.m23 = z0 * x1 - z1 * x0;
+      out.m24 = 0;
+      out.m31 = z0;
+      out.m32 = z1;
+      out.m33 = z2;
+      out.m34 = 0;
+      out.m41 = eye.x;
+      out.m42 = eye.y;
+      out.m43 = eye.z;
+      out.m44 = 1;
+      return out;
+  }
+}
+
+function lerp(v0, v1, t) { return (1 - t) * v0 + t * v1; }
+function inv_lerp(min, max, p) { return (p - min) / (max - min); }
+    </script>
+  </body>
+</html>
