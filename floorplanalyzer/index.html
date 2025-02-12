@@ -43,7 +43,7 @@ document, body { margin: 0px; padding: 0px; overflow: hidden; }
   <body>
     <div class="hud">
         <div class="labeled_input">
-            <label for="line_finder_filter_on">Filter</label>
+            <label for="line_finder_filter_on">Show with preprocessing filters</label>
             <input  id="line_finder_filter_on" type="checkbox" checked="true"></input>
         </div>
         <div class="labeled_input">
@@ -82,6 +82,7 @@ const floorplans = new (class FloorPlanUI {
     return {
       active_index: 8,
       filter_on: false,
+      cam: { x: 0, y: 0, zoom: 1 },
       filters: [
         { "on": true,  "blur_px": 1.00, "threshold":  100000 },
         { "on": true,  "blur_px": 2.50, "threshold":    1000 },
@@ -120,6 +121,7 @@ const floorplans = new (class FloorPlanUI {
       stored = JSON.parse(stored);
       stored = Object.assign(fallback(), stored);
       stored.filters = Object.assign(fallback().filters, stored.filters);
+      stored.cam     = Object.assign(fallback().cam    , stored.cam    );
       return stored;
     }
 
@@ -548,10 +550,6 @@ function analyze_floorplan(img) {
 
 let world_transform;
 let input = {
-  cam_x: 0,
-  cam_y: 0,
-  cam_zoom: 1,
-
   mouse_down: false,
   cam_down_x: 0,
   cam_down_y: 0,
@@ -564,8 +562,8 @@ canvas.onmousedown = e => {
   input.mouse_down = true;
   input.mouse_down_x = e.offsetX*window.devicePixelRatio;
   input.mouse_down_y = e.offsetY*window.devicePixelRatio;
-  input.cam_down_x = input.cam_x;
-  input.cam_down_y = input.cam_y;
+  input.cam_down_x = floorplans.save.cam.x;
+  input.cam_down_y = floorplans.save.cam.y;
 }
 window.onmouseup = e => {
   input.mouse_down = false;
@@ -574,8 +572,9 @@ window.onmousemove = e => {
   input.mouse_x = e.offsetX*window.devicePixelRatio;
   input.mouse_y = e.offsetY*window.devicePixelRatio;
   if (input.mouse_down) {
-    input.cam_x = input.cam_down_x + (input.mouse_x - input.mouse_down_x);
-    input.cam_y = input.cam_down_y + (input.mouse_y - input.mouse_down_y);
+    floorplans.save.cam.x = input.cam_down_x + (input.mouse_x - input.mouse_down_x);
+    floorplans.save.cam.y = input.cam_down_y + (input.mouse_y - input.mouse_down_y);
+    floorplans.do_save();
   }
 };
 canvas.onwheel = e => {
@@ -583,7 +582,7 @@ canvas.onwheel = e => {
 
   const mouse = world_transform.transformPoint(new DOMPoint(input.mouse_x, input.mouse_y));
 
-  let next_zoom = input.cam_zoom * (1 - e.deltaY * 0.001);
+  let next_zoom = floorplans.save.cam.zoom * (1 - e.deltaY * 0.001);
   next_zoom = Math.max(0.15, next_zoom);
 
 
@@ -591,22 +590,23 @@ canvas.onwheel = e => {
    * accounting for the new zoom */
   {
       const x_t = mouse.x / canvas.width;
-      const  nowSizeX = canvas.width * input.cam_zoom;
+      const  nowSizeX = canvas.width * floorplans.save.cam.zoom;
       const nextSizeX = canvas.width * next_zoom;
       const deltaX = nextSizeX - nowSizeX;
-      input.cam_x -= deltaX * x_t;
+      floorplans.save.cam.x -= deltaX * x_t;
   }
 
   /* ditto on the Y axis; keep the mouse as the focal point */
   {
       const y_t = mouse.y / canvas.height;
-      const  nowSizeY = canvas.height * input.cam_zoom;
+      const  nowSizeY = canvas.height * floorplans.save.cam.zoom;
       const nextSizeY = canvas.height * next_zoom;
       const deltaY = nextSizeY - nowSizeY;
-      input.cam_y -= deltaY * y_t;
+      floorplans.save.cam.y -= deltaY * y_t;
   }
 
-  input.cam_zoom = next_zoom;
+  floorplans.save.cam.zoom = next_zoom;
+  floorplans.do_save();
 }
 
 requestAnimationFrame(function render(now) {
@@ -617,8 +617,8 @@ requestAnimationFrame(function render(now) {
 
   ctx.save();
   {
-    ctx.translate(input.cam_x, input.cam_y);
-    ctx.scale(input.cam_zoom, input.cam_zoom);
+    ctx.translate(floorplans.save.cam.x, floorplans.save.cam.y);
+    ctx.scale(floorplans.save.cam.zoom, floorplans.save.cam.zoom);
     world_transform = ctx.getTransform().inverse();
 
     const left_pad = 50 * window.devicePixelRatio;
