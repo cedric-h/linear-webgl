@@ -55,6 +55,7 @@ document, body { margin: 0px; padding: 0px; overflow: hidden; }
             <input  id="line_finder_filter_threshold" type="number" minimum="100" step="1"></input>
         </div>
         <button id="floorplans_prev"> ⬅️  prev plan </button>
+        <span id="floorplans_index_readout"> floorplan 0/25 </span>
         <button id="floorplans_next"> next plan ➡️ </button>
     </div>
     <canvas id="floorplan_canvas"></canvas>
@@ -80,14 +81,35 @@ const floorplans = new (class FloorPlanUI {
   static default_save() {
     return {
       active_index: 8,
-      filter: {
-        on: true,
-        blur_px: 2.5,
-        threshold: 1000
-      },
-      debug: {
-        pos: { x: 0, y: 0 }
-      }
+      filter_on: false,
+      filters: [
+        { "on": true,  "blur_px": 1.00, "threshold":  100000 },
+        { "on": true,  "blur_px": 2.50, "threshold":    1000 },
+        { "on": true,  "blur_px": 2.50, "threshold":    1000 },
+        { "on": true,  "blur_px": 2.50, "threshold":    1000 },
+        { "on": true,  "blur_px": 2.50, "threshold":    1000 },
+        { "on": true,  "blur_px": 4.50, "threshold":    1000 },
+        { "on": true,  "blur_px": 2.50, "threshold":    1000 },
+        { "on": true,  "blur_px": 3.25, "threshold":    1000 },
+        { "on": true,  "blur_px": 2.50, "threshold":    1000 },
+        { "on": true,  "blur_px": 0.75, "threshold":    1000 },
+        { "on": false, "blur_px": 2.25, "threshold":   10000 },
+        { "on": true,  "blur_px": 5.00, "threshold":   10000 },
+        { "on": true,  "blur_px": 1.00, "threshold":    1000 },
+        { "on": true,  "blur_px": 2.25, "threshold":   10000 },
+        { "on": true,  "blur_px": 3.00, "threshold":    1000 },
+        { "on": true,  "blur_px": 4.75, "threshold":    1000 },
+        { "on": true,  "blur_px": 2.25, "threshold":    1000 },
+        { "on": true,  "blur_px": 0.75, "threshold":    2000 },
+        { "on": true,  "blur_px": 5.75, "threshold":    1000 },
+        { "on": true,  "blur_px": 2.50, "threshold":    1000 },
+        { "on": true,  "blur_px": 2.50, "threshold":    1000 },
+        { "on": true,  "blur_px": 4.50, "threshold":    1000 },
+        { "on": true,  "blur_px": 2.25, "threshold":   10000 },
+        { "on": true,  "blur_px": 2.50, "threshold":    1000 },
+        { "on": true,  "blur_px": 2.00, "threshold": 1000000 }
+      ],
+      // debug: { pos: { x: 0, y: 0 } }
     };
   }
   static get_save() {
@@ -97,8 +119,7 @@ const floorplans = new (class FloorPlanUI {
     if (stored) {
       stored = JSON.parse(stored);
       stored = Object.assign(fallback(), stored);
-      stored.filter = Object.assign(fallback().filter, stored.filter);
-      stored.debug = Object.assign(fallback().debug, stored.debug);
+      // stored.debug = Object.assign(fallback().debug, stored.debug);
       return stored;
     }
 
@@ -108,25 +129,40 @@ const floorplans = new (class FloorPlanUI {
     window.localStorage.setItem(FloorPlanUI.LOCALSTORAGE_KEY, JSON.stringify(this.save));
   }
 
-  active() {
-    return this.images[this.save.active_index];
-  }
+  active() { return this.images[this.save.active_index]; }
+  filter() { return this.save.filters[this.save.active_index]; }
 
   constructor() {
     this.save = FloorPlanUI.get_save();
 
+    this.images = FloorPlanUI.image_paths.map(x => {
+      const m = new Image();
+      m.src = 'floorplans/' + x;
+      return m;
+    });
+
+    (async () => {
+      await new Promise(res => this.active().onload = res);
+      this.analysis = analyze_floorplan(this.active());
+    })();
+
     {
-      const next = () => {
-        this.save.active_index = (this.save.active_index + 1) % this.images.length;
+      floorplans_index_readout.textContent = `floorplan ${1 + this.save.active_index}/${this.images.length}`;
+
+      const sync_filter = () => {
+        line_finder_filter_on.checked = this.save.filter_on;
+        line_finder_filter_blur.value = this.filter().blur_px;
+        line_finder_filter_threshold.value = this.filter().threshold;
+      }
+
+      const set_index = index => {
+        this.save.active_index = index;
         this.do_save();
         this.analysis = analyze_floorplan(this.active());
+        floorplans_index_readout.textContent = `floorplan ${index + 1}/${this.images.length}`;
+        sync_filter();
       }
-      const prev = () => {
-        const i = this.save.active_index;
-        this.save.active_index = (i == 0) ? (this.images.length - 1) : (i - 1);
-        this.do_save();
-        this.analysis = analyze_floorplan(this.active());
-      }
+
       const extract_float = (value) => {
           value = parseFloat(value);
           if (isNaN(value)) return 0;
@@ -134,34 +170,34 @@ const floorplans = new (class FloorPlanUI {
       }
 
       window.onkeydown = e => {
-        if (e.key == " ") next();
+        if (e.key == " ") floorplans_next.click();
       }
-      floorplans_next.onclick = () => next();
-      floorplans_prev.onclick = () => prev();
+      floorplans_next.onclick = () => set_index((this.save.active_index + 1) % this.images.length);
+      floorplans_prev.onclick = () => {
+        let i = this.save.active_index;
+        return set_index((i == 0) ? (this.images.length - 1) : (i - 1));
+      }
 
-      line_finder_filter_on.checked = this.save.filter.on;
+      sync_filter();
       line_finder_filter_on.oninput = () => {
-        this.save.filter.on = line_finder_filter_on.checked;
+        this.save.filter_on = line_finder_filter_on.checked;
         this.do_save();
         this.analysis = analyze_floorplan(this.active());
       }
-
-      line_finder_filter_blur.value = this.save.filter.blur_px;
       line_finder_filter_blur.oninput = () => {
-        this.save.filter.blur_px = extract_float(line_finder_filter_blur.value);
+        this.filter().blur_px = extract_float(line_finder_filter_blur.value);
         this.do_save();
         this.analysis = analyze_floorplan(this.active());
       }
-
-      line_finder_filter_threshold.value = this.save.filter.threshold;
       line_finder_filter_threshold.oninput = () => {
-        this.save.filter.threshold = Math.max(100, extract_float(line_finder_filter_threshold.value));
+        this.filter().threshold = Math.max(100, extract_float(line_finder_filter_threshold.value));
         this.do_save();
         this.analysis = analyze_floorplan(this.active());
       }
     }
+  }
 
-    this.images = [
+  static image_paths = [
       "1-bed-Model-page-0-1184123436.jpg",
       "16820554805262d-floor-plan-without-dimensions-1-882012818.jpg",
       "226-Golf-Edge-2nd-Floor-Plan-e1602425648574-502954129.jpg",
@@ -187,17 +223,7 @@ const floorplans = new (class FloorPlanUI {
       "ground-floor-plan-3672060057.gif",
       "th-22295632.jpg",
       "th-94093388.jpg",
-    ].map(x => {
-      const m = new Image();
-      m.src = 'floorplans/' + x;
-      return m;
-    });
-
-    (async () => {
-      await new Promise(res => this.active().onload = res);
-      this.analysis = analyze_floorplan(this.active());
-    })();
-  }
+    ];
 })();
 
 function analyze_floorplan(img) {
@@ -209,7 +235,7 @@ function analyze_floorplan(img) {
     size_y = tmp.height = WORKING_SCALE * (img.height / img.width);
     ctx = tmp.getContext("2d");
 
-    const filter = floorplans.save.filter;
+    const filter = floorplans.filter();
     ctx.filter = `contrast(${filter.threshold}%) grayscale(100%) blur(${filter.blur_px}px) contrast(${filter.threshold}%)`;
 
     ctx.drawImage(img, 0, 0, tmp.width, tmp.height);
@@ -517,18 +543,18 @@ function analyze_floorplan(img) {
 
 let mouse_down = false;
 let mouse = new DOMPoint();
-let debug_hovered = false;
-let debug_dragging = false;
+// let debug_hovered = false;
+// let debug_dragging = false;
 let world_transform;
 canvas.onmousedown = e => {
-  if (debug_hovered) {
-    debug_dragging = true;
-  }
+  // if (debug_hovered) {
+  //   debug_dragging = true;
+  // }
   mouse_down = true;
 }
 window.onmouseup = e => {
   mouse_down = false;
-  debug_dragging = false;
+  // debug_dragging = false;
 }
 window.onmousemove = e => {
   if (world_transform) {
@@ -536,12 +562,12 @@ window.onmousemove = e => {
       mouse.y = e.offsetY * window.devicePixelRatio;
       mouse = world_transform.transformPoint(mouse);
 
-      if (debug_dragging) {
-        floorplans.save.debug.pos.x = Math.floor(mouse.x);
-        floorplans.save.debug.pos.y = Math.floor(mouse.y);
-        floorplans.do_save();
-        floorplans.analysis = analyze_floorplan(floorplans.active());
-      }
+      // if (debug_dragging) {
+      //   floorplans.save.debug.pos.x = Math.floor(mouse.x);
+      //   floorplans.save.debug.pos.y = Math.floor(mouse.y);
+      //   floorplans.do_save();
+      //   floorplans.analysis = analyze_floorplan(floorplans.active());
+      // }
   }
 };
 
@@ -558,7 +584,7 @@ requestAnimationFrame(function render(now) {
     ctx.scale(1.5/UI_SCALE, 1.5/UI_SCALE);
 
     {
-      if (floorplans.analysis && floorplans.save.filter.on) {
+      if (floorplans.analysis && floorplans.save.filter_on) {
         const floorplan = floorplans.analysis.working_canvas;
 
         ctx.translate(0, -floorplan.height*0.5)
@@ -584,18 +610,18 @@ requestAnimationFrame(function render(now) {
 
         /* DeBug is drawn in the space of the working canvas,
          * because that's what DeBug debugs. */
-        {
-          const debug = floorplans.save.debug;
-          const dist = Math.sqrt((mouse.x - debug.pos.x)*(mouse.x - debug.pos.x) + 
-                                 (mouse.y - debug.pos.y)*(mouse.y - debug.pos.y));
-          debug_hovered = dist < 15*UI_SCALE;
-          const font_size = (debug_hovered ? 30 : 20) * UI_SCALE;
-          ctx.font = font_size + 'px monospace';
-          ctx.textBaseline = 'middle';
-          const text = '🕷️';
-          ctx.fillText(text, debug.pos.x - ctx.measureText(text).width*0.5, debug.pos.y);
-          world_transform = ctx.getTransform().inverse();
-        }
+        // {
+        //   const debug = floorplans.save.debug;
+        //   const dist = Math.sqrt((mouse.x - debug.pos.x)*(mouse.x - debug.pos.x) + 
+        //                          (mouse.y - debug.pos.y)*(mouse.y - debug.pos.y));
+        //   debug_hovered = dist < 15*UI_SCALE;
+        //   const font_size = (debug_hovered ? 30 : 20) * UI_SCALE;
+        //   ctx.font = font_size + 'px monospace';
+        //   ctx.textBaseline = 'middle';
+        //   const text = '🕷️';
+        //   ctx.fillText(text, debug.pos.x - ctx.measureText(text).width*0.5, debug.pos.y);
+        //   world_transform = ctx.getTransform().inverse();
+        // }
 
         for (const line of floorplans.analysis.lines) {
           ctx.beginPath();
