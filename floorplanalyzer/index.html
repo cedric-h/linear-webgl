@@ -10,8 +10,8 @@ document, body { margin: 0px; padding: 0px; overflow: hidden; }
 .hud {
     position: absolute;
     top: 0px;
-    right: 0px;
-    background-color: rgba(255, 255, 255, 0.2);
+    left: 0px;
+    background-color: rgba(70, 70, 70, 0.8);
     color: white;
     font-family: monospace;
     padding: 0.3rem;
@@ -32,6 +32,12 @@ document, body { margin: 0px; padding: 0px; overflow: hidden; }
         }
     }
 }
+
+#side_canvas {
+  position: absolute;
+  top: calc((100% - 400px)/2);
+  right: 50px;
+}
     </style>
   </head>
 
@@ -47,15 +53,16 @@ document, body { margin: 0px; padding: 0px; overflow: hidden; }
         </div>
         <div class="labeled_input">
             <label for="line_finder_filter_threshold">Filter Threshold</label>
-            <input  id="line_finder_filter_threshold" type="number" step="1"></input>
+            <input  id="line_finder_filter_threshold" type="number" minimum="100" step="1"></input>
         </div>
         <button id="floorplans_prev"> ⬅️  prev plan </button>
         <button id="floorplans_next"> next plan ➡️ </button>
     </div>
-    <canvas id="glcanvas"></canvas>
+    <canvas id="floorplan_canvas"></canvas>
+    <canvas id="side_canvas"></canvas>
     <script>"use strict";
 
-const canvas = document.getElementById("glcanvas");
+const canvas = document.getElementById("floorplan_canvas");
 const ctx = canvas.getContext('2d');
 (window.onresize = () => {
   canvas.width = window.innerWidth*window.devicePixelRatio,
@@ -76,7 +83,7 @@ const floorplans = new (class FloorPlanUI {
       active_index: 8,
       filter: {
         on: true,
-        blur_px: 3,
+        blur_px: 2.5,
         threshold: 1000
       },
       debug: {
@@ -149,7 +156,7 @@ const floorplans = new (class FloorPlanUI {
 
       line_finder_filter_threshold.value = this.save.filter.threshold;
       line_finder_filter_threshold.oninput = () => {
-        this.save.filter.threshold = extract_float(line_finder_filter_threshold.value);
+        this.save.filter.threshold = Math.max(100, extract_float(line_finder_filter_threshold.value));
         this.do_save();
         this.analysis = analyze_floorplan(this.active());
       }
@@ -204,7 +211,7 @@ function analyze_floorplan(img) {
     ctx = tmp.getContext("2d");
 
     const filter = floorplans.save.filter;
-    ctx.filter = `contrast(${filter.threshold}%) blur(${filter.blur_px}px) contrast(${filter.threshold}%)`;
+    ctx.filter = `contrast(${filter.threshold}%) grayscale(100%) blur(${filter.blur_px}px) contrast(${filter.threshold}%)`;
 
     ctx.drawImage(img, 0, 0, tmp.width, tmp.height);
     ctx.filter = 'none';
@@ -227,6 +234,10 @@ function analyze_floorplan(img) {
     }
   }
 
+  // sometimes an early return here is useful for debugging
+  // ctx.putImageData(imgdata, 0, 0);
+  // return { bbox, working_canvas, lines: [] };
+
   /* generate lines from raster using floodfill and ancestor tracing ala Djikstra */
   let lines;
   {
@@ -238,130 +249,184 @@ function analyze_floorplan(img) {
       return true;
     }
 
-    const frontier = [];
-    const came_from = new Map();
-    const cost_from = new Map();
+    /* get some lines to start with by walking in from the bounding box */
+    {
+      const came_from = new Map();
+      const cost_from = new Map();
+      const frontier = [];
+      for (let y = bbox.min.y; y <= bbox.max.y; y += 1) {
+        for (let x = bbox.min.x; x <= bbox.max.x; x += 1) {
+          const is_min = x == bbox.min.x || y == bbox.min.y;
+          const is_max = x == bbox.max.x || y == bbox.max.y;
+          const is_x   = x == bbox.min.x || x == bbox.max.x;
+          const is_y   = y == bbox.min.y || y == bbox.max.y;
+          if (!is_min && !is_max) continue;
+          if (is_x && is_y) continue; /* I hate edge cases */
+          if (!in_bounds(x, y)) continue;
 
-    const debug = floorplans.save.debug;
-    for (let y = bbox.min.y; y <= bbox.max.y; y += 1) {
-      for (let x = bbox.min.x; x <= bbox.max.x; x += 1) {
-        const is_min = x == bbox.min.x || y == bbox.min.y;
-        const is_max = x == bbox.max.x || y == bbox.max.y;
-        const is_x   = x == bbox.min.x || x == bbox.max.x;
-        const is_y   = y == bbox.min.y || y == bbox.max.y;
-        if (!is_min && !is_max) continue;
-        if (is_x && is_y) continue; /* I hate edge cases */
-        if (!in_bounds(x, y)) continue;
+          const i = (y*size_x + x)*4 + 1;
+          if (pixels[i] >= 250) continue;
+          const pt = { x, y, traced_back: false };
+          frontier.push(pt);
 
-        const i = (y*size_x + x)*4 + 1;
-        if (pixels[i] >= 250) continue;
-        const pt = { x, y, traced_back: false };
-        frontier.push(pt);
+          let origin_x = x;
+          let origin_y = y;
+          if (is_x) origin_x += is_min ? -1 : 1;
+          if (is_y) origin_y += is_min ? -1 : 1;
+          came_from.set(pt, { x: origin_x, y: origin_y, traced_back: false });
+          cost_from.set(pt, 0);
+          pixels[i] = 255;
+        }
+      }
+      lines = walk_frontier(frontier, came_from, cost_from);
+    }
 
-        let origin_x = x;
-        let origin_y = y;
-        if (is_x) origin_x += is_min ? -1 : 1;
-        if (is_y) origin_y += is_min ? -1 : 1;
-        came_from.set(pt, { x: origin_x, y: origin_y });
-        cost_from.set(pt, 0);
-        pixels[i] = 255;
+    /* continue along lines to find more floodfill candidates,
+     * continue until we run out of lines */
+    let line_frontier = lines.slice();
+    for (let i = 0; i < 50_000 && line_frontier.length; i++) {
+    // while (line_frontier.length) {
+      const [a, b] = line_frontier.pop();
+
+      let dx = a.x - b.x;
+      let dy = a.y - b.y;
+      const dist = Math.sqrt(dx*dx + dy*dy);
+      if (dist < 25) continue;
+      const extension_len = 175;
+
+      // lines.push([{ x: a.x + dx, y: b.y + dy }, a]);
+
+      dx /= dist;
+      dy /= dist;
+      // lines.push([a, { x: b.x - dx*extension_len, y: b.y - dy*extension_len }]);
+
+      {
+        const came_from = new Map();
+        const cost_from = new Map();
+        const frontier = [];
+
+        for (let i = 1; i < extension_len; i++) {
+          const x = Math.floor(b.x - dx*i);
+          const y = Math.floor(b.y - dy*i);
+
+          if (!in_bounds(x, y)) break;
+          /* stop when you hit a floorplan pixel */
+          if (pixels[(y*size_x + x)*4 + 1] < 250) break;
+
+          const pt = { x, y, traced_back: false };
+          frontier.push(pt);
+          cost_from.set(pt, 0);
+          came_from.set(pt, {
+            x: Math.floor(b.x - dx*(i - 1)),
+            y: Math.floor(b.y - dy*(i - 1)),
+            traced_back: false
+          });
+        }
+
+        const new_lines = walk_frontier(frontier, came_from, cost_from);
+        lines = lines.concat(new_lines);
+        line_frontier = line_frontier.concat(new_lines)
       }
     }
 
-    for (let i = 0; frontier.length && i < 100_000; i++) {
-      const pt = frontier.shift();
+    function walk_frontier(frontier, came_from, cost_from) {
 
-      /* naive version of this would be just:
-       *  eval_pt(pt.x + 1, pt.y + 0);
-       *  eval_pt(pt.x - 1, pt.y + 0);
-       *  eval_pt(pt.x + 0, pt.y + 1);
-       *  eval_pt(pt.x + 0, pt.y - 1);
-       * but we want do whatever is farthest from our center point first.
-       * best way to do that? keep going in the direction that gave good results
-       */
-      const parent = came_from.get(pt);
-      const pdx = Math.sign(parent.x - pt.x);
-      const pdy = Math.sign(parent.y - pt.y);
+      for (let i = 0; frontier.length && i < 100_000; i++) {
+        const pt = frontier.shift();
 
-      /* STRAIGHT MODE */
-      if (Math.abs(pdx) > Math.abs(pdy)) {
-        eval_pt(pt.x +   0, pt.y + 1);
-        eval_pt(pt.x +   0, pt.y - 1);
-        eval_pt(pt.x - pdx, pt.y + 0);
-        eval_pt(pt.x + pdx, pt.y + 0);
-      } else {
-        eval_pt(pt.x + 1, pt.y +   0);
-        eval_pt(pt.x - 1, pt.y +   0);
-        eval_pt(pt.x + 0, pt.y - pdy);
-        eval_pt(pt.x + 0, pt.y + pdy);
-      }
+        /* naive version of this would be just:
+         *  eval_pt(pt.x + 1, pt.y + 0);
+         *  eval_pt(pt.x - 1, pt.y + 0);
+         *  eval_pt(pt.x + 0, pt.y + 1);
+         *  eval_pt(pt.x + 0, pt.y - 1);
+         * but we want do whatever is farthest from our center point first.
+         * best way to do that? keep going in the direction that gave good results
+         */
+        const parent = came_from.get(pt);
+        const pdx = Math.sign(parent.x - pt.x);
+        const pdy = Math.sign(parent.y - pt.y);
 
-      function eval_pt(x, y) {
-        if (in_bounds(x, y) && pixels[(y*size_x + x)*4 + 1] < 250) {
-          pixels[(y*size_x + x)*4 + 1] = 255;
-          const new_pt = { x, y, traced_back: false };
-          frontier.unshift(new_pt);
-          came_from.set(new_pt, pt);
-          cost_from.set(new_pt, cost_from.get(pt) + 1);
+        /* STRAIGHT MODE */
+        if (Math.abs(pdx) > Math.abs(pdy)) {
+          eval_pt(pt.x +   0, pt.y + 1);
+          eval_pt(pt.x +   0, pt.y - 1);
+          eval_pt(pt.x - pdx, pt.y + 0);
+          eval_pt(pt.x + pdx, pt.y + 0);
+        } else {
+          eval_pt(pt.x + 1, pt.y +   0);
+          eval_pt(pt.x - 1, pt.y +   0);
+          eval_pt(pt.x + 0, pt.y - pdy);
+          eval_pt(pt.x + 0, pt.y + pdy);
         }
-      }
-    }
 
-    lines = []
-
-    /* make a tree by walking back through each "came_from"
-     * and making sure each unique segment is in the list o' lines */
-
-    const most_distal = [...cost_from.entries()].sort((a, b) => b[1] - a[1]);
-    for (let [me, _] of most_distal) {
-      const path = [me];
-      let trunk = null;
-
-      let parent = came_from.get(me);
-      let grandparent = came_from.get(parent);
-
-      if (parent && grandparent) {
-        parent.traced_back = true;
-
-        let last_dx = grandparent.x - me.x;
-        let last_dy = grandparent.y - me.y;
-
-        while (grandparent) {
-          if (grandparent.traced_back) {
-            path.push(grandparent);
-            trunk = grandparent;
-            break;
+        function eval_pt(x, y) {
+          if (in_bounds(x, y) && pixels[(y*size_x + x)*4 + 1] < 250) {
+            pixels[(y*size_x + x)*4 + 1] = 255;
+            const new_pt = { x, y, traced_back: false };
+            frontier.unshift(new_pt);
+            came_from.set(new_pt, pt);
+            cost_from.set(new_pt, cost_from.get(pt) + 1);
           }
+        }
+      }
 
-          let dx = grandparent.x - me.x;
-          let dy = grandparent.y - me.y;
-          if (dx != last_dx ||
-              dy != last_dy) {
-            last_dx = dx;
-            last_dy = dy;
-            path.push(me);
+      let lines = []
+
+      /* make a tree by walking back through each "came_from"
+       * and making sure each unique segment is in the list o' lines */
+
+      const most_distal = [...cost_from.entries()].sort((a, b) => b[1] - a[1]);
+      for (let [me, _] of most_distal) {
+        const path = [me];
+        let trunk = null;
+
+        let parent = came_from.get(me);
+        let grandparent = came_from.get(parent);
+
+        if (parent && grandparent) {
+          parent.traced_back = true;
+
+          let last_dx = grandparent.x - me.x;
+          let last_dy = grandparent.y - me.y;
+
+          while (grandparent) {
+            if (grandparent.traced_back) {
+              path.push(grandparent);
+              trunk = grandparent;
+              break;
+            }
+
+            let dx = grandparent.x - me.x;
+            let dy = grandparent.y - me.y;
+            if (dx != last_dx ||
+                dy != last_dy) {
+              last_dx = dx;
+              last_dy = dy;
+              path.push(me);
+            }
+
+            grandparent.traced_back = true;
+
+            me = parent;
+            parent = grandparent;
+            grandparent = came_from.get(grandparent);
           }
+        }
 
-          grandparent.traced_back = true;
+        if (path.length > 2) {
+          const coarseness = 5;
+          const round = ({ x, y }) => ({ x: Math.round(x / coarseness) * coarseness, y: Math.round(y / coarseness) * coarseness });
+          const t = -1;
 
-          me = parent;
-          parent = grandparent;
-          grandparent = came_from.get(grandparent);
+          for (let i = 1; i < path.length; i++) {
+            const from = round(path[i-1]);
+            const to = round(path[i]);
+            lines.push([from, to]);
+          }
         }
       }
 
-      if (path.length > 2) {
-        const coarseness = 5;
-        const round = ({ x, y }) => ({ x: Math.round(x / coarseness) * coarseness, y: Math.round(y / coarseness) * coarseness });
-        const lerpv = (a, b, t) => ({ x: lerp(a.x, b.x, t), y: lerp(a.y, b.y, t) });
-        const t = -1;
-
-        for (let i = 1; i < path.length; i++) {
-          const from = round(path[i-1]);
-          const to = round(path[i]);
-          lines.push([lerpv(from, to, t), lerpv(to, from, t)]);
-        }
-      }
+      return lines;
     }
 
   }
@@ -487,21 +552,22 @@ requestAnimationFrame(function render(now) {
 
   ctx.save();
   {
-    ctx.translate(canvas.width/2, canvas.height/2);
+    const left_pad = 50 * window.devicePixelRatio;
+    ctx.translate(left_pad, canvas.height/2);
     ctx.scale(1.5/UI_SCALE, 1.5/UI_SCALE);
 
     {
       if (floorplans.analysis && floorplans.save.filter.on) {
         const floorplan = floorplans.analysis.working_canvas;
 
-        ctx.translate(-floorplan.width*0.5, -floorplan.height*0.5)
+        ctx.translate(0, -floorplan.height*0.5)
 
         ctx.drawImage(floorplan, 0, 0, floorplan.width, floorplan.height);
       } else {
         const floorplan = floorplans.active();
 
         const scale = WORKING_SCALE / floorplan.width;
-        ctx.translate(-floorplan.width*0.5*scale, -floorplan.height*0.5*scale)
+        ctx.translate(0, -floorplan.height*0.5*scale)
 
         ctx.drawImage(floorplan, 0, 0, floorplan.width*scale, floorplan.height*scale);
       }
@@ -551,6 +617,351 @@ requestAnimationFrame(function render(now) {
   }
   ctx.restore();
 })
+
+{
+  const side_canvas = document.getElementById("side_canvas");
+  const size = 400;
+  side_canvas.width = size*window.devicePixelRatio;
+  side_canvas.height = size*window.devicePixelRatio;
+  side_canvas.style.width = size + 'px';
+  side_canvas.style.height = size + 'px';
+  canvas3D(
+    side_canvas,
+    {
+      fullscreen: false,
+      clear_color: "rgb(40 50 60)",
+      zoom: 1600,
+      max_zoom: 2500
+    },
+    (ctx, timestamp, transform) => {
+
+      ctx.globalAlpha = 0.5;
+      ctx.lineWidth = 0.15 * 40;
+      ctx.miterLimit = 1; /* prevents lines from looking wobbly at oblique angles */
+
+      let p = new DOMPoint();
+      const t = (pt, z) => {
+        p.x =  WORKING_SCALE*0.5 - pt.x;
+        p.y = -WORKING_SCALE*0.5 + pt.y;
+        p.z = z;
+        p = transform(p);
+        return p;
+      }
+
+      if (!floorplans.analysis?.lines) return;
+      const floorplan = floorplans.active();
+
+      /* draw bbox */
+      {
+        const bbox = floorplans.analysis.bbox;
+        ctx.beginPath();
+        let pt = { x: 0, y: 0 };
+        pt.x = bbox.min.x, pt.y = bbox.min.y; t(pt, 0); ctx.moveTo(p.x, p.y);
+        pt.x = bbox.min.x, pt.y = bbox.max.y; t(pt, 0); ctx.lineTo(p.x, p.y);
+        pt.x = bbox.max.x, pt.y = bbox.max.y; t(pt, 0); ctx.lineTo(p.x, p.y);
+        pt.x = bbox.max.x, pt.y = bbox.min.y; t(pt, 0); ctx.lineTo(p.x, p.y);
+        ctx.fillStyle = 'black';
+        ctx.fill();
+      }
+
+      /* draw tops and bottoms of walls */
+      const WALL_HEIGHT = 150;
+      for (const z of [0, WALL_HEIGHT]) {
+        for (const line of floorplans.analysis.lines) {
+          ctx.beginPath();
+          ctx.moveTo(t(line[0], z).x, t(line[0], z).y);
+          for (let i = 0; i < line.length; i++) {
+            const p = t(line[i], z);
+
+            ctx.lineTo(p.x, p.y);
+          }
+          ctx.strokeStyle = 'orange';
+          ctx.lineWidth = 2;
+          ctx.stroke();
+        }
+      }
+
+      /* draw walls themselves */
+      for (const line of floorplans.analysis.lines) {
+        ctx.beginPath();
+        ctx.moveTo(t(line[0], 0).x, t(line[0], 0).y);
+        for (let i = 0; i < line.length; i++) {
+          const p = t(line[i], 0);
+
+          ctx.lineTo(p.x, p.y);
+        }
+
+        for (let i = 0; i < line.length; i++) {
+          const p = t(line[line.length - i - 1], WALL_HEIGHT);
+
+          ctx.lineTo(p.x, p.y);
+        }
+
+        ctx.fillStyle = 'orange';
+        ctx.globalAlpha = 0.05;
+        ctx.fill();
+        ctx.globalAlpha = 1.0;
+      }
+      ctx.miterLimit = 10;
+
+      ctx.globalAlpha = 1.0;
+    }
+  );
+
+  function canvas3D(canvas, opts, render_cb) {
+    const fullscreen = opts.fullscreen ?? false;
+
+    let input = {
+      zoom:   opts.zoom ?? 10,
+      scroll: 0,
+
+      pitch:  Math.PI*0.70,
+      yaw:   -Math.PI*0.12,
+      eye: new DOMPoint(0, 0, 0, 1),
+      cam_pivot: new DOMPoint(0, 0, 0, 1),
+
+      dampedEvent: { button: 0, movementX: 0, movementY: 0 },
+
+      lmb_down: false,
+      rmb_down: false,
+      mouse_x:  0,
+      mouse_y:  0,
+    }
+
+    /* mouse controls */
+    {
+        const opts = { passive: false };
+
+        canvas.addEventListener('wheel', e => {
+            e.preventDefault();
+
+            if (input.mouse_down) return;
+            input.scroll += e.deltaY;
+        }, opts);
+        canvas.addEventListener('mousedown', ev => {
+            ev.preventDefault();
+
+            input.dampedEvent.button = ev.button ? 2 : 0;
+
+            if (ev.button == 0) input.lmb_down = true;
+            if (ev.button == 2) input.rmb_down = true;
+        }, opts);
+        window.addEventListener('mousemove', ev => {
+            ev.preventDefault();
+
+            if (input.lmb_down || input.rmb_down) {
+                input.dampedEvent.movementX += ev.movementX;
+                input.dampedEvent.movementY += ev.movementY;
+            }
+
+            input.mouse_x = ev.offsetX*window.devicePixelRatio;
+            input.mouse_y = ev.offsetY*window.devicePixelRatio;
+        }, opts);
+        window.addEventListener("contextmenu", ev => {
+            ev.preventDefault();
+        }, opts);
+        window.addEventListener('mouseup', ev => {
+            if (ev.button == 0) input.lmb_down = false;
+            if (ev.button == 2) input.rmb_down = false;
+        }, opts);
+        window.addEventListener('mouseleave', ev => {
+            if (ev.button == 0) input.lmb_down = false;
+            if (ev.button == 2) input.rmb_down = false;
+        }, opts);
+    }
+
+    /* touch controls */
+    {
+        const opts = { passive: false };
+
+        let touch_x = 0;
+        let touch_y = 0;
+        window.addEventListener("touchstart", ev => {
+            ev.preventDefault();
+
+            touch_x = ev.changedTouches[0].clientX;
+            touch_y = ev.changedTouches[0].clientY;
+
+            input.lmb_down = true;
+        }, opts);
+
+        window.addEventListener("touchmove", ev => {
+            ev.preventDefault();
+            input.dampedEvent.button = 0;
+
+            input.dampedEvent.movementX += ev.changedTouches[0].clientX - touch_x;
+            input.dampedEvent.movementY += ev.changedTouches[0].clientY - touch_y;
+
+            touch_x = ev.changedTouches[0].clientX;
+            touch_y = ev.changedTouches[0].clientY;
+        }, opts);
+
+        window.addEventListener("touchend", ev => {
+            ev.preventDefault();
+
+            input.lmb_down = false;
+        }, opts);
+    }
+
+    const ctx = canvas.getContext('2d');
+    if (fullscreen) (window.onresize = () => {
+       canvas.width = window.innerWidth*window.devicePixelRatio,
+       canvas.height = window.innerHeight*window.devicePixelRatio
+       canvas.style.width = window.innerWidth + 'px';
+       canvas.style.height = window.innerHeight + 'px';
+     })();
+
+    let last_timestamp;
+    requestAnimationFrame(function render(timestamp) {
+      requestAnimationFrame(render);
+
+      timestamp *= 0.001;
+      last_timestamp ??= timestamp;
+      const deltaTime = timestamp - last_timestamp;
+      last_timestamp = timestamp;
+
+      {
+        const ev = input.dampedEvent;
+
+        /* based on the assumption that if you're zoomed in more,
+         * you're doing finer-detailed work and want more precise movements. */
+        const zoom_fudge = Math.sqrt(input.zoom/(opts.zoom ?? 10))*2;
+
+        if (ev.button == 0) {
+          input.pitch -= ev.movementX * 0.0005 * zoom_fudge;
+          input.yaw   -= ev.movementY * 0.0005 * zoom_fudge;
+          input.yaw = Math.max(-Math.PI*0.5 + 0.01, Math.min(Math.PI*0.5 - 0.01, input.yaw));
+        }
+        if (ev.button == 2) {
+          const unit = new DOMPoint(0, -ev.movementX*0.15*zoom_fudge, ev.movementY*0.15*zoom_fudge, 1)
+            .matrixTransform(new DOMMatrix().rotateSelf(0, input.yaw / Math.PI * 180, input.pitch / Math.PI * 180));
+
+          input.cam_pivot.x += unit.x;
+          input.cam_pivot.y += unit.y;
+          input.cam_pivot.z += unit.z;
+        }
+
+        ev.movementX *= Math.pow(1 - 0.17, 60*deltaTime);
+        ev.movementY *= Math.pow(1 - 0.17, 60*deltaTime);
+
+        {
+          const t = Math.cbrt(Math.abs(input.scroll)) * Math.sign(input.scroll);
+
+          input.zoom += 0.005*t*input.zoom;
+          input.scroll *= Math.pow(1 - 0.5, 60*deltaTime);
+          input.zoom = Math.max(800, Math.min(opts.max_zoom ?? 200, input.zoom));
+        }
+      }
+
+      let mvp;
+      {
+        const FIELD_OF_VIEW = 50 / 180 * Math.PI;
+        const ar = canvas.width / canvas.height;
+        const projection = mat4_perspective(new DOMMatrix(), FIELD_OF_VIEW, ar, 0.01, 10_000.0);
+
+        const view = new DOMMatrix().rotateSelf(0, input.yaw / Math.PI * 180, input.pitch / Math.PI * 180);
+        {
+          const eye = input.eye = new DOMPoint(input.zoom, 0, 0, 1).matrixTransform(view);
+
+          eye.x += input.cam_pivot.x;
+          eye.y += input.cam_pivot.y;
+          eye.z += input.cam_pivot.z;
+          mat4_target_to(view, eye, input.cam_pivot, new DOMPoint(0, 0, 1));
+          view.invertSelf();
+        }
+
+        mvp = new DOMMatrix(projection).multiplySelf(view);
+      }
+
+      ctx.globalAlpha = 1.0;
+      ctx.fillStyle = opts.clear_color ?? "rgb(30 40 50)";
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.globalAlpha = 1.0;
+
+      const transform = (p) => {
+        p.w = 1;
+        p = p.matrixTransform(mvp);
+        const w = p.w;
+        p.x = (0 + (p.x/w*0.5 + 0.5))*canvas.width;
+        p.y = (1 - (p.y/w*0.5 + 0.5))*canvas.height;
+        return p;
+      }
+
+      render_cb(ctx, timestamp, transform);
+
+    })
+
+    function mat4_perspective(out, fovy, aspect, near, far) {
+        let f = 1.0 / Math.tan(fovy / 2),
+            nf;
+        out.m11 = f / aspect;
+        out.m12 = 0;
+        out.m13 = 0;
+        out.m14 = 0;
+        out.m21 = 0;
+        out.m22 = f;
+        out.m23 = 0;
+        out.m24 = 0;
+        out.m31 = 0;
+        out.m32 = 0;
+        out.m33 = 0;
+        out.m34 = -1;
+        out.m41 = 0;
+        out.m42 = 0;
+        out.m43 = 0;
+        out.m44 = 0;
+        if (far != null && far !== Infinity) {
+            nf = 1 / (near - far);
+            out.m33 = (far + near) * nf;
+            out.m43 = 2 * far * near * nf;
+        } else {
+            out.m33 = -1;
+            out.m43 = -2 * near;
+        }
+        return out;
+    }
+
+    function mat4_target_to(out, eye, target, up) {
+        let z0 = eye.x - target.x,
+            z1 = eye.y - target.y,
+            z2 = eye.z - target.z;
+        let len = z0 * z0 + z1 * z1 + z2 * z2;
+        if (len > 0) {
+            len = 1 / Math.sqrt(len);
+            z0 *= len;
+            z1 *= len;
+            z2 *= len;
+        }
+        let x0 = up.y * z2 - up.z * z1,
+            x1 = up.z * z0 - up.x * z2,
+            x2 = up.x * z1 - up.y * z0;
+        len = x0 * x0 + x1 * x1 + x2 * x2;
+        if (len > 0) {
+            len = 1 / Math.sqrt(len);
+            x0 *= len;
+            x1 *= len;
+            x2 *= len;
+        }
+        out.m11 = x0;
+        out.m12 = x1;
+        out.m13 = x2;
+        out.m14 = 0;
+        out.m21 = z1 * x2 - z2 * x1;
+        out.m22 = z2 * x0 - z0 * x2;
+        out.m23 = z0 * x1 - z1 * x0;
+        out.m24 = 0;
+        out.m31 = z0;
+        out.m32 = z1;
+        out.m33 = z2;
+        out.m34 = 0;
+        out.m41 = eye.x;
+        out.m42 = eye.y;
+        out.m43 = eye.z;
+        out.m44 = 1;
+        return out;
+    }
+  }
+}
 
 function lerp(v0, v1, t) { return (1 - t) * v0 + t * v1; }
 function inv_lerp(min, max, p) { return (p - min) / (max - min); }
