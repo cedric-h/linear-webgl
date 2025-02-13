@@ -83,12 +83,18 @@ document, body { margin: 0px; padding: 0px; overflow: hidden; }
               <label for="floodfill_on">Show floodfill progress</label>
               <input  id="floodfill_on" type="checkbox" checked="true"></input>
           </div>
-          <div id="floodfill_controls" class="directional_group">
-            <button id="floodfill_prever"> ⏪ </button>
-            <button id="floodfill_prev"> ⬅️  less fill </button>
-            <span id="floodfill_progress_readout"> pixel 0 </span>
-            <button id="floodfill_next"> more fill ➡️ </button>
-            <button id="floodfill_nexter"> ⏩ </button>
+          <div id="floodfill_controls">
+            <div class="labeled_input">
+                <label for="floodfill_recurse">Recursively floodfill < 50% occupancy blocks</label>
+                <input  id="floodfill_recurse" type="checkbox" checked="true"></input>
+            </div>
+            <div class="directional_group">
+              <button id="floodfill_prever"> ⏪ </button>
+              <button id="floodfill_prev"> ⬅️  less fill </button>
+              <span id="floodfill_progress_readout"> pixel 0 </span>
+              <button id="floodfill_next"> more fill ➡️ </button>
+              <button id="floodfill_nexter"> ⏩ </button>
+            </div>
           </div>
         </div>
     </div>
@@ -118,6 +124,7 @@ const floorplans = new (class FloorPlanUI {
       filter_on: false,
 
       floodfill_on: false,
+      floodfill_recurse: true,
       floodfill_progress: 10_000,
 
       cam: { x: 0, y: 0, zoom: 1 },
@@ -245,10 +252,17 @@ const floorplans = new (class FloorPlanUI {
       /* floodfill progress control group */
       {
         floodfill_on.checked = this.save.floodfill_on;
+        floodfill_recurse.checked = this.save.floodfill_recurse;
         floodfill_controls.style.display = this.save.floodfill_on ? '' : 'none';
         floodfill_on.oninput = () => {
           this.save.floodfill_on = floodfill_on.checked;
           floodfill_controls.style.display = this.save.floodfill_on ? '' : 'none';
+          this.do_save();
+          this.analysis = analyze_floorplan(this.active());
+        }
+
+        floodfill_recurse.oninput = () => {
+          this.save.floodfill_recurse = floodfill_recurse.checked;
           this.do_save();
           this.analysis = analyze_floorplan(this.active());
         }
@@ -322,33 +336,35 @@ function analyze_floorplan(img) {
     pixels = imgdata.data;
   }
 
-  const bbox = { min: { x: Infinity, y: Infinity }, max: { x: -Infinity, y: -Infinity } };
+  const bbox_all = { min: { x: Infinity, y: Infinity }, max: { x: -Infinity, y: -Infinity } };
 
   for (let y = 0; y < size_y; y++) {
     for (let x = 0; x < size_x; x++) {
       const r = pixels[(y*size_x + x)*4];
 
       if (r < 250) {
-        bbox.min.x = Math.min(x, bbox.min.x);
-        bbox.min.y = Math.min(y, bbox.min.y);
-        bbox.max.x = Math.max(x, bbox.max.x);
-        bbox.max.y = Math.max(y, bbox.max.y);
+        bbox_all.min.x = Math.min(x, bbox_all.min.x);
+        bbox_all.min.y = Math.min(y, bbox_all.min.y);
+        bbox_all.max.x = Math.max(x, bbox_all.max.x);
+        bbox_all.max.y = Math.max(y, bbox_all.max.y);
       }
     }
   }
 
-  const bbox_size_x = (bbox.max.x - bbox.min.x) + 1;
-  const bbox_size_y = (bbox.max.y - bbox.min.y) + 1;
+  const bbox_size_x = (bbox_all.max.x - bbox_all.min.x) + 1;
+  const bbox_size_y = (bbox_all.max.y - bbox_all.min.y) + 1;
   const directions = new Uint8Array(bbox_size_x * bbox_size_y);
+  const direction_at  = (x, y   ) => directions[(y - bbox_all.min.y)*bbox_size_x + (x - bbox_all.min.x)];
+  const direction_set = (x, y, v) => directions[(y - bbox_all.min.y)*bbox_size_x + (x - bbox_all.min.x)] = v;
 
   // sometimes an early return here is useful for debugging
   // ctx.putImageData(imgdata, 0, 0);
   // return { bbox, working_canvas, lines: [] };
 
   /* generate lines from raster using floodfill and ancestor tracing ala Djikstra */
-  let lines;
+  let all_blocks = [], lines;
   {
-    const in_bounds = (x, y) => {
+    const in_bounds = (bbox, x, y) => {
       if (x < bbox.min.x) return false;
       if (y < bbox.min.y) return false;
       if (x > bbox.max.x) return false;
@@ -361,185 +377,258 @@ function analyze_floorplan(img) {
       const came_from = new Map();
       const cost_from = new Map();
       const frontier = [];
-      for (let y = bbox.min.y; y <= bbox.max.y; y += 1) {
-        for (let x = bbox.min.x; x <= bbox.max.x; x += 1) {
-          const is_min = x == bbox.min.x || y == bbox.min.y;
-          const is_max = x == bbox.max.x || y == bbox.max.y;
-          const is_x   = x == bbox.min.x || x == bbox.max.x;
-          const is_y   = y == bbox.min.y || y == bbox.max.y;
+      for (let y = bbox_all.min.y; y <= bbox_all.max.y; y += 1) {
+        for (let x = bbox_all.min.x; x <= bbox_all.max.x; x += 1) {
+          const is_min = x == bbox_all.min.x || y == bbox_all.min.y;
+          const is_max = x == bbox_all.max.x || y == bbox_all.max.y;
+          const is_x   = x == bbox_all.min.x || x == bbox_all.max.x;
+          const is_y   = y == bbox_all.min.y || y == bbox_all.max.y;
           if (!is_min && !is_max) continue;
           if (is_x && is_y) continue; /* I hate edge cases */
-          if (!in_bounds(x, y)) continue;
+          if (!in_bounds(bbox_all, x, y)) continue;
 
           const i = (y*size_x + x)*4 + 1;
           if (pixels[i] >= 250) continue;
-          const pt = { x, y, traced_back: false };
+          const pt = { x, y };
           frontier.push(pt);
 
           let origin_x = x;
           let origin_y = y;
-          if (is_x) origin_x += is_min ? -1 : 1;
-          if (is_y) origin_y += is_min ? -1 : 1;
+          if (is_x) origin_x += is_min ? 1 : -1;
+          if (is_y) origin_y += is_min ? 1 : -1;
 
-          directions[(y - bbox.min.y)*bbox_size_x + (x - bbox.min.x)] = is_y ? (is_max ? 1 : 2) : (is_max ? 3 : 4);
+          direction_set(x, y, is_y ? (is_min ? 1 : 2) : (is_min ? 3 : 4));
 
-          came_from.set(pt, { x: origin_x, y: origin_y, traced_back: false });
+          came_from.set(pt, { x: origin_x, y: origin_y });
           cost_from.set(pt, 0);
           pixels[i] = 255;
         }
       }
-      lines = walk_frontier(frontier, came_from, cost_from);
+
+      lines = walk_frontier(frontier, bbox_all).lines;
     }
 
-    function walk_frontier(frontier, came_from, cost_from) {
+    function walk_frontier(reserve, bbox) {
+      let seeds = [];
+      let frontier = [];
+      /* either not walkable or visited previously */
+      let walkable = (x, y) => pixels[(y*size_x + x)*4 + 1] < 254;
+      let walked   = (x, y) => pixels[(y*size_x + x)*4 + 1] > 254 && pixels[(y*size_x + x)*4 + 2] < 254;
 
-      for (let i = 0; frontier.length && i < floorplans.save.floodfill_progress; i++) {
-        const pt = frontier.shift();
+      let i = 0;
+      while (true) {
+        if (!frontier.length && !reserve.length) break;
+        let from_frontier = frontier.length;
+        const pt = frontier.length ? frontier.shift() : reserve.shift();
+        if (from_frontier && !walkable(pt.x, pt.y)) continue;
 
-        /* naive version of this would be just:
-         *  eval_pt(pt.x + 1, pt.y + 0);
-         *  eval_pt(pt.x - 1, pt.y + 0);
-         *  eval_pt(pt.x + 0, pt.y + 1);
-         *  eval_pt(pt.x + 0, pt.y - 1);
-         * but we want do whatever is farthest from our center point first.
-         * best way to do that? keep going in the direction that gave good results
-         */
-        const parent = came_from.get(pt);
-        const pdx = Math.sign(parent.x - pt.x);
-        const pdy = Math.sign(parent.y - pt.y);
-        const is_y = Math.abs(pdy) > Math.abs(pdx);
-        const is_pos = (is_y) ? pdy == 1 : pdx == 1;
-        directions[(pt.y - bbox.min.y)*bbox_size_x + (pt.x - bbox.min.x)] = is_y ? (is_pos ? 1 : 2) : (is_pos ? 3 : 4);
+        if (from_frontier) seeds.push(pt);
+        pixels[(pt.y*size_x + pt.x)*4 + 1] = 255;
 
-        /* STRAIGHT MODE */
-        if (is_y) {
-          eval_pt(pt.x + 1, pt.y +   0);
-          eval_pt(pt.x - 1, pt.y +   0);
-          eval_pt(pt.x + 0, pt.y - pdy);
-          eval_pt(pt.x + 0, pt.y + pdy);
-        } else {
-          eval_pt(pt.x +   0, pt.y + 1);
-          eval_pt(pt.x +   0, pt.y - 1);
-          eval_pt(pt.x - pdx, pt.y + 0);
-          eval_pt(pt.x + pdx, pt.y + 0);
-        }
+        const dir = direction_at(pt.x, pt.y);
+        let x = pt.x;
+        let y = pt.y;
+        for (; i < floorplans.save.floodfill_progress; i++) {
 
-        function eval_pt(x, y) {
-          if (in_bounds(x, y) && pixels[(y*size_x + x)*4 + 1] < 250) {
-            pixels[(y*size_x + x)*4 + 1] = 255;
-            const new_pt = { x, y, traced_back: false };
-            frontier.push(new_pt);
-            came_from.set(new_pt, pt);
-            cost_from.set(new_pt, cost_from.get(pt) + 1);
+          let dx = 0, dy = 0;
+          if (dir == 1) dy += 1;
+          if (dir == 2) dy -= 1;
+          if (dir == 3) dx += 1;
+          if (dir == 4) dx -= 1;
+          x += dx, y += dy;
+
+          if (!walkable(x, y)) break;
+          pixels[(y*size_x + x)*4 + 1] = 255;
+          direction_set(x, y, dir);
+
+          const is_y = Math.abs(dy) > Math.abs(dx);
+          const is_pos = (is_y) ? dy == 1 : dx == 1;
+          const forward = is_y ? ( is_pos ? 1 : 2) : ( is_pos ? 3 : 4);
+          const back    = is_y ? (!is_pos ? 1 : 2) : (!is_pos ? 3 : 4);
+          const left    = is_y ? ( is_pos ? 3 : 4) : ( is_pos ? 1 : 2);
+          const right   = is_y ? (!is_pos ? 3 : 4) : (!is_pos ? 1 : 2);
+
+          const eval_point = (x, y, dir) => {
+            if (dir == 1) y += 1;
+            if (dir == 2) y -= 1;
+            if (dir == 3) x += 1;
+            if (dir == 4) x -= 1;
+            if (in_bounds(bbox, x, y) && walkable(x, y)) {
+              frontier.push({ x, y });
+              direction_set(x, y, dir);
+            }
           }
+          eval_point(x, y, forward);
+          eval_point(x, y, back);
+          eval_point(x, y, left);
+          eval_point(x, y, right);
         }
       }
 
-      let lines = []
+      /* floodfill across everything again, finding contiguous blocks of territory sharing the same direction
+       * - make bounding boxes for the blocks */
+      function boxify(seeds, do_unbroken) {
+        const unbroken_blocks = [];
+        let blocks = [];
+        for (const seed of seeds) {
+          let frontier = [seed];
+          const dir = direction_at(seed.x, seed.y);
+          const block_bbox = { min: { x: Infinity, y: Infinity }, max: { x: -Infinity, y: -Infinity } };
+          let block_population = 0;
+          const block_pixels = [];
 
-      /* make a tree by walking back through each "came_from"
-       * and making sure each unique segment is in the list o' lines */
+          while (frontier.length) {
+            const p = frontier.pop();
+            const { x, y } = p;
+            if (pixels[(y*size_x + x)*4 + 2] > 254) continue;
 
-      const most_distal = [...cost_from.entries()].sort((a, b) => b[1] - a[1]);
-      for (let [me, _] of most_distal) {
-        const path = [me];
-        let trunk = null;
+            block_bbox.min.x = Math.min(x+0, block_bbox.min.x);
+            block_bbox.min.y = Math.min(y+0, block_bbox.min.y);
+            block_bbox.max.x = Math.max(x+1, block_bbox.max.x);
+            block_bbox.max.y = Math.max(y+1, block_bbox.max.y);
+            block_population++;
 
-        let parent = came_from.get(me);
-        let grandparent = came_from.get(parent);
+            /* NOTE: floodfilling through again is almost certainly going to be better than making this array, * but good enough for an MVP */
+            block_pixels.push(p);
 
-        if (parent && grandparent) {
-          parent.traced_back = true;
+            pixels[(y*size_x + x)*4 + 2] = 255;
 
-          let last_dx = grandparent.x - me.x;
-          let last_dy = grandparent.y - me.y;
-
-          while (grandparent) {
-            if (grandparent.traced_back) {
-              path.push(grandparent);
-              trunk = grandparent;
-              break;
-            }
-
-            let dx = grandparent.x - me.x;
-            let dy = grandparent.y - me.y;
-            if (dx != last_dx ||
-                dy != last_dy) {
-              last_dx = dx;
-              last_dy = dy;
-              path.push(me);
-            }
-
-            grandparent.traced_back = true;
-
-            me = parent;
-            parent = grandparent;
-            grandparent = came_from.get(grandparent);
+            if (in_bounds(bbox, x + 0, y + 1) && walked(x + 0, y + 1) && (direction_at(x + 0, y + 1) == dir)) frontier.push({ x: x + 0, y: y + 1 });
+            if (in_bounds(bbox, x + 0, y - 1) && walked(x + 0, y - 1) && (direction_at(x + 0, y - 1) == dir)) frontier.push({ x: x + 0, y: y - 1 });
+            if (in_bounds(bbox, x + 1, y + 0) && walked(x + 1, y + 0) && (direction_at(x + 1, y + 0) == dir)) frontier.push({ x: x + 1, y: y + 0 });
+            if (in_bounds(bbox, x - 1, y + 0) && walked(x - 1, y + 0) && (direction_at(x - 1, y + 0) == dir)) frontier.push({ x: x - 1, y: y + 0 });
           }
-        }
 
-        if (path.length > 2) {
-          const coarseness = 5;
-          const round = ({ x, y }) => ({ x: Math.round(x / coarseness) * coarseness, y: Math.round(y / coarseness) * coarseness });
-          const t = -1;
+          const w = block_bbox.max.x - block_bbox.min.x;
+          const h = block_bbox.max.y - block_bbox.min.y;
+          let occupancy = block_population / (w*h);
 
-          for (let i = 1; i < path.length; i++) {
-            const from = round(path[i-1]);
-            const to = round(path[i]);
-            lines.push([from, to]);
+          if (block_population < 20) continue;
+
+          if (block_population > 100 && occupancy < 0.34 && floorplans.save.floodfill_recurse && do_unbroken) {
+            unbroken_blocks.push({ direction: dir, bbox: block_bbox, pixels: block_pixels, population: block_population, occupancy });
           }
+          else
+            blocks.push({ direction: dir, bbox: block_bbox, pixels: block_pixels, population: block_population, occupancy });
         }
+        return { blocks, unbroken_blocks };
       }
 
-      return lines;
+      let { blocks, unbroken_blocks } = boxify(seeds, true);
+
+      /* - break them down if those bounding boxes are mostly hollow */
+      {
+        let seeds = [];
+
+        break_down:
+        for (const block of unbroken_blocks) {
+          let test_pt = (candidate_x, candidate_y, dir) => {
+            if (pixels[(candidate_y*size_x + candidate_x)*4 + 0] > 254) return false;
+
+            /* clear */
+            for (const { x, y } of block.pixels) {
+              pixels[(y*size_x + x)*4 + 1] = pixels[(y*size_x + x)*4 + 0];
+              pixels[(y*size_x + x)*4 + 2] = pixels[(y*size_x + x)*4 + 0];
+              direction_set(x, y, 0);
+            }
+
+            let candidate_dir_b4 = direction_at(candidate_x, candidate_y);
+            if (dir == 1) candidate_y -= 1;
+            if (dir == 2) candidate_y += 1;
+            if (dir == 3) candidate_x -= 1;
+            if (dir == 4) candidate_x += 1;
+            direction_set(candidate_x, candidate_y, dir);
+            const new_blocks = walk_frontier([{ x: candidate_x, y: candidate_y }], block.bbox).blocks;
+            const new_population = new_blocks.reduce((a, x) => x.population + a, 0);
+            direction_set(candidate_x, candidate_y, candidate_dir_b4);
+
+            if (new_population >= block.population*0.8) {
+              /* idt these are the correct seeds but meh */
+              for (const nb of new_blocks) seeds.push(nb.pixels[0]);
+              return true;
+            }
+
+            return false;
+          }
+
+          if (test_pt(block.bbox.min.x + 0, block.bbox.min.y + 0, 3)) continue break_down;
+          if (test_pt(block.bbox.min.x + 0, block.bbox.max.y - 1, 4)) continue break_down;
+          if (test_pt(block.bbox.max.x - 1, block.bbox.max.y - 1, 2)) continue break_down;
+          if (test_pt(block.bbox.max.x - 1, block.bbox.min.y + 0, 1)) continue break_down;
+
+          for (let i = 0; i < block.pixels.length; i++)
+            for (let dir = 1; dir <= 4; dir++) 
+              if (test_pt(block.pixels[i].x, block.pixels[i].y, dir))
+                continue break_down;
+        }
+
+        /* clear grouping floodfill color */
+        for (let y = bbox_all.min.y; y < bbox_all.max.y; y++)
+          for (let x = bbox_all.min.x; x < bbox_all.max.x; x++)
+            pixels[(y*size_x + x)*4 + 2] = pixels[(y*size_x + x)*4 + 0];
+
+        const new_boxes = boxify(seeds, false).blocks;
+        blocks = blocks.concat(new_boxes);
+      }
+
+      let lines = [];
+      for (const b of blocks) {
+        let line;
+
+        if (b.direction == 1 || b.direction == 2) line = {
+          path: [ { x: lerp(b.bbox.min.x, b.bbox.max.x, 0.5), y: b.bbox.min.y },
+                  { x: lerp(b.bbox.min.x, b.bbox.max.x, 0.5), y: b.bbox.max.y } ],
+          direction: b.direction
+        };
+        if (b.direction == 3 || b.direction == 4) line = {
+          path: [ { x: b.bbox.min.x, y: lerp(b.bbox.min.y, b.bbox.max.y, 0.5) },
+                  { x: b.bbox.max.x, y: lerp(b.bbox.min.y, b.bbox.max.y, 0.5) } ],
+          direction: b.direction
+        };
+
+        lines.push(line);
+      }
+
+      all_blocks = all_blocks.concat(blocks);
+      return { blocks, lines };
     }
 
-    if (0) {
-      /* continue along lines to find more floodfill candidates,
-       * continue until we run out of lines */
+    /* continue along lines to find more floodfill candidates,
+     * continue until we run out of lines */
+    {
       let line_frontier = lines.slice();
       for (let i = 0; i < 50_000 && line_frontier.length; i++) {
       // while (line_frontier.length) {
-        const [a, b] = line_frontier.pop();
+        const { path: [a, b], direction: dir } = line_frontier.pop();
 
-        let dx = a.x - b.x;
-        let dy = a.y - b.y;
-        const dist = Math.sqrt(dx*dx + dy*dy);
-        if (dist < 10) continue;
+        let dx = 0, dy = 0;
+        if (dir == 1) dy += 1;
+        if (dir == 2) dy -= 1;
+        if (dir == 3) dx += 1;
+        if (dir == 4) dx -= 1;
         const extension_len = 175;
 
-        /* TODO: right now we only check the side of one line */
-
-        // lines.push([{ x: a.x + dx, y: b.y + dy }, a]);
-
-        dx /= dist;
-        dy /= dist;
-        // lines.push([a, { x: b.x - dx*extension_len, y: b.y - dy*extension_len }]);
+        // lines.push({ path: [a, { x: b.x + dx*extension_len, y: b.y + dy*extension_len }], direction: dir });
 
         {
-          const came_from = new Map();
-          const cost_from = new Map();
           const frontier = [];
 
           for (let i = 1; i < extension_len; i++) {
-            const x = Math.floor(b.x - dx*i);
-            const y = Math.floor(b.y - dy*i);
+            const x = Math.floor(b.x + dx*i);
+            const y = Math.floor(b.y + dy*i);
 
-            if (!in_bounds(x, y)) break;
-            /* stop when you hit a floorplan pixel */
-            if (pixels[(y*size_x + x)*4 + 1] < 250) break;
-
-            const pt = { x, y, traced_back: false };
+            const pt = { x, y };
             frontier.push(pt);
-            cost_from.set(pt, 0);
-            came_from.set(pt, {
-              x: Math.floor(b.x - dx*(i - 1)),
-              y: Math.floor(b.y - dy*(i - 1)),
-              traced_back: false
-            });
+
+            if (!in_bounds(bbox_all, x, y)) break;
+            /* stop when you hit a floorplan pixel */
+            if (pixels[(y*size_x + x)*4 + 1] < 254) {
+              direction_set(x, y, dir);
+              break;
+            }
           }
 
-          const new_lines = walk_frontier(frontier, came_from, cost_from);
+          const new_lines = walk_frontier(frontier, bbox_all).lines;
           lines = lines.concat(new_lines);
           line_frontier = line_frontier.concat(new_lines)
         }
@@ -551,8 +640,15 @@ function analyze_floorplan(img) {
   // lines = lines.slice(1);
   // lines = lines.slice(0, 1);
 
+  lines = lines.filter(line => {
+    let dx = line.path[0].x - line.path[1].x;
+    let dy = line.path[0].y - line.path[1].y;
+    const dist = Math.sqrt(dx*dx + dy*dy);
+    return (dist > 25);
+  });
+
   ctx.putImageData(imgdata, 0, 0);
-  return { bbox, directions, working_canvas, lines: [] };
+  return { bbox: bbox_all, directions, working_canvas, blocks: all_blocks, lines };
 }
 
 let world_transform;
@@ -657,7 +753,8 @@ requestAnimationFrame(function render(now) {
         ctx.lineWidth = 4 * UI_SCALE;
         ctx.strokeRect(a.bbox.min.x, a.bbox.min.y, w, h);
 
-        for (const line of floorplans.analysis.lines) {
+        for (const l of floorplans.analysis.lines) {
+          const line = l.path;
           ctx.beginPath();
           ctx.moveTo(line[0].x, line[0].y);
           for (let i = 0; i < line.length; i++) {
@@ -674,7 +771,8 @@ requestAnimationFrame(function render(now) {
           ctx.stroke();
         }
 
-        {
+        if (floorplans.save.floodfill_on) {
+          ctx.textBaseline = 'middle';
           const size = 1;
           ctx.font = size + 'px monospace';
           for (let y = 0; y < h; y++) {
@@ -684,19 +782,33 @@ requestAnimationFrame(function render(now) {
               if (dir == undefined) debugger;
               let emoji, color;
               if (dir == 0) continue;
-              else if (dir == 1) emoji = '⬆️', color = 'orange';
-              else if (dir == 2) emoji = '⬇️', color = 'magenta';
-              else if (dir == 3) emoji = '⬅️', color = 'chartreuse';
-              else if (dir == 4) emoji = '➡️', color = 'cyan';
+              else if (dir == 1) emoji = '⬇️', color = 'magenta';
+              else if (dir == 2) emoji = '⬆️', color = 'orange';
+              else if (dir == 3) emoji = '➡️', color = 'cyan';
+              else if (dir == 4) emoji = '⬅️', color = 'chartreuse';
 
               ctx.fillStyle = color;
               ctx.fillRect((a.bbox.min.x + 0.5) + x - size*0.5, (a.bbox.min.y + 0.5) + y - size*0.5, size, size);
               ctx.globalAlpha = 0.2;
-              ctx.fillText(emoji, (a.bbox.min.x + 0.5) + x - size*0.5, (a.bbox.min.y + 1.25) + y - size*0.5);
+              ctx.fillText(emoji, (a.bbox.min.x + 0.5) + x - size*0.5, (a.bbox.min.y + 1.11) + y - size*0.5);
               ctx.globalAlpha = 1.0;
             }
           }
+          ctx.textBaseline = 'none';
         }
+
+        ctx.globalAlpha = 0.5;
+        if (0) for (const { bbox, occupancy } of floorplans.analysis.blocks) {
+          ctx.strokeStyle = occupancy > 0.34 ? "black" : "red";
+          ctx.fillStyle   = occupancy > 0.34 ? "black" : "red";
+
+          ctx.lineWidth = (3/floorplans.save.cam.zoom)*UI_SCALE;
+          ctx.strokeRect(bbox.min.x, bbox.min.y, bbox.max.x - bbox.min.x, bbox.max.y - bbox.min.y);
+
+          ctx.font = "5px monospace";
+          ctx.fillText((occupancy * 100).toFixed(1) + '%', bbox.min.x, bbox.max.y + 5);
+        }
+        ctx.globalAlpha = 1.0;
 
       }
     }
@@ -750,10 +862,10 @@ requestAnimationFrame(function render(now) {
 
       const WALL_HEIGHT = 150;
       for (let i = 0; i < floorplans.analysis.lines.length; i++) {
-        lines_lo[i*2 + 0] = t(floorplans.analysis.lines[i][0], 0);
-        lines_lo[i*2 + 1] = t(floorplans.analysis.lines[i][1], 0);
-        lines_hi[i*2 + 0] = t(floorplans.analysis.lines[i][0], WALL_HEIGHT);
-        lines_hi[i*2 + 1] = t(floorplans.analysis.lines[i][1], WALL_HEIGHT);
+        lines_lo[i*2 + 0] = t(floorplans.analysis.lines[i].path[0], 0);
+        lines_lo[i*2 + 1] = t(floorplans.analysis.lines[i].path[1], 0);
+        lines_hi[i*2 + 0] = t(floorplans.analysis.lines[i].path[0], WALL_HEIGHT);
+        lines_hi[i*2 + 1] = t(floorplans.analysis.lines[i].path[1], WALL_HEIGHT);
       }
 
       /* draw bbox */
@@ -781,7 +893,19 @@ requestAnimationFrame(function render(now) {
           ctx.moveTo(lines[i*2 + 0].x, lines[i*2 + 0].y);
           ctx.lineTo(lines[i*2 + 1].x, lines[i*2 + 1].y);
           ctx.strokeStyle = 'orange';
-          ctx.lineWidth = 2;
+          ctx.lineWidth = 9;
+          ctx.stroke();
+        }
+      }
+
+      /* draw sides of walls */
+      for (let side = 0; side < 2; side++) {
+        for (let i = 0; i < floorplans.analysis.lines.length; i++) {
+          ctx.beginPath();
+          ctx.moveTo(lines_lo[i*2 + side].x, lines_lo[i*2 + side].y);
+          ctx.lineTo(lines_hi[i*2 + side].x, lines_hi[i*2 + side].y);
+          ctx.strokeStyle = 'orange';
+          ctx.lineWidth = 9;
           ctx.stroke();
         }
       }
@@ -794,7 +918,7 @@ requestAnimationFrame(function render(now) {
         ctx.lineTo(lines_hi[i*2 + 1].x, lines_hi[i*2 + 1].y);
         ctx.lineTo(lines_hi[i*2 + 0].x, lines_hi[i*2 + 0].y);
         ctx.fillStyle = 'orange';
-        ctx.globalAlpha = 0.05;
+        ctx.globalAlpha = 0.1;
         ctx.fill();
         ctx.globalAlpha = 1.0;
       }
