@@ -55,6 +55,11 @@ document, body { margin: 0px; padding: 0px; overflow: hidden; }
           <label for="error_threshold">Error threshold (meters)</label>
           <input  id="error_threshold" type="number" step="0.05" value="0.5"></input>
       </div>
+
+      <div class="labeled_input">
+          <label for="error_aspect">Include aspect ratio error</label>
+          <input  id="error_aspect" type="checkbox" checked="true"></input>
+      </div>
     </div>
 
     <canvas id="glcanvas"></canvas>
@@ -151,8 +156,10 @@ let input = {
 
 let hovered_det;
 let hovered_corner;
+let hovered_ratio;
 let selected_det;
 let selected_corner;
+let selected_ratio;
 requestAnimationFrame(function render(now) {
   requestAnimationFrame(render);
 
@@ -162,6 +169,7 @@ requestAnimationFrame(function render(now) {
   ctx.save();
   let next_hovered_det;
   let next_hovered_det_dist = Infinity;
+  let next_hovered_ratio;
   let next_hovered_corner;
   {
     ctx.translate(input.cam.x, input.cam.y);
@@ -197,9 +205,9 @@ requestAnimationFrame(function render(now) {
     }
 
     ctx.font = ((vector_bbox.max.y - vector_bbox.min.y) * 0.005) + 'px monospace';
-    for (const [active_det, active_corner, rgb, show_determinants] of [
-      [ hovered_det,  hovered_corner, '255, 0, 0', selected_corner == null],
-      [selected_det, selected_corner, '0, 0, 255', selected_corner]
+    for (const [active_det, active_ratio, active_corner, rgb, show_determinants] of [
+      [ hovered_det,  hovered_ratio,  hovered_corner, '255, 0, 0', selected_corner == null],
+      [selected_det, selected_ratio, selected_corner, '0, 0, 255', selected_corner]
     ]) {
 
       for (const shape of vector) {
@@ -225,6 +233,17 @@ requestAnimationFrame(function render(now) {
              det = (d1x*d2y - d1y*d2x);
           }
 
+          let ratio;
+          let len;
+          {
+            const ab_dist = Math.sqrt((shape[a].x - shape[b].x)*(shape[a].x - shape[b].x) + 
+                                      (shape[a].y - shape[b].y)*(shape[a].y - shape[b].y));
+            const bc_dist = Math.sqrt((shape[b].x - shape[c].x)*(shape[b].x - shape[c].x) + 
+                                      (shape[b].y - shape[c].y)*(shape[b].y - shape[c].y));
+            len = ab_dist + bc_dist;
+            ratio = Math.max(ab_dist / bc_dist, bc_dist / ab_dist);
+          }
+
           /* not interested in redundant points/non-existent triangles */
           if (det == 0) continue;
 
@@ -233,13 +252,22 @@ requestAnimationFrame(function render(now) {
                                  (shape[b].y - mouse.y)*(shape[b].y - mouse.y));
             if (dist < next_hovered_det_dist) {
               next_hovered_det = det;
+              next_hovered_ratio = ratio;
               next_hovered_det_dist = dist;
               next_hovered_corner = shape[b];
             }
           }
 
+          /* based off of the assumption that the two corners have the same wall length,
+           * which if the determinant is the same they probably do?
+           *
+           * shouldn't be a problem because them being different should only result in positive error,
+           * which can never cancel out the determinant check. */
+          const scaling_factor = len / (ratio + 1);
+          const aspect_err = Math.abs(scaling_factor * ratio - scaling_factor * active_ratio);
+
           const threshold = parseFloat(error_threshold.value);
-          const err = Math.abs(det - active_det);
+          const err = Math.abs(det - active_det) + (error_aspect.checked ? aspect_err : 0);
           const fit = active_det ? (1 - err / threshold) : 0.75;
           if (err < threshold) {
             ctx.beginPath();
@@ -273,14 +301,17 @@ requestAnimationFrame(function render(now) {
 
   }
   hovered_det = next_hovered_det;
+  hovered_ratio = next_hovered_ratio;
   hovered_corner = next_hovered_corner;
   if (input.mouse_released) {
     if (selected_corner == hovered_corner) {
+      selected_ratio  = null;
       selected_corner = null,
       selected_det    = null;
     } else {
       selected_corner = hovered_corner,
       selected_det    = hovered_det   ;
+      selected_ratio  = hovered_ratio;
     }
   }
   input.mouse_released = false;
