@@ -1,0 +1,110 @@
+<!-- vim: sw=2 ts=2 expandtab smartindent ft=javascript
+-->
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Canvas Demo</title>
+    <style> document, body { margin: 0px; padding: 0px; overflow: hidden; } </style>
+  </head>
+
+  <body>
+    <canvas id="glcanvas"></canvas>
+    <script>"use strict";
+
+const canvas = document.getElementById("glcanvas");
+const ctx = canvas.getContext('2d');
+(window.onresize = () => {
+   canvas.width = window.innerWidth*window.devicePixelRatio,
+   canvas.height = window.innerHeight*window.devicePixelRatio
+   canvas.style.width = window.innerWidth + 'px';
+   canvas.style.height = window.innerHeight + 'px';
+ })();
+
+let input = {
+  cam: { zoom: 1, x: 0, y: 0 },
+  world_transform: null,
+  mouse_down: false,
+  cam_down_x: 0,
+  cam_down_y: 0,
+  mouse_down_x: 0,
+  mouse_down_y: 0,
+  mouse_x: 0,
+  mouse_y: 0,
+};
+{
+  canvas.onmousedown = e => {
+    input.mouse_down = true;
+    input.mouse_down_x = e.offsetX*window.devicePixelRatio;
+    input.mouse_down_y = e.offsetY*window.devicePixelRatio;
+    input.cam_down_x = input.cam.x;
+    input.cam_down_y = input.cam.y;
+  }
+  canvas.mouseleave = window.onmouseup = e => {
+    input.mouse_down = false;
+  }
+  canvas.onmousemove = e => {
+    input.mouse_x = e.offsetX*window.devicePixelRatio;
+    input.mouse_y = e.offsetY*window.devicePixelRatio;
+    if (input.mouse_down) {
+      input.cam.x = input.cam_down_x + (input.mouse_x - input.mouse_down_x);
+      input.cam.y = input.cam_down_y + (input.mouse_y - input.mouse_down_y);
+    }
+  };
+  canvas.onwheel = e => {
+    if (!input.world_transform) return;
+
+    const mouse = input.world_transform.transformPoint(new DOMPoint(input.mouse_x, input.mouse_y));
+
+    let next_zoom = input.cam.zoom * (1 - e.deltaY * 0.001);
+    next_zoom = Math.max(0.15, next_zoom);
+
+
+    /* offset camera.x such that it stays centered around the mouse,
+     * accounting for the new zoom */
+    {
+        const x_t = mouse.x / canvas.width;
+        const  nowSizeX = canvas.width * input.cam.zoom;
+        const nextSizeX = canvas.width * next_zoom;
+        const deltaX = nextSizeX - nowSizeX;
+        input.cam.x -= deltaX * x_t;
+    }
+
+    /* ditto on the Y axis; keep the mouse as the focal point */
+    {
+        const y_t = mouse.y / canvas.height;
+        const  nowSizeY = canvas.height * input.cam.zoom;
+        const nextSizeY = canvas.height * next_zoom;
+        const deltaY = nextSizeY - nowSizeY;
+        input.cam.y -= deltaY * y_t;
+    }
+
+    input.cam.zoom = next_zoom;
+  }
+}
+
+requestAnimationFrame(function render(now) {
+  requestAnimationFrame(render);
+
+  ctx.fillStyle = "white";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  ctx.save();
+  {
+    ctx.translate(input.cam.x, input.cam.y);
+    ctx.scale(input.cam.zoom, input.cam.zoom);
+    input.world_transform = ctx.getTransform().inverse();
+
+    ctx.translate(canvas.width/2, canvas.height/2);
+
+    ctx.fillStyle = "red";
+    ctx.fillRect(-50, -50, 100, 100);
+  }
+  ctx.restore();
+})
+
+function lerp(v0, v1, t) { return (1 - t) * v0 + t * v1; }
+function inv_lerp(min, max, p) { return (p - min) / (max - min); }
+    </script>
+  </body>
+</html>

@@ -1,0 +1,432 @@
+<!-- vim: sw=2 ts=2 expandtab smartindent ft=javascript
+-->
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Canvas Demo</title>
+    <style> 
+document, body { margin: 0px; padding: 0px; overflow: hidden; }
+
+.hud {
+    position: absolute;
+    top: 0px;
+    left: 0px;
+    background-color: rgba(70, 70, 70, 0.8);
+    color: white;
+    font-family: monospace;
+    padding: 0.3rem;
+    
+    .labeled_input {
+        display: flex;
+        justify-content: space-between;
+        gap: 0.8rem;
+        padding: 0.3rem;
+        label {
+            height: 100%;
+            margin-top: auto;
+            margin-bottom: auto;
+        }
+    }
+}
+  </style>
+
+  </head>
+
+  <body>
+    <div class="hud">
+      <p>
+        <h4> Controls: </h4>
+        <p> Click and drag to pan, mousewheel to zoom </p>
+        <p> Click a corner to <span style="color:rgb(0, 0, 255)"> select </span> </p>
+        <p> Hover to <span style="color:rgb(255, 25, 25)"> preview </span> </p>
+      </p>
+
+      <div class="labeled_input">
+          <label for="error_threshold">Error threshold (meters)</label>
+          <input  id="error_threshold" type="number" step="0.05" value="0.5"></input>
+      </div>
+    </div>
+
+    <canvas id="glcanvas"></canvas>
+    <script>"use strict";
+
+const canvas = document.getElementById("glcanvas");
+const ctx = canvas.getContext('2d');
+(window.onresize = () => {
+   canvas.width = window.innerWidth*window.devicePixelRatio,
+   canvas.height = window.innerHeight*window.devicePixelRatio
+   canvas.style.width = window.innerWidth + 'px';
+   canvas.style.height = window.innerHeight + 'px';
+ })();
+
+let input = {
+  cam: { zoom: 1, x: 0, y: 0 },
+  world_transform: null,
+  mouse_down: false,
+  cam_down_x: 0,
+  cam_down_y: 0,
+  mouse_down_x: 0,
+  mouse_down_y: 0,
+  mouse_x: 0,
+  mouse_y: 0,
+  mouse_released: false
+};
+{
+  canvas.onmousedown = e => {
+    if (e.buttons != 1) return;
+    input.mouse_down = true;
+    input.mouse_down_x = e.offsetX*window.devicePixelRatio;
+    input.mouse_down_y = e.offsetY*window.devicePixelRatio;
+    input.cam_down_x = input.cam.x;
+    input.cam_down_y = input.cam.y;
+  }
+  canvas.mouseleave = e => {
+    input.mouse_down = false;
+  }
+  window.onmouseup = e => {
+    input.mouse_down = false;
+
+    const dx = input.mouse_down_x - e.offsetX*window.devicePixelRatio;
+    const dy = input.mouse_down_y - e.offsetY*window.devicePixelRatio;
+    const dist = Math.sqrt(dx*dx + dy*dy);
+    if (dist < 5) input.mouse_released = true;
+  }
+  window.onmousemove = e => {
+    if (e.target != canvas) {
+      input.mouse_x = -Infinity;
+      input.mouse_y = -Infinity;
+      return;
+    }
+
+    input.mouse_x = e.offsetX*window.devicePixelRatio;
+    input.mouse_y = e.offsetY*window.devicePixelRatio;
+
+    if (e.buttons != 1) return;
+    if (input.mouse_down) {
+      input.cam.x = input.cam_down_x + (input.mouse_x - input.mouse_down_x);
+      input.cam.y = input.cam_down_y + (input.mouse_y - input.mouse_down_y);
+    }
+  };
+  canvas.onwheel = e => {
+    if (!input.world_transform) return;
+
+    const mouse = input.world_transform.transformPoint(new DOMPoint(input.mouse_x, input.mouse_y));
+
+    let next_zoom = input.cam.zoom * (1 - e.deltaY * 0.001);
+    next_zoom = Math.max(0.15, next_zoom);
+
+
+    /* offset camera.x such that it stays centered around the mouse,
+     * accounting for the new zoom */
+    {
+        const x_t = mouse.x / canvas.width;
+        const  nowSizeX = canvas.width * input.cam.zoom;
+        const nextSizeX = canvas.width * next_zoom;
+        const deltaX = nextSizeX - nowSizeX;
+        input.cam.x -= deltaX * x_t;
+    }
+
+    /* ditto on the Y axis; keep the mouse as the focal point */
+    {
+        const y_t = mouse.y / canvas.height;
+        const  nowSizeY = canvas.height * input.cam.zoom;
+        const nextSizeY = canvas.height * next_zoom;
+        const deltaY = nextSizeY - nowSizeY;
+        input.cam.y -= deltaY * y_t;
+    }
+
+    input.cam.zoom = next_zoom;
+  }
+}
+
+let hovered_det;
+let hovered_corner;
+let selected_det;
+let selected_corner;
+requestAnimationFrame(function render(now) {
+  requestAnimationFrame(render);
+
+  ctx.fillStyle = "white";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  ctx.save();
+  let next_hovered_det;
+  let next_hovered_det_dist = Infinity;
+  let next_hovered_corner;
+  {
+    ctx.translate(input.cam.x, input.cam.y);
+    ctx.scale(input.cam.zoom, input.cam.zoom);
+    input.world_transform = ctx.getTransform().inverse();
+
+    const mouse = input.world_transform.transformPoint(new DOMPoint(input.mouse_x, input.mouse_y));
+
+    ctx.fillStyle = "red";
+
+    for (const shape of vector) {
+      ctx.beginPath();
+      ctx.moveTo(shape[0].x, shape[0].y)
+      for (const point of shape) {
+        ctx.lineTo(point.x, point.y);
+      }
+      ctx.closePath()
+
+      if (ctx.isPointInPath(input.mouse_x, input.mouse_y)) {
+        ctx.fillStyle = "rgba(0, 255, 0, 0.1)";
+        ctx.fill();
+      }
+
+      /* don't care about this anymore */
+      // if (is_box(shape)) {
+      //   ctx.fillStyle = "rgba(255, 0, 255, 0.1)";
+      //   ctx.fill();
+      // }
+
+      ctx.strokeStyle = "black";
+      ctx.lineWidth = 3 / input.cam.zoom;
+      ctx.stroke();
+    }
+
+    ctx.font = ((vector_bbox.max.y - vector_bbox.min.y) * 0.005) + 'px monospace';
+    for (const [active_det, active_corner, rgb, show_determinants] of [
+      [ hovered_det,  hovered_corner, '255, 0, 0', selected_corner == null],
+      [selected_det, selected_corner, '0, 0, 255', selected_corner]
+    ]) {
+
+      for (const shape of vector) {
+        // if (!is_box(shape)) continue;
+
+        let avg_x = 0;
+        let avg_y = 0;
+        for (const p of shape) avg_x += p.x, avg_y += p.y;
+        avg_x /= shape.length;
+        avg_y /= shape.length;
+
+        for (let i = 0; i < shape.length; i++) {
+          const a = i;
+          const b = (i + 1) % shape.length;
+          const c = (i + 2) % shape.length;
+
+          let det;
+          {
+             let d1x = shape[a].x - shape[b].x;
+             let d1y = shape[a].y - shape[b].y;
+             let d2x = shape[b].x - shape[c].x;
+             let d2y = shape[b].y - shape[c].y;
+             det = (d1x*d2y - d1y*d2x);
+          }
+
+          if (det > 0 && in_tri(shape, a, b, c, mouse)) {
+            let dist = Math.sqrt((shape[b].x - mouse.x)*(shape[b].x - mouse.x) +
+                                 (shape[b].y - mouse.y)*(shape[b].y - mouse.y));
+            if (dist < next_hovered_det_dist) {
+              next_hovered_det = det;
+              next_hovered_det_dist = dist;
+              next_hovered_corner = shape[b];
+            }
+          }
+
+          const threshold = parseFloat(error_threshold.value);
+          const err = Math.abs(det - active_det);
+          const fit = active_det ? (1 - err / threshold) : 0.75;
+          if (err < threshold) {
+            ctx.beginPath();
+            ctx.moveTo(shape[a].x, shape[a].y);
+            ctx.lineTo(shape[b].x, shape[b].y);
+            ctx.lineTo(shape[c].x, shape[c].y);
+            ctx.closePath();
+            ctx.lineWidth = 5 / input.cam.zoom;
+            const intensity = lerp(0.01, 0.15, fit);
+            ctx.fillStyle = `rgba(${rgb}, ${intensity})`;
+            ctx.strokeStyle = `rgba(${rgb}, ${1})`;
+            ctx.fill();
+            ctx.lineJoin = 'bevel';
+            if (active_corner == shape[b]) ctx.stroke();
+            ctx.lineJoin = 'miter';
+          }
+
+          if (show_determinants) {
+            let text = det.toFixed(2);
+            ctx.textBaseline = 'middle';
+            ctx.fillStyle = `rgba(0, 0, 0, ${fit})`;
+            ctx.fillText(
+              text,
+              lerp(shape[a].x, shape[c].x, 0.5) - ctx.measureText(text).width*0.5,
+              lerp(shape[a].y, shape[c].y, 0.5)
+            );
+          }
+        }
+      }
+    }
+
+  }
+  hovered_det = next_hovered_det;
+  hovered_corner = next_hovered_corner;
+  if (input.mouse_released) {
+    if (selected_corner == hovered_corner) {
+      selected_corner = null,
+      selected_det    = null;
+    } else {
+      selected_corner = hovered_corner,
+      selected_det    = hovered_det   ;
+    }
+  }
+  input.mouse_released = false;
+
+  ctx.restore();
+})
+
+/* it's a box if each normalized determinant is 1.0 */
+function is_box(shape) {
+  for (let i = 0; i < shape.length; i++) {
+    const a = i;
+    const b = (i + 1) % shape.length;
+    const c = (i + 2) % shape.length;
+
+    let det;
+    {
+       let d1x = shape[a].x - shape[b].x;
+       let d1y = shape[a].y - shape[b].y;
+       d1x /= Math.sqrt(d1x*d1x + d1y*d1y);
+       d1y /= Math.sqrt(d1x*d1x + d1y*d1y);
+       let d2x = shape[b].x - shape[c].x;
+       let d2y = shape[b].y - shape[c].y;
+       d2x /= Math.sqrt(d2x*d2x + d2y*d2y);
+       d2y /= Math.sqrt(d2x*d2x + d2y*d2y);
+       det = (d1x*d2y - d1y*d2x);
+    }
+
+    /* no area means this point is redundant/triangle doesn't really exist */
+    if (isNaN(det)) continue;
+
+    if (det != 1) return false;
+  }
+  return true;
+}
+
+function in_tri(vertices, a, b, c, p) {
+   const v1 = vertices[a], v2 = vertices[b], v3 = vertices[c];
+   const alpha = ((v2.y - v3.y) * ( p.x - v3.x) + (v3.x - v2.x) * ( p.y - v3.y)) /
+                 ((v2.y - v3.y) * (v1.x - v3.x) + (v3.x - v2.x) * (v1.y - v3.y));
+   const beta = ((v3.y - v1.y) * ( p.x - v3.x) + (v1.x - v3.x) * ( p.y - v3.y)) /
+                ((v2.y - v3.y) * (v1.x - v3.x) + (v3.x - v2.x) * (v1.y - v3.y));
+   const gamma = 1.0 - alpha - beta;
+   return (alpha > 0 && beta > 0 && gamma > 0)
+}
+
+let vector, vector_bbox;
+{
+  const v = (x, y) => ({ x, y });
+  vector = [
+      [v(-13.7222, 9.3124), v(-13.7222, 3.2280), v(-9.8044, 3.2280), v(-9.8044, 9.3124)],
+      [v(20.2308, 0.9308), v(20.2308, -2.2550), v(24.0808, -2.2550), v(24.0808, 0.9308)],
+      [v(26.4385, 20.4308), v(26.4385, 16.4623), v(31.3808, 16.4623), v(31.3808, 20.4308)],
+      [v(-14.5304, -23.6692), v(-14.5304, -25.5808), v(-12.6173, -25.5808), v(-12.6173, -23.6692)],
+      [v(1.6308, -14.3000), v(1.6308, -18.1692), v(7.9696, -18.1692), v(7.9696, -14.3000)],
+      [v(-10.1944, -0.3313), v(-10.1944, -2.0082), v(-7.3504, -2.0082), v(-7.3504, -0.3313)],
+      [v(20.2308, 9.8270), v(20.2308, 7.2808), v(21.5607, 7.2808), v(21.5607, 9.8270)],
+      [v(26.4385, 16.4623), v(26.4385, 13.3308), v(31.3808, 13.3308), v(31.3808, 16.4623)],
+      [v(8.1047, -10.6565), v(8.1047, -13.8192), v(10.9578, -13.8192), v(10.9578, -10.6565)],
+      [v(-17.8192, -19.8809), v(-17.8192, -24.4192), v(-14.5304, -24.4192), v(-14.5304, -19.8809)],
+      [v(-2.0749, -14.3013), v(7.8808, -14.3013), v(7.8808, -11.4790), v(-2.0749, -11.4790), v(-2.0749, -14.3013)],
+      [v(30.9885, 1.3808), v(31.0507, 2.8878), v(30.9885, 4.3308), v(26.4385, 4.3308), v(26.4385, 1.3808)],
+      [v(26.4385, 13.3308), v(26.4385, 7.4308), v(31.3808, 7.4308), v(31.3808, 13.3308)],
+      [v(-1.9654, 13.4359), v(-1.4359, 13.9693), v(-3.0972, 15.6185), v(-3.5936, 15.6167), v(-3.5936, 16.2464), v(-4.8000, 16.1000), v(-6.0022, 15.6656), v(-7.0080, 15.1556), v(-7.8993, 14.5237), v(-8.6997, 13.7375), v(-9.3192, 12.8447), v(-9.8188, 11.8322), v(-10.1304, 10.7768), v(-10.2721, 9.6861), v(-10.2721, 9.3808), v(-9.1614, 9.3808), v(-6.4042, 6.6236), v(-0.7743, 12.2535)],
+      [v(8.1047, -7.4807), v(8.1047, -10.6565), v(10.9578, -10.6565), v(10.9578, -7.4807)],
+      [v(25.6527, 23.9308), v(25.6527, 20.3669), v(30.2308, 20.3669), v(30.2308, 23.9308)],
+      [v(-24.3192, 8.1048), v(-24.3192, 3.1155), v(-17.3170, 3.1155), v(-17.3170, 8.1048)],
+      [v(-14.5304, -21.7692), v(-14.5304, -23.6692), v(-12.6173, -23.6692), v(-12.6173, -21.7692)],
+      [v(7.8808, -6.5192), v(-1.9692, -6.5192), v(-1.9692, -8.8290), v(0.0155, -8.8290), v(0.0155, -11.4790), v(7.8808, -11.4790)],
+      [v(-10.1944, -15.6497), v(-10.1944, -17.6046), v(-8.1283, -17.6046), v(-8.1283, -15.6497)],
+      [v(-1.6192, -18.2209), v(-1.6192, -14.2979), v(-3.9692, -14.2979), v(-3.9692, -17.6025), v(-10.1944, -17.6025), v(-10.1944, -0.3292), v(-7.3504, -0.3292), v(-3.4136, 3.6077), v(-6.4765, 6.6706), v(-9.8044, 3.3427), v(-17.3170, 3.3427), v(-17.3170, 3.1176), v(-24.3188, 3.1176), v(-24.3188, -1.0897), v(-24.3188, -2.9192), v(-25.4692, -2.9192), v(-25.4692, -14.7171), v(-24.3192, -14.7171), v(-24.3192, -19.8788), v(-12.6173, -19.8788), v(-12.6173, -25.5787), v(-1.6192, -25.5787), v(-1.6192, -20.1671), v(7.5084, -20.1671), v(7.5084, -18.2209)],
+      [v(-8.1283, -15.6497), v(-8.1283, -17.6046), v(-6.0692, -17.6046), v(-6.0692, -15.6497)],
+      [v(13.9808, 20.3669), v(13.9808, 16.5937), v(17.2308, 16.5937), v(17.2308, 20.3669)],
+      [v(20.4808, -22.0616), v(20.4808, -24.4192), v(22.8188, -24.4192), v(22.8188, -22.0616)],
+      [v(27.0732, -19.7185), v(27.5754, -18.7510), v(27.8609, -17.7096), v(27.9032, -17.0911), v(25.4964, -14.6543), v(22.9806, -17.0174), v(26.3977, -20.5858)],
+      [v(25.6527, 30.0808), v(25.6527, 23.9308), v(30.2308, 23.9308), v(30.2308, 30.0808)],
+      [v(26.7203, -14.7192), v(26.7203, -15.8192), v(27.9477, -17.0466), v(30.2308, -17.0466), v(30.2308, -14.7192)],
+      [v(20.2308, 7.2808), v(20.2308, 4.0808), v(24.0808, 4.0808), v(24.0808, 7.2808)],
+      [v(-17.3170, 8.1048), v(-17.3170, 3.3406), v(-13.7222, 3.3406), v(-13.7222, 8.1048)],
+      [v(17.3449, 8.0022), v(7.5503, 8.0022), v(7.5503, 7.4101), v(0.4515, 7.4101), v(-3.5592, 3.3994), v(-1.9654, 1.8057), v(-1.9654, -3.9851), v(7.5503, -3.9851), v(8.0062, -4.4411), v(10.3359, -2.1114), v(9.6917, -1.4671), v(9.6917, 0.1329), v(11.1917, 0.1329), v(11.1917, 3.8829), v(9.6917, 3.8829), v(9.6917, 5.4829), v(10.1308, 5.9220), v(17.3449, 5.9220)],
+      [v(-3.1389, 15.6599), v(-1.4359, 13.9693), v(-1.9654, 13.4359), v(-0.7831, 12.2622), v(2.6107, 15.6810)],
+      [v(26.4385, 7.4308), v(24.1308, 7.4308), v(24.1308, -2.2575), v(16.4911, -2.2575), v(16.4911, -5.1120), v(13.3294, -5.1120), v(10.3397, -2.1223), v(7.9696, -4.4925), v(10.9592, -7.4821), v(10.9592, -13.8192), v(8.1047, -13.8192), v(8.1047, -18.2231), v(7.5084, -18.2231), v(7.5084, -25.5808), v(20.4808, -25.5808), v(20.4980, -19.4980), v(25.4632, -14.5368), v(26.7203, -14.5368), v(26.7203, -14.7192), v(31.3808, -14.7192), v(31.3808, -1.6692), v(26.4385, -1.6692)],
+      [v(21.5607, 9.8270), v(21.5607, 7.2808), v(24.0808, 7.2808), v(24.0808, 9.8270)],
+      [v(13.3294, -2.2575), v(13.3294, -5.1120), v(16.4911, -5.1120), v(16.4911, -2.2575)],
+      [v(17.3449, 5.9220), v(10.1308, 5.9220), v(9.7381, 5.4048), v(9.7381, 3.8829), v(11.2308, 3.8829), v(11.2308, 2.0079), v(17.3449, 2.0079)],
+      [v(10.7753, 20.3669), v(10.7753, 16.5937), v(13.9808, 16.5937), v(13.9808, 20.3669)],
+      [v(-0.7743, -6.5192), v(-0.7743, -3.9692), v(-1.9704, -3.9692), v(-1.9704, -6.5192)],
+      [v(20.2308, -2.2550), v(20.2308, 7.9308), v(17.3449, 7.9308), v(17.3449, -2.2550)],
+      [v(6.2226, 20.3669), v(6.2226, 16.5937), v(10.7753, 16.5937), v(10.7753, 20.3669)],
+      [v(-3.9692, -14.2979), v(-2.0749, -14.3013), v(-2.0749, -11.4790), v(0.0155, -11.4790), v(0.0155, -8.8290), v(-1.9692, -8.8290), v(-1.9692, -2.0082), v(-3.9692, -2.0082)],
+      [v(-6.0692, -15.6497), v(-6.0692, -17.6046), v(-3.9692, -17.6046), v(-3.9692, -15.6497)],
+      [v(-5.7296, -1.9783), v(-2.0010, -2.0082), v(-1.9704, 1.8057), v(-3.5489, 3.4097), v(-7.3504, -0.3313)],
+      [v(-21.0192, -19.8809), v(-21.0192, -24.4192), v(-17.8192, -24.4192), v(-17.8192, -19.8809)],
+      [v(8.1047, -5.5114), v(8.1047, -7.4692), v(10.9330, -7.4692), v(8.9752, -5.5114)],
+      [v(-0.7743, -3.9851), v(-0.7743, -6.5192), v(7.9696, -6.5192), v(7.9696, -4.4925), v(7.4623, -3.9851)],
+      [v(-2.2192, 30.0808), v(-2.2192, 23.1308), v(2.7308, 23.1308), v(2.7308, 30.0808)],
+      [v(30.9885, 4.3308), v(30.7160, 5.8241), v(30.2348, 7.4308), v(26.5056, 7.4301), v(26.5061, 4.3300), v(27.3136, 4.3302)],
+      [v(-14.5304, -19.8809), v(-14.5304, -21.7692), v(-12.6173, -21.7692), v(-12.6173, -19.8809)],
+      [v(17.2308, 20.3669), v(17.2308, 16.5937), v(21.9308, 16.5937), v(21.9308, 20.3669)],
+      [v(-10.1944, -2.0082), v(-10.1944, -15.6497), v(-3.9692, -15.6497), v(-3.9692, -2.0082)],
+      [v(7.5084, -20.1656), v(-1.6192, -20.1656), v(-1.6192, -24.4192), v(0.0155, -24.8692), v(1.4808, -25.1192), v(2.9423, -25.2289), v(4.4371, -25.1322), v(5.9308, -24.8692), v(7.5084, -24.4192)],
+      [v(21.9308, 16.5937), v(6.1808, 16.5937), v(6.1808, 7.4308), v(7.5808, 7.4308), v(7.5808, 7.9904), v(20.2308, 7.9904), v(20.2308, 9.8270), v(21.9308, 9.8270)],
+      [v(-9.1204, 9.3124), v(-9.8044, 9.3124), v(-9.8044, 3.3406), v(-6.4765, 6.6685)],
+      [v(11.1917, 2.0079), v(11.1917, 0.1329), v(9.7381, 0.1329), v(9.7381, -1.4207), v(10.4865, -2.1692), v(17.3449, -2.1692), v(17.3449, 2.0079)],
+      [v(-3.4192, 19.5308), v(-3.4192, 15.6808), v(2.5734, 15.6808), v(2.5734, 19.5308)],
+      [v(-2.2192, 23.1308), v(-2.2192, 19.5308), v(2.5734, 19.5308), v(2.5734, 23.1308)],
+      [v(26.4385, 20.3669), v(25.6498, 20.3669), v(25.6498, 30.0808), v(20.4808, 30.0808), v(20.4808, 31.2308), v(7.5084, 31.2308), v(7.5084, 30.0808), v(2.7308, 30.0808), v(2.7308, 23.1308), v(2.6531, 23.1308), v(2.6531, 15.6808), v(-6.4179, 6.6099), v(-3.4040, 3.5960), v(0.4308, 7.4308), v(6.1808, 7.4308), v(6.1808, 20.3669), v(21.9308, 20.3669), v(21.9308, 9.7385), v(24.1308, 9.7385), v(24.1308, 7.4308), v(26.4385, 7.4308)],
+      [v(13.3294, -5.1120), v(13.3294, -2.2192), v(11.3794, -2.2192), v(11.3794, -3.1620)],
+      [v(30.2308, -1.6692), v(30.2308, -1.6692), v(30.6808, -0.1442), v(30.9885, 1.3808), v(26.4385, 1.3808), v(26.4385, -1.6692)],
+      [v(20.4808, -22.0616), v(22.8808, -22.0616), v(23.5382, -22.0205), v(24.5744, -21.7515), v(25.5608, -21.2534), v(26.3977, -20.5858), v(22.9720, -17.0280), v(20.4980, -19.4980)],
+      [v(20.2308, 4.0808), v(20.2308, 0.9308), v(24.0808, 0.9308), v(24.0808, 4.0808)],
+      [v(-1.5997, -14.3000), v(-1.5997, -18.2231), v(1.6308, -18.2231), v(1.6308, -14.3000)],
+      [v(-24.3192, -19.8809), v(-24.3192, -24.4192), v(-21.0192, -24.4192), v(-21.0192, -19.8809)]
+  ]
+  vector_bbox = bbox(vector);
+
+  {
+    const pad = 4;
+    vector_bbox.min.x -= pad;
+    vector_bbox.min.y -= pad;
+    vector_bbox.max.x += pad;
+    vector_bbox.max.y += pad;
+
+    const x = vector_bbox.min.x;
+    const y = vector_bbox.min.y;
+    const w = vector_bbox.max.x - vector_bbox.min.x;
+    const h = vector_bbox.max.y - vector_bbox.min.y;
+
+    input.cam.zoom = Math.min(canvas.width / w, canvas.height / h);
+    input.cam.x = -x*input.cam.zoom;
+    input.cam.y = -y*input.cam.zoom;
+
+    /* center */
+    const worldspace_content_size_x = w;
+    const worldspace_content_size_y = h;
+    const worldspace_screen_size_x = (canvas.width  / input.cam.zoom);
+    const worldspace_screen_size_y = (canvas.height / input.cam.zoom);
+    input.cam.x += (worldspace_screen_size_x - worldspace_content_size_x) * 0.5 * input.cam.zoom;
+    input.cam.y += (worldspace_screen_size_y - worldspace_content_size_y) * 0.5 * input.cam.zoom;
+  }
+}
+
+function bbox(vector) {
+  const ret = { min: { x: Infinity, y: Infinity }, max: { x: -Infinity, y: -Infinity } };
+
+  for (const shape of vector) {
+    for (const point of shape) {
+      ret.min.x = Math.min(point.x, ret.min.x);
+      ret.min.y = Math.min(point.y, ret.min.y);
+      ret.max.x = Math.max(point.x, ret.max.x);
+      ret.max.y = Math.max(point.y, ret.max.y);
+    }
+  }
+
+  return ret;
+}
+
+function lerp(v0, v1, t) { return (1 - t) * v0 + t * v1; }
+function inv_lerp(min, max, p) { return (p - min) / (max - min); }
+    </script>
+  </body>
+</html>
