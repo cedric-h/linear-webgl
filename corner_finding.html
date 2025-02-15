@@ -9,25 +9,29 @@
 document, body { margin: 0px; padding: 0px; overflow: hidden; }
 
 .hud {
-    position: absolute;
-    top: 0px;
-    left: 0px;
-    background-color: rgba(70, 70, 70, 0.8);
-    color: white;
-    font-family: monospace;
+  position: absolute;
+  top: 0px;
+  left: 0px;
+  background-color: rgba(20, 20, 20, 0.8);
+  color: white;
+  font-family: monospace;
+  padding: 0.3rem;
+
+  p {
+    padding: 0 0.3rem;
+  }
+  
+  .labeled_input {
+    display: flex;
+    justify-content: space-between;
+    gap: 0.8rem;
     padding: 0.3rem;
-    
-    .labeled_input {
-        display: flex;
-        justify-content: space-between;
-        gap: 0.8rem;
-        padding: 0.3rem;
-        label {
-            height: 100%;
-            margin-top: auto;
-            margin-bottom: auto;
-        }
+    label {
+      height: 100%;
+      margin-top: auto;
+      margin-bottom: auto;
     }
+  }
 }
   </style>
 
@@ -36,10 +40,15 @@ document, body { margin: 0px; padding: 0px; overflow: hidden; }
   <body>
     <div class="hud">
       <p>
-        <h4> Controls: </h4>
-        <p> Click and drag to pan, mousewheel to zoom </p>
-        <p> Click a corner to <span style="color:rgb(0, 0, 255)"> select </span> </p>
-        <p> Hover to <span style="color:rgb(255, 25, 25)"> preview </span> </p>
+        <p> Can you find out where someone is <br/>
+            in a building just based on two walls? <br/>
+            It turns out ... you usually can! </p>
+        <p>
+          <b> Controls: </b> <br>
+          Click and drag to pan, mousewheel to zoom <br/>
+          Click a corner to <span style="color:rgb(25, 25, 255)"> select </span> <br/>
+          Hover to <span style="color:rgb(255, 25, 25)"> preview </span>
+        </p>
       </p>
 
       <div class="labeled_input">
@@ -215,6 +224,9 @@ requestAnimationFrame(function render(now) {
              let d2y = shape[b].y - shape[c].y;
              det = (d1x*d2y - d1y*d2x);
           }
+
+          /* not interested in redundant points/non-existent triangles */
+          if (det == 0) continue;
 
           if (det > 0 && in_tri(shape, a, b, c, mouse)) {
             let dist = Math.sqrt((shape[b].x - mouse.x)*(shape[b].x - mouse.x) +
