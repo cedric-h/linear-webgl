@@ -196,16 +196,42 @@ requestAnimationFrame(function render(now) {
       ctx.fill();
     }
 
-    for (const shape of open_shapes) {
-      if (shape.length == 0) continue;
+    let hovered_shapes = 0;
+    for (const [shapes, rgb, outline] of [
+      [open_shapes,   "255, 0, 0", false],
+      [adding_shapes, "0, 255, 0", true],
+    ]) {
+      for (const shape of shapes) {
+        if (shape.length == 0) continue;
 
-      ctx.beginPath();
-      ctx.moveTo(shape[0].x, shape[0].y);
-      for (let i = 1; i < shape.length; i++)
-        ctx.lineTo(shape[i].x, shape[i].y);
-      ctx.closePath();
-      ctx.fillStyle = `rgba(255, 0, 0, 0.6)`;
-      ctx.fill();
+        ctx.beginPath();
+        ctx.moveTo(shape[0].x, shape[0].y);
+        for (let i = 1; i < shape.length; i++)
+          ctx.lineTo(shape[i].x, shape[i].y);
+        ctx.closePath();
+
+        ctx.fillStyle = `rgba(${rgb}, 0.1)`;
+
+        if (ctx.isPointInPath(input.mouse_x, input.mouse_y)) {
+          ctx.fillStyle = `rgba(${rgb}, 0.2)`;
+          hovered_shapes++;
+        }
+
+        if (outline) {
+          ctx.strokeStyle = `rgba(${rgb}, 0.5})`;
+          ctx.stroke();
+        }
+        ctx.fill();
+      }
+    }
+
+    if (hovered_shapes > 0) {
+      ctx.fillStyle = 'white';
+      ctx.font = (40 / input.cam.zoom) + 'px monospace';
+      ctx.fillText(
+        hovered_shapes + ' ' + ((hovered_shapes == 1) ? 'shape' : 'shapes'),
+        mouse.x, mouse.y
+      );
     }
 
   }
@@ -216,7 +242,7 @@ requestAnimationFrame(function render(now) {
 
 let lines, connections, points, vector_bbox;
 
-if (1) {
+if (0) {
   lines = [
       [ { "x":   50, "y": -100 }, { "x": -150, "y": -100 } ],
       [ { "x": -150, "y": -100 }, { "x": -150, "y":  100 } ],
@@ -244,46 +270,44 @@ if (1) {
   ({ connections, points } = lines_to_connections(lines));
 }
 
-if (0) {
-  let lines = [
-      [ { "x": 308, "y": 95 }, { "x": 308, "y": 150 } ],
-      [ { "x": 739, "y": 1184.5 }, { "x": 834, "y": 1184.5 } ],
-
-      [ { "x": 169, "y": 227.5 }, { "x": 213, "y": 227.5 } ],
-      [ { "x": 280, "y": 227.5 }, { "x": 313, "y": 227.5 } ],
-
-      [ { "x": 169, "y": 550.5 }, { "x": 447, "y": 550.5 } ],
-      [ { "x": 163, "y": 87 }, { "x": 852, "y": 87 } ],
-      [ { "x": 165, "y": 95 }, { "x": 165, "y": 894 } ],
-      [ { "x": 308, "y": 95 }, { "x": 308, "y": 150 } ],
-      [ { "x": 169.5, "y": 97 }, { "x": 169.5, "y": 891 } ],
-      [ { "x": 838, "y": 95 }, { "x": 838, "y": 1199 } ],
-      [ { "x": 164, "y": 82.5 }, { "x": 848, "y": 82.5 } ],
-      [ { "x": 677, "y": 227.5 }, { "x": 833, "y": 227.5 } ],
-      [ { "x": 769, "y": 882.5 }, { "x": 833, "y": 882.5 } ],
-      [ { "x": 537.5, "y": 878 }, { "x": 537.5, "y": 1199 } ],
-      [ { "x": 427, "y": 892 }, { "x": 534, "y": 892 } ],
-      [ { "x": 547, "y": 879 }, { "x": 547, "y": 1199 } ],
-      [ { "x": 553, "y": 1186.5 }, { "x": 647, "y": 1186.5 } ],
-      [ { "x": 647, "y": 882.5 }, { "x": 685, "y": 882.5 } ],
-      [ { "x": 690.5, "y": 647 }, { "x": 690.5, "y": 883 } ],
-      [ { "x": 695, "y": 657 }, { "x": 787, "y": 657 } ],
-      [ { "x": 647, "y": 552 }, { "x": 714, "y": 552 } ],
-      [ { "x": 177, "y": 840 }, { "x": 177, "y": 872 } ],
-      [ { "x": 177, "y": 806 }, { "x": 177, "y": 839 } ],
-      [ { "x": 548, "y": 223 }, { "x": 548, "y": 550 } ],
-      [ { "x": 594, "y": 144 }, { "x": 594, "y": 223 } ],
-      [ { "x": 547.5, "y": 223 }, { "x": 547.5, "y": 550 } ],
-      [ { "x": 551, "y": 232.5 }, { "x": 603, "y": 232.5 } ]
+if (1) {
+  lines = [
+    [ { "x": 311.799, "y": 84.61283619558446  }, { "x": 313.037, "y": 228.29192111783644 } ],
+    [ { "x": 537.226, "y": 1186.9782291335523 }, { "x": 833.255, "y": 1189.4554547356602 } ],
+    [ { "x": 165.642, "y": 227.05330831678253 }, { "x": 313.037, "y": 228.29192111783644 } ],
+    [ { "x": 165.642, "y": 227.05330831678253 }, { "x": 313.037, "y": 228.29192111783644 } ],
+    [ { "x": 163.165, "y": 554.0470877950112  }, { "x": 547.135, "y": 551.5698621929034  } ],
+    [ { "x": 166.881, "y": 83.37422339453056  }, { "x": 838.209, "y": 85.85144899663837  } ],
+    [ { "x": 166.881, "y": 83.37422339453056  }, { "x": 161.927, "y": 890.949769681671   } ],
+    [ { "x": 311.799, "y": 84.61283619558446  }, { "x": 313.037, "y": 228.29192111783644 } ],
+    [ { "x": 166.881, "y": 83.37422339453056  }, { "x": 161.927, "y": 890.949769681671   } ],
+    [ { "x": 838.209, "y": 85.85144899663837  }, { "x": 833.255, "y": 1189.4554547356602 } ],
+    [ { "x": 166.881, "y": 83.37422339453056  }, { "x": 838.209, "y": 85.85144899663837  } ],
+    [ { "x": 605.350, "y": 230.76914671994425 }, { "x": 835.732, "y": 232.00775952099812 } ],
+    [ { "x": 684.621, "y": 887.2339312785093  }, { "x": 835.732, "y": 887.2339312785093  } ],
+    [ { "x": 540.942, "y": 888.4725440795632  }, { "x": 537.226, "y": 1186.9782291335523 } ],
+    [ { "x": 161.927, "y": 890.949769681671   }, { "x": 540.942, "y": 888.4725440795632  } ],
+    [ { "x": 540.942, "y": 888.4725440795632  }, { "x": 537.226, "y": 1186.9782291335523 } ],
+    [ { "x": 537.226, "y": 1186.9782291335523 }, { "x": 833.255, "y": 1189.4554547356602 } ],
+    [ { "x": 540.942, "y": 888.4725440795632  }, { "x": 684.621, "y": 887.2339312785093  } ],
+    [ { "x": 688.337, "y": 656.8519502824846  }, { "x": 684.621, "y": 887.2339312785093  } ],
+    [ { "x": 688.337, "y": 656.8519502824846  }, { "x": 834.493, "y": 656.8519502824846  } ],
+    [ { "x": 547.135, "y": 551.5698621929034  }, { "x": 836.970, "y": 552.8084749939572  } ],
+    [ { "x": 163.165, "y": 554.0470877950112  }, { "x": 161.927, "y": 890.949769681671   } ],
+    [ { "x": 165.642, "y": 227.05330831678253 }, { "x": 163.165, "y": 554.0470877950112  } ],
+    [ { "x": 548.374, "y": 230.76914671994425 }, { "x": 547.135, "y": 551.5698621929034  } ],
+    [ { "x": 605.350, "y": 87.09006179769226  }, { "x": 605.350, "y": 230.76914671994425 } ],
+    [ { "x": 548.374, "y": 230.76914671994425 }, { "x": 547.135, "y": 551.5698621929034  } ],
+    [ { "x": 548.374, "y": 230.76914671994425 }, { "x": 605.350, "y": 230.76914671994425 } ]
   ];
-  lines = clean_up_geo(lines, 55);
+  lines = clean_up_geo(lines, 20);
   vector_bbox = bbox(lines);
   input.fit_cam_to_box(vector_bbox, 40);
 
   ({ connections, points } = lines_to_connections(lines));
 }
 
-if (0)  {
+if (0) {
   const v = (x, y) => ({ x, y });
   const vector = [
       [v(-13.7222, 9.3124), v(-13.7222, 3.2280), v(-9.8044, 3.2280), v(-9.8044, 9.3124)],
@@ -360,47 +384,102 @@ if (0)  {
     }
   }
 
-  lines = clean_up_geo(lines);
+  // lines = clean_up_geo(lines);
+  ({ connections, points } = lines_to_connections(lines, 0.1));
 }
 
-let point_idx = 0, open_shapes = [[]];
+let point_idx = 0, open_shapes = [], adding_shapes = [];
 {
+  let genny = find_shapes();
+
   const set_index = index => {
     point_idx = index;
     points_progress_readout.textContent = `points ${point_idx}/${points.length}`;
-    open_shapes = find_open_shapes();
     open_shape_count_readout.textContent = 'open shapes: ' + open_shapes.length;
   }
   points_next.onclick = () => {
+    ({ open_shapes, adding_shapes } = genny.next().value);
     set_index((point_idx + 1) % (points.length + 1));
   };
   points_prev.onclick = () => {
+    genny = find_shapes();
+    for (let i = 0; i < (point_idx - 1); i++)
+      ({ open_shapes, adding_shapes } = genny.next().value);
     return set_index((point_idx == 0) ? (points.length - 1) : (point_idx - 1));
   }
   set_index(0);
 
-  function find_open_shapes() {
+  function *find_shapes() {
     let shapes = [];
-    for (let i = 0; i < point_idx; i++) {
+
+    const overlaps_line_in_input = (a, b, c) => {
+      for (const line of lines) {
+        if (line_hits_tri(a, b, c, line[0], line[1]))
+          return true;
+      }
+      return false;
+    }
+
+    for (let i = 0; i < 10_000; i++) {
       const p = points[i];
 
-      let added_to_existing_shape = false;
-      for (const shape of shapes) {
-        const start_len = shape.length;
-        for (let i = 0; i < start_len; i++) {
-          const vert = shape[i];
+      const links = connections.get(p);
+      for (const l of links)
+        for (const o of links) {
+          if (l == o) continue;
 
-          if (connections.get(vert)?.includes(p) && !shape.includes(p)) {
-            added_to_existing_shape = true;
-            shape.push(p);
-          }
+          /* check determinant here to see if real triangle? */
+
+          if (!overlaps_line_in_input(l, p, o)) add_shape: do {
+            /* if we can join the LPO triangle to an existing shape
+             * without having a wall intersect the resultant shape,
+             * do that; otherwise, make a new shape for this triangle. */ 
+            const neighboring_shapes = [];
+
+            for (const pt of [l, p, o]) {
+              const shape = shapes.find(shape => shape.includes(pt));
+              if (shape && !neighboring_shapes.some(s => s.shape == shape)) {
+                const to_add = [l, p, o].filter(x => !shape.includes(x));
+                neighboring_shapes.push({ shape, to_add, full_tri: [l, p, o] });
+              }
+            }
+
+            for (const { shape, to_add, full_tri } of neighboring_shapes) {
+              /* really no point in adding a triangle that already exists ... */
+              if (to_add.length == 0) break add_shape;
+
+              yield ({ open_shapes: shapes, adding_shapes: [shape, full_tri] });
+
+              if (to_add.length > 1) {
+                continue;
+              }
+
+              if (!overlaps_line_in_input(shape[0], to_add[0], shape.at(-1))) {
+                shape.push(to_add[0])
+                break add_shape;
+              }
+            }
+
+            shapes.push([l, p, o]);
+          } while(false);
+
+          /* if (!overlaps_line_in_input(l, p, o)) make_shape: do {
+            for (const pt of [l, p, o]) {
+              const shape = shapes.find(shape => shape.includes(pt));
+              if (shape) {
+                for (const pt of [l, p, o]) {
+                  if (!shape.includes(pt)) shape.push(pt);
+                }
+                break make_shape;
+              }
+            }
+            shapes.push([l, p, o]);
+          } while (false); */
+
         }
-      }
-      
-      if (!added_to_existing_shape)
-        shapes.push([p]);
+
+        yield ({ open_shapes: shapes, adding_shapes: [] });
     }
-    return shapes;
   }
 }
 
@@ -491,13 +570,12 @@ function clean_up_geo(lines, scale) {
   return new_lines;
 }
 
-function lines_to_connections(lines) {
+function lines_to_connections(lines, scale = 5) {
   const connections = new Map();
 
   /* dedup point objects */
   {
     const spatial_hash = new Map();
-    const scale = 5;
     const key = p => Math.floor(p.x / scale) + ',' + Math.floor(p.y / scale);
     for (const line of lines) {
       spatial_hash.set(key(line[0]), line[0]);
