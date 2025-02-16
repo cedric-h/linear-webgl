@@ -39,27 +39,10 @@ document, body { margin: 0px; padding: 0px; overflow: hidden; }
 
   <body>
     <div class="hud">
-      <p>
-        <p> Can you find out where someone is <br/>
-            in a building just based on two walls? <br/>
-            It turns out ... you usually can! </p>
-        <p>
-          <b> Controls: </b> <br>
-          Click and drag to pan, mousewheel to zoom <br/>
-          Click a corner to <span style="color:rgb(25, 25, 255)"> select </span> <br/>
-          Hover to <span style="color:rgb(255, 25, 25)"> preview </span>
-        </p>
-      </p>
-
-      <div class="labeled_input">
-          <label for="error_threshold">Error threshold (meters)</label>
-          <input  id="error_threshold" type="number" step="0.05" value="0.5"></input>
-      </div>
-
-      <div class="labeled_input">
-          <label for="error_aspect">Include aspect ratio error</label>
-          <input  id="error_aspect" type="checkbox" checked="true"></input>
-      </div>
+      <p id="open_shape_count_readout"> open shapes: 2 </p>
+      <button id="points_prev"> ⬅️  prev prev </button>
+      <span id="points_progress_readout"> progress 0/25 </span>
+      <button id="points_next"> next point ➡️ </button>
     </div>
 
     <canvas id="glcanvas"></canvas>
@@ -76,6 +59,29 @@ const ctx = canvas.getContext('2d');
 
 let input = {
   cam: { zoom: 1, x: 0, y: 0 },
+  fit_cam_to_box(bbox, pad) {
+    vector_bbox.min.x -= pad;
+    vector_bbox.min.y -= pad;
+    vector_bbox.max.x += pad;
+    vector_bbox.max.y += pad;
+
+    const x = vector_bbox.min.x;
+    const y = vector_bbox.min.y;
+    const w = vector_bbox.max.x - vector_bbox.min.x;
+    const h = vector_bbox.max.y - vector_bbox.min.y;
+
+    input.cam.zoom = Math.min(canvas.width / w, canvas.height / h);
+    input.cam.x = -x*input.cam.zoom;
+    input.cam.y = -y*input.cam.zoom;
+
+    /* center */
+    const worldspace_content_size_x = w;
+    const worldspace_content_size_y = h;
+    const worldspace_screen_size_x = (canvas.width  / input.cam.zoom);
+    const worldspace_screen_size_y = (canvas.height / input.cam.zoom);
+    input.cam.x += (worldspace_screen_size_x - worldspace_content_size_x) * 0.5 * input.cam.zoom;
+    input.cam.y += (worldspace_screen_size_y - worldspace_content_size_y) * 0.5 * input.cam.zoom;
+  },
   world_transform: null,
   mouse_down: false,
   cam_down_x: 0,
@@ -154,23 +160,13 @@ let input = {
   }
 }
 
-let hovered_det;
-let hovered_corner;
-let hovered_ratio;
-let selected_det;
-let selected_corner;
-let selected_ratio;
 requestAnimationFrame(function render(now) {
   requestAnimationFrame(render);
 
-  ctx.fillStyle = "white";
+  ctx.fillStyle = "black";
   ctx.fillRect(0, 0, canvas.width, canvas.height);
 
   ctx.save();
-  let next_hovered_det;
-  let next_hovered_det_dist = Infinity;
-  let next_hovered_ratio;
-  let next_hovered_corner;
   {
     ctx.translate(input.cam.x, input.cam.y);
     ctx.scale(input.cam.zoom, input.cam.zoom);
@@ -180,157 +176,116 @@ requestAnimationFrame(function render(now) {
 
     ctx.fillStyle = "red";
 
-    for (const shape of vector) {
+    for (const [from, tos] of connections) {
+      for (const to of tos) {
+        ctx.beginPath();
+        ctx.moveTo(from.x, from.y);
+        ctx.lineTo(  to.x,   to.y);
+        ctx.lineWidth = 3 / input.cam.zoom;
+        ctx.strokeStyle = "rgba(255, 255, 255, 0.2)";
+        ctx.stroke();
+      }
+    }
+
+    for (let i = 0; i < points.length; i++) {
+      const p = points[i];
       ctx.beginPath();
-      ctx.moveTo(shape[0].x, shape[0].y)
-      for (const point of shape) {
-        ctx.lineTo(point.x, point.y);
-      }
-      ctx.closePath()
-
-      if (ctx.isPointInPath(input.mouse_x, input.mouse_y)) {
-        ctx.fillStyle = "rgba(0, 255, 0, 0.1)";
-        ctx.fill();
-      }
-
-      ctx.strokeStyle = "black";
-      ctx.lineWidth = 3 / input.cam.zoom;
-      ctx.stroke();
+      const size = (i < point_idx) ? 20 : 10;
+      ctx.arc(p.x, p.y, size / input.cam.zoom, 0, Math.PI*2);
+      ctx.fillStyle = 'rgba(255, 0, 0, 0.5)';
+      ctx.fill();
     }
 
-    ctx.font = ((vector_bbox.max.y - vector_bbox.min.y) * 0.005) + 'px monospace';
-    for (const [active_det, active_ratio, active_corner, rgb, show_determinants] of [
-      [ hovered_det,  hovered_ratio,  hovered_corner, '255, 0, 0', selected_corner == null],
-      [selected_det, selected_ratio, selected_corner, '0, 0, 255', selected_corner]
-    ]) {
+    for (const shape of open_shapes) {
+      if (shape.length == 0) continue;
 
-      for (const shape of vector) {
-
-        let avg_x = 0;
-        let avg_y = 0;
-        for (const p of shape) avg_x += p.x, avg_y += p.y;
-        avg_x /= shape.length;
-        avg_y /= shape.length;
-
-        for (let i = 0; i < shape.length; i++) {
-          const a = i;
-          const b = (i + 1) % shape.length;
-          const c = (i + 2) % shape.length;
-
-          let det;
-          {
-             let d1x = shape[a].x - shape[b].x;
-             let d1y = shape[a].y - shape[b].y;
-             let d2x = shape[b].x - shape[c].x;
-             let d2y = shape[b].y - shape[c].y;
-             det = (d1x*d2y - d1y*d2x);
-          }
-
-          let ratio;
-          let len;
-          {
-            const ab_dist = Math.sqrt((shape[a].x - shape[b].x)*(shape[a].x - shape[b].x) + 
-                                      (shape[a].y - shape[b].y)*(shape[a].y - shape[b].y));
-            const bc_dist = Math.sqrt((shape[b].x - shape[c].x)*(shape[b].x - shape[c].x) + 
-                                      (shape[b].y - shape[c].y)*(shape[b].y - shape[c].y));
-            len = ab_dist + bc_dist;
-            ratio = Math.max(ab_dist / bc_dist, bc_dist / ab_dist);
-          }
-
-          /* not interested in redundant points/non-existent triangles */
-          if (det == 0) {
-            // (highlight bad determinants)
-            // ctx.fillStyle = 'red';
-            // ctx.fillRect(shape[b].x - 1, shape[b].y - 1, 2, 2);
-            continue;
-          }
-
-          if (det > 0 && in_tri(shape, a, b, c, mouse)) {
-            let dist = Math.sqrt((shape[b].x - mouse.x)*(shape[b].x - mouse.x) +
-                                 (shape[b].y - mouse.y)*(shape[b].y - mouse.y));
-            if (dist < next_hovered_det_dist) {
-              next_hovered_det = det;
-              next_hovered_ratio = ratio;
-              next_hovered_det_dist = dist;
-              next_hovered_corner = shape[b];
-            }
-          }
-
-          /* based off of the assumption that the two corners have the same wall length,
-           * which if the determinant is the same they probably do?
-           *
-           * shouldn't be a problem because them being different should only result in positive error,
-           * which can never cancel out the determinant check. */
-          const scaling_factor = len / (ratio + 1);
-          const aspect_err = Math.abs(scaling_factor * ratio - scaling_factor * active_ratio);
-
-          const threshold = parseFloat(error_threshold.value);
-          const err = Math.abs(det - active_det) + (error_aspect.checked ? aspect_err : 0);
-          const fit = active_det ? (1 - err / threshold) : 0.75;
-          if (err < threshold) {
-            ctx.beginPath();
-            ctx.moveTo(shape[a].x, shape[a].y);
-            ctx.lineTo(shape[b].x, shape[b].y);
-            ctx.lineTo(shape[c].x, shape[c].y);
-            ctx.closePath();
-            ctx.lineWidth = 5 / input.cam.zoom;
-            const intensity = lerp(0.01, 0.15, fit);
-            ctx.fillStyle = `rgba(${rgb}, ${intensity})`;
-            ctx.strokeStyle = `rgba(${rgb}, ${1})`;
-            ctx.fill();
-            ctx.lineJoin = 'bevel';
-            if (active_corner == shape[b]) ctx.stroke();
-            ctx.lineJoin = 'miter';
-          }
-
-          if (show_determinants) {
-            let text = det.toFixed(2);
-            ctx.textBaseline = 'middle';
-            ctx.fillStyle = `rgba(0, 0, 0, ${fit})`;
-            ctx.fillText(
-              text,
-              lerp(shape[a].x, shape[c].x, 0.5) - ctx.measureText(text).width*0.5,
-              lerp(shape[a].y, shape[c].y, 0.5)
-            );
-          }
-        }
-      }
+      ctx.beginPath();
+      ctx.moveTo(shape[0].x, shape[0].y);
+      for (let i = 1; i < shape.length; i++)
+        ctx.lineTo(shape[i].x, shape[i].y);
+      ctx.closePath();
+      ctx.fillStyle = `rgba(255, 0, 0, 0.6)`;
+      ctx.fill();
     }
 
-  }
-  hovered_det = next_hovered_det;
-  hovered_ratio = next_hovered_ratio;
-  hovered_corner = next_hovered_corner;
-  if (input.mouse_released) {
-    if (selected_corner == hovered_corner) {
-      selected_ratio  = null;
-      selected_corner = null,
-      selected_det    = null;
-    } else {
-      selected_corner = hovered_corner,
-      selected_det    = hovered_det   ;
-      selected_ratio  = hovered_ratio;
-    }
   }
   input.mouse_released = false;
 
   ctx.restore();
 })
 
-function in_tri(vertices, a, b, c, p) {
-   const v1 = vertices[a], v2 = vertices[b], v3 = vertices[c];
-   const alpha = ((v2.y - v3.y) * ( p.x - v3.x) + (v3.x - v2.x) * ( p.y - v3.y)) /
-                 ((v2.y - v3.y) * (v1.x - v3.x) + (v3.x - v2.x) * (v1.y - v3.y));
-   const beta = ((v3.y - v1.y) * ( p.x - v3.x) + (v1.x - v3.x) * ( p.y - v3.y)) /
-                ((v2.y - v3.y) * (v1.x - v3.x) + (v3.x - v2.x) * (v1.y - v3.y));
-   const gamma = 1.0 - alpha - beta;
-   return (alpha > 0 && beta > 0 && gamma > 0)
+let lines, connections, points, vector_bbox;
+
+if (1) {
+  lines = [
+      [ { "x":   50, "y": -100 }, { "x": -150, "y": -100 } ],
+      [ { "x": -150, "y": -100 }, { "x": -150, "y":  100 } ],
+      [ { "x": -150, "y":  100 }, { "x":   50, "y":  100 } ],
+      [ { "x":   50, "y":  100 }, { "x":   50, "y": -100 } ],
+
+      [ { "x":  300, "y": -100 }, { "x":  100, "y": -100 } ],
+      [ { "x":  100, "y": -100 }, { "x":  100, "y":  100 } ],
+      [ { "x":  100, "y":  100 }, { "x":  300, "y":  100 } ],
+      [ { "x":  300, "y":  100 }, { "x":  300, "y": -100 } ],
+
+      [ { "x":  200, "y": -100 }, { "x":    0, "y": -100 } ],
+      [ { "x":    0, "y": -100 }, { "x":    0, "y": -300 } ],
+      [ { "x":    0, "y": -300 }, { "x":  200, "y": -300 } ],
+      [ { "x":  200, "y": -300 }, { "x":  200, "y": -100 } ],
+
+      [ { "x":  200, "y":  100 }, { "x":    0, "y":  100 } ],
+      [ { "x":    0, "y":  100 }, { "x":    0, "y":  300 } ],
+      [ { "x":    0, "y":  300 }, { "x":  200, "y":  300 } ],
+      [ { "x":  200, "y":  300 }, { "x":  200, "y":  100 } ],
+  ];
+  vector_bbox = bbox(lines);
+  input.fit_cam_to_box(vector_bbox, 40);
+
+  ({ connections, points } = lines_to_connections(lines));
 }
 
-let vector, vector_bbox;
-{
+if (0) {
+  let lines = [
+      [ { "x": 308, "y": 95 }, { "x": 308, "y": 150 } ],
+      [ { "x": 739, "y": 1184.5 }, { "x": 834, "y": 1184.5 } ],
+
+      [ { "x": 169, "y": 227.5 }, { "x": 213, "y": 227.5 } ],
+      [ { "x": 280, "y": 227.5 }, { "x": 313, "y": 227.5 } ],
+
+      [ { "x": 169, "y": 550.5 }, { "x": 447, "y": 550.5 } ],
+      [ { "x": 163, "y": 87 }, { "x": 852, "y": 87 } ],
+      [ { "x": 165, "y": 95 }, { "x": 165, "y": 894 } ],
+      [ { "x": 308, "y": 95 }, { "x": 308, "y": 150 } ],
+      [ { "x": 169.5, "y": 97 }, { "x": 169.5, "y": 891 } ],
+      [ { "x": 838, "y": 95 }, { "x": 838, "y": 1199 } ],
+      [ { "x": 164, "y": 82.5 }, { "x": 848, "y": 82.5 } ],
+      [ { "x": 677, "y": 227.5 }, { "x": 833, "y": 227.5 } ],
+      [ { "x": 769, "y": 882.5 }, { "x": 833, "y": 882.5 } ],
+      [ { "x": 537.5, "y": 878 }, { "x": 537.5, "y": 1199 } ],
+      [ { "x": 427, "y": 892 }, { "x": 534, "y": 892 } ],
+      [ { "x": 547, "y": 879 }, { "x": 547, "y": 1199 } ],
+      [ { "x": 553, "y": 1186.5 }, { "x": 647, "y": 1186.5 } ],
+      [ { "x": 647, "y": 882.5 }, { "x": 685, "y": 882.5 } ],
+      [ { "x": 690.5, "y": 647 }, { "x": 690.5, "y": 883 } ],
+      [ { "x": 695, "y": 657 }, { "x": 787, "y": 657 } ],
+      [ { "x": 647, "y": 552 }, { "x": 714, "y": 552 } ],
+      [ { "x": 177, "y": 840 }, { "x": 177, "y": 872 } ],
+      [ { "x": 177, "y": 806 }, { "x": 177, "y": 839 } ],
+      [ { "x": 548, "y": 223 }, { "x": 548, "y": 550 } ],
+      [ { "x": 594, "y": 144 }, { "x": 594, "y": 223 } ],
+      [ { "x": 547.5, "y": 223 }, { "x": 547.5, "y": 550 } ],
+      [ { "x": 551, "y": 232.5 }, { "x": 603, "y": 232.5 } ]
+  ];
+  lines = clean_up_geo(lines, 55);
+  vector_bbox = bbox(lines);
+  input.fit_cam_to_box(vector_bbox, 40);
+
+  ({ connections, points } = lines_to_connections(lines));
+}
+
+if (0)  {
   const v = (x, y) => ({ x, y });
-  vector = [
+  const vector = [
       [v(-13.7222, 9.3124), v(-13.7222, 3.2280), v(-9.8044, 3.2280), v(-9.8044, 9.3124)],
       [v(20.2308, 0.9308), v(20.2308, -2.2550), v(24.0808, -2.2550), v(24.0808, 0.9308)],
       [v(26.4385, 20.4308), v(26.4385, 16.4623), v(31.3808, 16.4623), v(31.3808, 20.4308)],
@@ -396,30 +351,56 @@ let vector, vector_bbox;
       [v(-24.3192, -19.8809), v(-24.3192, -24.4192), v(-21.0192, -24.4192), v(-21.0192, -19.8809)]
   ]
   vector_bbox = bbox(vector);
+  input.fit_cam_to_box(vector_bbox, 4);
 
-  {
-    const pad = 4;
-    vector_bbox.min.x -= pad;
-    vector_bbox.min.y -= pad;
-    vector_bbox.max.x += pad;
-    vector_bbox.max.y += pad;
+  lines = [];
+  for (const shape of vector) {
+    for (let i = 0; i < shape.length; i++) {
+      lines.push([shape[i], shape[(i + 1) % shape.length]]);
+    }
+  }
 
-    const x = vector_bbox.min.x;
-    const y = vector_bbox.min.y;
-    const w = vector_bbox.max.x - vector_bbox.min.x;
-    const h = vector_bbox.max.y - vector_bbox.min.y;
+  lines = clean_up_geo(lines);
+}
 
-    input.cam.zoom = Math.min(canvas.width / w, canvas.height / h);
-    input.cam.x = -x*input.cam.zoom;
-    input.cam.y = -y*input.cam.zoom;
+let point_idx = 0, open_shapes = [[]];
+{
+  const set_index = index => {
+    point_idx = index;
+    points_progress_readout.textContent = `points ${point_idx}/${points.length}`;
+    open_shapes = find_open_shapes();
+    open_shape_count_readout.textContent = 'open shapes: ' + open_shapes.length;
+  }
+  points_next.onclick = () => {
+    set_index((point_idx + 1) % (points.length + 1));
+  };
+  points_prev.onclick = () => {
+    return set_index((point_idx == 0) ? (points.length - 1) : (point_idx - 1));
+  }
+  set_index(0);
 
-    /* center */
-    const worldspace_content_size_x = w;
-    const worldspace_content_size_y = h;
-    const worldspace_screen_size_x = (canvas.width  / input.cam.zoom);
-    const worldspace_screen_size_y = (canvas.height / input.cam.zoom);
-    input.cam.x += (worldspace_screen_size_x - worldspace_content_size_x) * 0.5 * input.cam.zoom;
-    input.cam.y += (worldspace_screen_size_y - worldspace_content_size_y) * 0.5 * input.cam.zoom;
+  function find_open_shapes() {
+    let shapes = [];
+    for (let i = 0; i < point_idx; i++) {
+      const p = points[i];
+
+      let added_to_existing_shape = false;
+      for (const shape of shapes) {
+        const start_len = shape.length;
+        for (let i = 0; i < start_len; i++) {
+          const vert = shape[i];
+
+          if (connections.get(vert)?.includes(p) && !shape.includes(p)) {
+            added_to_existing_shape = true;
+            shape.push(p);
+          }
+        }
+      }
+      
+      if (!added_to_existing_shape)
+        shapes.push([p]);
+    }
+    return shapes;
   }
 }
 
@@ -436,6 +417,145 @@ function bbox(vector) {
   }
 
   return ret;
+}
+
+function clean_up_geo(lines, scale) {
+  const connects = {};
+  const aliases = new Set();
+  const uniques = new Set();
+  for (const line of lines) {
+    const x0 = Math.round(line[0].x / scale);
+    const y0 = Math.round(line[0].y / scale);
+    const x1 = Math.round(line[1].x / scale);
+    const y1 = Math.round(line[1].y / scale);
+
+    connects[x0 + ',' + y0] ??= [];
+    connects[x0 + ',' + y0].push(x1 + ',' + y1);
+    connects[x1 + ',' + y1] ??= [];
+    connects[x1 + ',' + y1].push(x0 + ',' + y0);
+
+    const key = x0 + ',' + y0 + '->' + x1 + ',' + y1;
+    if (!aliases.has(key)) {
+      uniques.add(key);
+      aliases.add(x1 + ',' + y1 + '->' + x0 + ',' + y0);
+    }
+  }
+
+  const to_collapse = new Set();
+  for (const [from_key, to_keys] of Object.entries(connects)) {
+    const [from_x, from_y] = from_key.split(',');
+
+    for (const i_key of to_keys) {
+      const [i_x, i_y] = i_key.split(',');
+      for (const j_key of to_keys) {
+        const [j_x, j_y] = j_key.split(',');
+
+        let i_dx = i_x - from_x;
+        let i_dy = i_y - from_y;
+        const i_len = Math.sqrt(i_dx*i_dx + i_dy*i_dy);
+        i_dx /= i_len;
+        i_dy /= i_len;
+
+        let j_dx = j_x - from_x;
+        let j_dy = j_y - from_y;
+        const j_len = Math.sqrt(j_dx*j_dx + j_dy*j_dy);
+        j_dx /= j_len;
+        j_dy /= j_len;
+
+        if (i_dx == j_dx && i_dy == j_dy) {
+          if (i_len > j_len) to_collapse.add(from_key + '->' + j_key),
+                             to_collapse.add(j_key + '->' + from_key);
+          if (j_len > i_len) to_collapse.add(from_key + '->' + i_key),
+                             to_collapse.add(i_key + '->' + from_key);
+        }
+      }
+    }
+  }
+
+  const new_lines = [];
+  for (const line of uniques) {
+    if (aliases.has(line)) continue;
+    if (to_collapse.has(line)) continue;
+
+    const [k, v] = line.split('->');
+    let [x0, y0] = k.split(',');
+    let [x1, y1] = v.split(',');
+    x0 = parseInt(x0) * scale;
+    y0 = parseInt(y0) * scale;
+    x1 = parseInt(x1) * scale;
+    y1 = parseInt(y1) * scale;
+    new_lines.push([{ x: x0, y: y0 }, { x: x1, y: y1 }]);
+  }
+  console.log('from', lines.length, 'lines to', new_lines.length, 'lines.');
+
+  return new_lines;
+}
+
+function lines_to_connections(lines) {
+  const connections = new Map();
+
+  /* dedup point objects */
+  {
+    const spatial_hash = new Map();
+    const scale = 5;
+    const key = p => Math.floor(p.x / scale) + ',' + Math.floor(p.y / scale);
+    for (const line of lines) {
+      spatial_hash.set(key(line[0]), line[0]);
+      spatial_hash.set(key(line[1]), line[1]);
+    }
+    for (const line of lines) {
+      line[0] = spatial_hash.get(key(line[0]));
+      line[1] = spatial_hash.get(key(line[1]));
+    }
+  }
+
+  for (const [a, b] of lines) {
+    for (const [from, to] of [[a, b], [b, a]]) {
+      if (!connections.has(from)) connections.set(from, []);
+      connections.get(from).push(to);
+    }
+  }
+  const points = [...connections.keys()].sort((a, b) => (b.y != a.y) ? b.y - a.y : a.x - b.x);
+
+  return { connections, points };
+}
+
+function line_hits_tri(tri_a, tri_b, tri_c, line0, line1) {
+  /* line hits triangle if any point on the line is in the triangle,
+   * or any side making up the triangle hits the line */
+  if (point_in_tri(tri_a, tri_b, tri_c, line0)) return true;
+  if (point_in_tri(tri_a, tri_b, tri_c, line1)) return true;
+  if (line_hits_line(tri_a, tri_b, line0, line1)) return true;
+  if (line_hits_line(tri_b, tri_c, line0, line1)) return true;
+  if (line_hits_line(tri_c, tri_a, line0, line1)) return true;
+  return false;
+
+  function line_hits_line(from0, to0, from1, to1) {
+    const a = from0.x, b = from0.y,
+          c =   to0.x, d =   to0.y,
+          p = from1.x, q = from1.y,
+          r =   to1.x, s =   to1.y;
+    let det, gamma, lambda;
+    det = (c - a) * (s - q) - (r - p) * (d - b);
+    if (det === 0) {
+      return false;
+    } else {
+      lambda = ((s - q) * (r - a) + (p - r) * (s - b)) / det;
+      gamma = ((b - d) * (r - a) + (c - a) * (s - b)) / det;
+
+      return (0.001 < lambda && lambda < 0.999) && (0.001 < gamma && gamma < 0.999);
+      // return { x: lerp(from0.x, to0.x, lambda), y: lerp(from0.y, to0.y, lambda) };
+    }
+  }
+
+  function point_in_tri(v1, v2, v3, p) {
+     const alpha = ((v2.y - v3.y) * ( p.x - v3.x) + (v3.x - v2.x) * ( p.y - v3.y)) /
+                   ((v2.y - v3.y) * (v1.x - v3.x) + (v3.x - v2.x) * (v1.y - v3.y));
+     const beta = ((v3.y - v1.y) * ( p.x - v3.x) + (v1.x - v3.x) * ( p.y - v3.y)) /
+                  ((v2.y - v3.y) * (v1.x - v3.x) + (v3.x - v2.x) * (v1.y - v3.y));
+     const gamma = 1.0 - alpha - beta;
+     return (alpha > 0 && beta > 0 && gamma > 0)
+  }
 }
 
 function lerp(v0, v1, t) { return (1 - t) * v0 + t * v1; }
