@@ -525,6 +525,44 @@ function mat4_target_to(out, eye, target, up) {
 function lerp(v0, v1, t) { return (1 - t) * v0 + t * v1; }
 function inv_lerp(min, max, p) { return (p - min) / (max - min); }
 
+/*
+# blender export script
+import bpy
+import json     
+
+def log_bone_positions(armature, output_file=None):
+    frames = []
+    bone_connections = []
+
+    if armature.type != 'ARMATURE':
+    print("Error: Selected object is not an armature.")
+    return
+
+    for bone in armature.pose.bones:
+    if len(bone.children) > 0:
+    for child_bone in bone.children:
+    bone_connections.append([bone.name, child_bone.name])
+
+    start_frame = bpy.context.scene.frame_start
+    end_frame = bpy.context.scene.frame_end
+    for frame in range(start_frame, end_frame):
+    bpy.context.scene.frame_set(frame)
+
+    bone_poses = {}
+
+    for bone in armature.pose.bones:
+        # Get the location of the bone in world space
+        p = armature.matrix_world @ bone.head
+        bone_poses[str(bone.name)] = { 'x': p.x, 'y': p.y, 'z': p.z }
+
+        frames.append(bone_poses)
+
+     with open("/Users/ced_n_niko/Desktop/blender stuff/bone_frames.json", "w+") as fp:
+         json.dump({ 'frames': frames, 'connections': bone_connections }, fp)
+
+log_bone_positions(bpy.context.object)
+*/
+
 const anim_data = {
     "frames": [
         {
