@@ -43,29 +43,22 @@ document, body { margin: 0px; padding: 0px; overflow: hidden; }
 
   <body>
     <div class="hud">
-        <div class="labeled_input">
-            <label for="hud_show_verts">Show vertices</label>
-            <input  id="hud_show_verts" type="checkbox" checked="false"></input>
-        </div>
+        <p> Hover joint to see name </p>
         <div class="labeled_input">
             <label for="hud_line_width">line width</label>
-            <input  id="hud_line_width" type="number" value="1"></input>
+            <input  id="hud_line_width" min="0.01" step="0.01" type="number" value="1"></input>
         </div>
         <div class="labeled_input">
             <label for="hud_char_height">character height</label>
-            <input  id="hud_char_height" type="number" value="1"></input>
+            <input  id="hud_char_height" min="0.01" step="0.01" type="number" value="1"></input>
         </div>
         <div class="labeled_input">
             <label for="hud_char_width">character width</label>
-            <input  id="hud_char_width" type="number" value="1"></input>
+            <input  id="hud_char_width" min="0.01" step="0.01" type="number" value="1"></input>
         </div>
         <div class="labeled_input">
             <label for="hud_head_size">head size</label>
-            <input  id="hud_head_size" type="number" value="1"></input>
-        </div>
-        <div class="labeled_input">
-            <label for="hud_neck_len">neck length</label>
-            <input  id="hud_neck_len" type="number" value="1"></input>
+            <input  id="hud_head_size" min="0.01" step="0.01" type="number" value="1"></input>
         </div>
         <div class="directional_group">
           <button id="scrubber_prev">⬅️  prev frame</button>
@@ -77,20 +70,21 @@ document, body { margin: 0px; padding: 0px; overflow: hidden; }
     <canvas id="glcanvas"></canvas>
     <script>"use strict";
 
+const ANIMATION_FPS = 24;
+
 const tweak_ui = new (class TweakUI {
   static LOCALSTORAGE_KEY = "guy_tweak_ui";
 
   static default_save() {
     return {
       playing: true,
-      animation_offset: 0,
+      animation_elapsed: 0,
 
-      show_vertices: false,
-      line_width:  1,
-      char_height: 1,
-      char_width:  1,
-      head_size:   1,
-      neck_len:    1
+      leg_torso_ratio: 1,
+      line_width:      1,
+      char_height:     1,
+      char_width:      1,
+      head_size:       1,
     };
   }
   static get_save() {
@@ -119,54 +113,48 @@ const tweak_ui = new (class TweakUI {
           return value;
       }
 
-      window.onkeydown = e => {
-        if (e.key == " ") scrubber_playpause.click();
+      /* scrubber */
+      {
+        window.onkeydown = e => {
+          if (e.key == " ") scrubber_playpause.click();
+        }
+
+        scrubber_playpause.textContent = save.playing ? "⏸️" : "▶️";
+        scrubber_playpause.onclick = () => {
+          save.playing ^= 1;
+          scrubber_playpause.textContent = save.playing ? "⏸️" : "▶️";
+          this.do_save();
+        }
+        const change_offset = delta => {
+          const seconds_per_frame = 1 / ANIMATION_FPS;
+
+          save.animation_elapsed = Math.round(save.animation_elapsed / seconds_per_frame) * seconds_per_frame;
+          save.animation_elapsed += delta * seconds_per_frame;
+          while (save.animation_elapsed < 0)
+            save.animation_elapsed = seconds_per_frame * anim_data.frames.length - save.animation_elapsed;
+
+          this.do_save();
+          console.log(save.animation_offset);
+        }
+        scrubber_next.onclick = () => change_offset( 1);
+        scrubber_prev.onclick = () => change_offset(-1);
       }
 
-      scrubber_playpause.textContent = save.playing ? "⏸️" : "▶️";
-      scrubber_playpause.onclick = () => {
-        save.playing ^= 1;
-        save.animation_offset = 0;
-        scrubber_playpause.textContent = save.playing ? "⏸️" : "▶️";
-        this.do_save();
+      /* float inputs */
+      for (const [el, field] of [
+         [hud_line_width,  'line_width' ],
+         [hud_head_size,   'head_size'  ],
+         [hud_char_height, 'char_height'],
+         [hud_char_width,  'char_width' ],
+      ]) {
+        el.value = save[field];
+        el.oninput = () => {
+          save[field] = extract_float(el.value);
+          this.do_save();
+        }
       }
-      const change_offset = delta => {
-        save.animation_offset = (save.animation_offset + delta) % anim_data.frames.length;
-        this.do_save();
-        console.log(save.animation_offset);
-      }
-      scrubber_next.onclick = () => change_offset( 1);
-      scrubber_prev.onclick = () => change_offset(-1);
     }
   }
-
-  static image_paths = [
-      "1-bed-Model-page-0-1184123436.jpg",
-      "16820554805262d-floor-plan-without-dimensions-1-882012818.jpg",
-      "226-Golf-Edge-2nd-Floor-Plan-e1602425648574-502954129.jpg",
-      "2D-FloorPlans-Examples-Samples-1390924798.jpg",
-      "4548508ef40e615e64ad3b9b6535654b-2138654924.png",
-      "74eb007405350b06e6b1d136a45fa262-1594902549.jpg",
-      "CBOF-Gabbard-Floorplan-3291614927.jpg",
-      "Design-3257-floorplan-4268359515.jpg",
-      "Duplex-no-garage-2-1693832074.png",
-      "GROUND-FLOOR-PLAN-1855630524.jpg",
-      "HC-Floor-Plan-1-3578889741.jpg",
-      "Screenshot 2025-02-10 at 1.18.25 PM.png",
-      "Screenshot 2025-02-10 at 1.20.31 PM.png",
-      "Screenshot 2025-02-10 at 1.21.30 PM.png",
-      "e52739c83f666a2062c8e4c918192c47-620348724.png",
-      "example-floor-plan-3700536382.jpg",
-      "first-floor-plan-1476202743.gif",
-      "floor-plan-2171195143.gif",
-      "floor-plan-house-design-storey-technical-drawing-png-favpng-CpiaV2kRKKc0NmqGVReg5kJQP-3020256790.jpg",
-      "floorplanf-655005126.jpg",
-      "forestwood-floor-plan-2br-935-corridor-building-sq-ft-93215580.jpg",
-      "franklin_a_flr1_stairs-539485727.jpg",
-      "ground-floor-plan-3672060057.gif",
-      "th-22295632.jpg",
-      "th-94093388.jpg",
-    ];
 })();
 
 let input = {
@@ -198,39 +186,41 @@ let input = {
 {
     const opts = { passive: false };
 
-    window.addEventListener('wheel', e => {
-        e.preventDefault();
+    glcanvas.addEventListener('wheel', e => {
+      e.preventDefault();
 
-        if (input.mouse_down) return;
-        input.scroll += e.deltaY;
+      if (input.mouse_down) return;
+      input.scroll += e.deltaY;
     }, opts);
-    window.addEventListener('mousedown', ev => {
-        ev.preventDefault();
+    glcanvas.addEventListener('mousedown', ev => {
+      ev.preventDefault();
 
-        input.dampedEvent.button = ev.button ? 2 : 0;
+      input.dampedEvent.button = ev.button ? 2 : 0;
 
-        if (ev.button == 0) input.lmb_down = true;
-        if (ev.button == 2) input.rmb_down = true;
+      if (ev.button == 0) input.lmb_down = true;
+      if (ev.button == 2) input.rmb_down = true;
     }, opts);
     window.addEventListener('mousemove', ev => {
+      if (ev.target == glcanvas)
         ev.preventDefault();
 
-        if (input.lmb_down || input.rmb_down) {
-            input.dampedEvent.movementX += ev.movementX;
-            input.dampedEvent.movementY += ev.movementY;
-        }
+      if (input.lmb_down || input.rmb_down) {
+          input.dampedEvent.movementX += ev.movementX;
+          input.dampedEvent.movementY += ev.movementY;
+      }
 
-        input.mouse_x = ev.offsetX*window.devicePixelRatio;
-        input.mouse_y = ev.offsetY*window.devicePixelRatio;
+      input.mouse_x = ev.offsetX*window.devicePixelRatio;
+      input.mouse_y = ev.offsetY*window.devicePixelRatio;
     }, opts);
-    window.addEventListener("contextmenu", ev => {
-        ev.preventDefault();
+    glcanvas.addEventListener("contextmenu", ev => {
+      ev.preventDefault();
     }, opts);
     window.addEventListener('mouseup', ev => {
+      if (ev.target == glcanvas)
         ev.preventDefault();
 
-        if (ev.button == 0) input.lmb_down = false;
-        if (ev.button == 2) input.rmb_down = false;
+      if (ev.button == 0) input.lmb_down = false;
+      if (ev.button == 2) input.rmb_down = false;
     }, opts);
 }
 
@@ -276,7 +266,7 @@ const ctx = canvas.getContext('2d');
    canvas.style.height = window.innerHeight + 'px';
  })();
 
-let animation_elapsed = 0, last_timestamp;
+let last_timestamp;
 requestAnimationFrame(function render(timestamp) {
   requestAnimationFrame(render);
 
@@ -316,6 +306,7 @@ requestAnimationFrame(function render(timestamp) {
       input.zoom += 0.005*t*input.zoom;
       input.scroll *= Math.pow(1 - 0.5, 60*delta_time);
       input.zoom = Math.min(200, input.zoom);
+      input.zoom = Math.max(  3, input.zoom);
     }
   }
 
@@ -346,30 +337,28 @@ requestAnimationFrame(function render(timestamp) {
   ctx.fillRect(0, 0, canvas.width, canvas.height);
 
   const transform = (p) => {
+    p.x *= tweak_ui.save.char_width;
+    p.y *= tweak_ui.save.char_width;
+    p.z *= tweak_ui.save.char_height;
+
     p.w = 1;
     p = p.matrixTransform(mvp);
     const w = p.w;
     p.x = (0 + (p.x/w*0.5 + 0.5))*canvas.width;
     p.y = (1 - (p.y/w*0.5 + 0.5))*canvas.height;
     p.z /= w;
+
     return p;
   }
 
   {
     ctx.beginPath();
 
-    const animation_fps = 24;
-    const seconds_per_frame = 1 / animation_fps;
+    const seconds_per_frame = 1 / ANIMATION_FPS;
 
-    if (tweak_ui.save.playing) animation_elapsed += delta_time;
-    let animation_t = animation_elapsed;
-    if (tweak_ui.save.animation_offset != 0) {
-      animation_t += tweak_ui.save.animation_offset * seconds_per_frame;
-      while (animation_t < 0) animation_t = seconds_per_frame * anim_data.frames.length - animation_t;
-      animation_t = Math.floor(animation_t / seconds_per_frame) * seconds_per_frame;
-    }
+    if (tweak_ui.save.playing) tweak_ui.save.animation_elapsed += delta_time;
 
-    const frames_total = animation_t / seconds_per_frame;
+    const frames_total = tweak_ui.save.animation_elapsed / seconds_per_frame;
     const frame_idx = Math.floor(frames_total % anim_data.frames.length);
     const tween_t = frames_total % 1;
     const next_idx = (frame_idx + 1) % anim_data.frames.length;
@@ -388,6 +377,8 @@ requestAnimationFrame(function render(timestamp) {
         if (key.endsWith("UpLeg")) return true;
         return false;
     };
+    const line_width = tweak_ui.save.line_width * window.innerHeight * 0.07;
+    const head_size = tweak_ui.save.head_size * window.innerHeight * 0.4;
 
     // ctx.globalAlpha = 0.8;
 
@@ -397,7 +388,7 @@ requestAnimationFrame(function render(timestamp) {
       const point = new DOMPoint(p.x, p.y, p.z, 1.0);
       const screen = transform(point);
       ctx.beginPath();
-      ctx.arc(screen.x, screen.y, 35*0.5 / input.dist_to_cam(point), 0, Math.PI*2);
+      ctx.arc(screen.x, screen.y, line_width*0.5 / input.dist_to_cam(point), 0, Math.PI*2);
 
       const hover = ctx.isPointInPath(input.mouse_x, input.mouse_y);
       ctx.fillStyle = hover ? "red" : SECONDARY_COLOR;
@@ -413,18 +404,18 @@ requestAnimationFrame(function render(timestamp) {
 
     /* draw head */
     {
-      const t = 2;
-      const point = new DOMPoint(
-        lerp(frame("mixamorig:Neck").x, frame("mixamorig:Head").x, t),
-        lerp(frame("mixamorig:Neck").y, frame("mixamorig:Head").y, t),
-        lerp(frame("mixamorig:Neck").z, frame("mixamorig:Head").z, t)
-      );
-      const screen = transform(point);
+      const world = frame("mixamorig:Head");
+      const screen = transform(new DOMPoint(world.x, world.y, world.z));
 
       ctx.beginPath();
-      ctx.arc(screen.x, screen.y, 220 / input.dist_to_cam(point), 0, Math.PI*2);
+      const size = head_size / input.dist_to_cam(world);
+      ctx.arc(screen.x, screen.y - size*0.8, size, 0, Math.PI*2);
       ctx.fillStyle = SECONDARY_COLOR
       ctx.fill();
+
+      // show head size
+      // ctx.font = '50px monospace';
+      // ctx.fillText(size.toFixed(2), screen.x + size + 15, screen.y);
     }
 
     /* draw lines */
@@ -440,7 +431,7 @@ requestAnimationFrame(function render(timestamp) {
       to = transform(new DOMPoint(to.x, to.y, to.z, 1.0));
 
       ctx.beginPath();
-      ctx.lineWidth = 35 / lerp(from_dist, to_dist, 0.5);
+      ctx.lineWidth = line_width / lerp(from_dist, to_dist, 0.5);
       ctx.moveTo(from.x, from.y)
       ctx.lineTo(  to.x,   to.y)
       ctx.stroke();

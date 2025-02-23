@@ -39,10 +39,10 @@ document, body { margin: 0px; padding: 0px; overflow: hidden; }
 
   <body>
     <div class="hud">
-      <p id="open_shape_count_readout"> open shapes: 2 </p>
       <button id="points_prev"> ⬅️  prev prev </button>
       <span id="points_progress_readout"> progress 0/25 </span>
       <button id="points_next"> next point ➡️ </button>
+      <p id="progress_description"> hi </p>
     </div>
 
     <canvas id="glcanvas"></canvas>
@@ -176,62 +176,139 @@ requestAnimationFrame(function render(now) {
 
     ctx.fillStyle = "red";
 
+    let lines_hovered = 0;
+    /* less noisy to render lines because there are no redundant lines */
     for (const [from, tos] of connections) {
       for (const to of tos) {
+        let dx = from.x - to.x;
+        let dy = from.y - to.y;
+        const len = Math.sqrt(dx*dx + dy*dy);
+        dx /= len;
+        dy /= len;
+        const px = -dy;
+        const py =  dx;
+
+        let push_out = 0;
+        if (point_to_line2(from, to, mouse) < (20 / input.cam.zoom)) {
+          push_out += 10 * ++lines_hovered;
+        }
+
         ctx.beginPath();
-        ctx.moveTo(from.x, from.y);
-        ctx.lineTo(  to.x,   to.y);
+        let from_x = from.x - px*push_out;
+        let from_y = from.y - py*push_out;
+        let to_x   =   to.x - px*push_out;
+        let to_y   =   to.y - py*push_out;
+        ctx.moveTo(from_x, from_y);
+        ctx.lineTo(  to_x,   to_y);
+        ctx.fillStyle = ctx.strokeStyle = "rgba(255, 255, 255, 0.2)";
         ctx.lineWidth = 3 / input.cam.zoom;
-        ctx.strokeStyle = "rgba(255, 255, 255, 0.2)";
         ctx.stroke();
+
+        const arrow_width =  8 / input.cam.zoom;
+        const arrow_back  = 16 / input.cam.zoom;
+        ctx.beginPath();
+        ctx.moveTo(to_x - px*arrow_width + dx*arrow_back, to_y - py*arrow_width + dy*arrow_back);
+        ctx.lineTo(to_x + px*arrow_width + dx*arrow_back, to_y - py*arrow_width + dy*arrow_back);
+        ctx.lineTo(to_x,   to_y);
+        ctx.fill();
       }
     }
 
     for (let i = 0; i < points.length; i++) {
       const p = points[i];
       ctx.beginPath();
-      const size = (i < point_idx) ? 20 : 10;
+      const size = 10;
       ctx.arc(p.x, p.y, size / input.cam.zoom, 0, Math.PI*2);
       ctx.fillStyle = 'rgba(255, 0, 0, 0.5)';
       ctx.fill();
     }
 
-    let hovered_shapes = 0;
-    for (const [shapes, rgb, outline] of [
-      [open_shapes,   "255, 0, 0", false],
-      [adding_shapes, "0, 255, 0", true],
-    ]) {
-      for (const shape of shapes) {
-        if (shape.length == 0) continue;
+    if (progress) {
 
+      if (progress.active_tri) {
+        const [a, b, c] = progress.active_tri;
         ctx.beginPath();
-        ctx.moveTo(shape[0].x, shape[0].y);
-        for (let i = 1; i < shape.length; i++)
-          ctx.lineTo(shape[i].x, shape[i].y);
+        ctx.moveTo(a.x, a.y);
+        ctx.lineTo(b.x, b.y);
+        ctx.lineTo(c.x, c.y);
         ctx.closePath();
+        ctx.lineWidth = 20 / input.cam.zoom;
+        ctx.strokeStyle = `rgba(255, 0, 255, 0.4)`;
+        ctx.stroke();
+      }
 
-        ctx.fillStyle = `rgba(${rgb}, 0.1)`;
-
-        if (ctx.isPointInPath(input.mouse_x, input.mouse_y)) {
-          ctx.fillStyle = `rgba(${rgb}, 0.2)`;
-          hovered_shapes++;
-        }
-
-        if (outline) {
-          ctx.strokeStyle = `rgba(${rgb}, 0.5})`;
-          ctx.stroke();
-        }
+      if (progress.active_pt) {
+        const pt = progress.active_pt;
+        ctx.beginPath();
+        const size = 30;
+        ctx.arc(pt.x, pt.y, size / input.cam.zoom, 0, Math.PI*2);
+        ctx.fillStyle = 'rgba(0, 255, 0, 0.5)';
         ctx.fill();
       }
-    }
 
-    if (hovered_shapes > 0) {
-      ctx.fillStyle = 'white';
-      ctx.font = (40 / input.cam.zoom) + 'px monospace';
-      ctx.fillText(
-        hovered_shapes + ' ' + ((hovered_shapes == 1) ? 'shape' : 'shapes'),
-        mouse.x, mouse.y
-      );
+      if (progress.prospective_pt) {
+        const pt = progress.prospective_pt;
+        ctx.beginPath();
+        const size = 30;
+        ctx.arc(pt.x, pt.y, size / input.cam.zoom, 0, Math.PI*2);
+        ctx.strokeStyle = 'rgba(255, 0, 0, 0.5)';
+        ctx.lineWidth = 7 / input.cam.zoom;
+        ctx.stroke();
+      }
+
+      /* render shapes we've found so far */
+      {
+        let hovered_shapes = 0;
+
+        for (const shape of progress.shapes ?? []) {
+          if (shape.length == 0) continue;
+          let rgb = "0, 0, 255";
+          if (shape == progress.shapes.at(-1)) {
+            rgb = "0, 255, 0";
+          }
+
+          ctx.beginPath();
+          ctx.moveTo(shape[0].x, shape[0].y);
+          for (let i = 1; i < shape.length; i++)
+            ctx.lineTo(shape[i].x, shape[i].y);
+          ctx.closePath();
+
+          ctx.fillStyle = `rgba(${rgb}, 0.1)`;
+
+          if (ctx.isPointInPath(input.mouse_x, input.mouse_y)) {
+            ctx.fillStyle = `rgba(${rgb}, 0.2)`;
+            hovered_shapes++;
+          }
+
+          ctx.fill();
+
+          for (let i = 0; i < shape.length; i++) {
+            const a = shape[(i + 0) % shape.length];
+            const b = shape[(i + 1) % shape.length];
+            const c = shape[(i + 2) % shape.length];
+            ctx.beginPath();
+            ctx.moveTo(a.x, a.y);
+            ctx.lineTo(b.x, b.y);
+            ctx.lineTo(c.x, c.y);
+            ctx.lineTo(a.x, a.y);
+            ctx.lineWidth = 20 / input.cam.zoom;
+            ctx.strokeStyle = `rgba(${rgb}, 0.15)`;
+            ctx.stroke();
+          }
+
+        }
+
+        /* show how many shapes on hover */
+        if (hovered_shapes > 0) {
+          ctx.fillStyle = 'white';
+          ctx.font = (40 / input.cam.zoom) + 'px monospace';
+          ctx.fillText(
+            hovered_shapes + ' ' + ((hovered_shapes == 1) ? 'shape' : 'shapes'),
+            mouse.x, mouse.y
+          );
+        }
+      }
+
     }
 
   }
@@ -384,101 +461,129 @@ if (0) {
     }
   }
 
-  // lines = clean_up_geo(lines);
+  lines = clean_up_geo(lines, 0.1);
   ({ connections, points } = lines_to_connections(lines, 0.1));
 }
 
-let point_idx = 0, open_shapes = [], adding_shapes = [];
+let progress = { active_pt: null };
 {
+  let genny_idx = 0;
   let genny = find_shapes();
 
   const set_index = index => {
-    point_idx = index;
-    points_progress_readout.textContent = `points ${point_idx}/${points.length}`;
-    open_shape_count_readout.textContent = 'open shapes: ' + open_shapes.length;
+    genny_idx = index;
+    points_progress_readout.textContent = `step ${genny_idx}`;
+  }
+  window.onkeydown = e => {
+    if (e.key == " ") points_next.click();
   }
   points_next.onclick = () => {
-    ({ open_shapes, adding_shapes } = genny.next().value);
-    set_index((point_idx + 1) % (points.length + 1));
+    progress = genny.next().value;
+    progress_description.textContent = progress.description;
+    set_index(genny_idx + 1);
   };
   points_prev.onclick = () => {
     genny = find_shapes();
-    for (let i = 0; i < (point_idx - 1); i++)
-      ({ open_shapes, adding_shapes } = genny.next().value);
-    return set_index((point_idx == 0) ? (points.length - 1) : (point_idx - 1));
+    for (let i = 0; i < (genny_idx - 1); i++)
+      progress = genny.next().value;
+    return set_index(Math.max(genny_idx, 0));
   }
   set_index(0);
 
   function *find_shapes() {
-    let shapes = [];
+    const progress = {
+      shapes: [],
+      prospective_pt: points[0],
+      active_pt: points[0],
+      active_tri: null,
+      description: 'starting ...'
+    };
+    yield progress;
 
     const overlaps_line_in_input = (a, b, c) => {
       for (const line of lines) {
+        if ((line[0] == a || line[0] == b || line[0] == c) &&
+            (line[1] == a || line[1] == b || line[1] == c))
+          continue;
+
         if (line_hits_tri(a, b, c, line[0], line[1]))
           return true;
       }
       return false;
     }
 
-    for (let i = 0; i < 10_000; i++) {
-      const p = points[i];
+    const frontier = [];
+    let shape = [];
+    progress.shapes.push(shape);
+    while (true) {
+      shape.push(progress.active_pt);
+      yield progress;
 
-      const links = connections.get(p);
-      for (const l of links)
-        for (const o of links) {
-          if (l == o) continue;
+      let point_b4 = progress.active_pt;
 
-          /* check determinant here to see if real triangle? */
+      const FORWARDS = 0;
+      const BACKWARDS = 1;
+      both_ways:
+      for (let direction = FORWARDS; direction <= BACKWARDS; direction++) {
+        const dir = direction == FORWARDS ? 'forwards' : 'backwards';
+        
+        for (const link of connections.get(progress.active_pt)) {
+          if (shape.includes(link)) continue;
+          frontier.push(link);
 
-          if (!overlaps_line_in_input(l, p, o)) add_shape: do {
-            /* if we can join the LPO triangle to an existing shape
-             * without having a wall intersect the resultant shape,
-             * do that; otherwise, make a new shape for this triangle. */ 
-            const neighboring_shapes = [];
+          if (shape.length >= 2) {
+            const a = (direction == FORWARDS) ? shape.at(-2) : shape.at( 0);
+            const b = (direction == FORWARDS) ? shape.at(-1) : link;
+            const c = (direction == FORWARDS) ? link         : shape.at(-1);
+            const d = (direction == FORWARDS) ? shape.at( 0) : shape.at(-2);
+            const e = (direction == FORWARDS) ? link         : shape.at(-1);
+            const f = (direction == FORWARDS) ? shape.at(-1) : link        ;
+            progress.active_tri = [a, b, c];
 
-            for (const pt of [l, p, o]) {
-              const shape = shapes.find(shape => shape.includes(pt));
-              if (shape && !neighboring_shapes.some(s => s.shape == shape)) {
-                const to_add = [l, p, o].filter(x => !shape.includes(x));
-                neighboring_shapes.push({ shape, to_add, full_tri: [l, p, o] });
-              }
+            if (overlaps_line_in_input(a, b, c) ||
+                overlaps_line_in_input(d, e, f)) {
+              progress.description = `[${dir}] ignoring (crosses line in input)`;
+              progress.prospective_pt = link;
+              yield progress;
+              continue;
             }
 
-            for (const { shape, to_add, full_tri } of neighboring_shapes) {
-              /* really no point in adding a triangle that already exists ... */
-              if (to_add.length == 0) break add_shape;
-
-              yield ({ open_shapes: shapes, adding_shapes: [shape, full_tri] });
-
-              if (to_add.length > 1) {
-                continue;
-              }
-
-              if (!overlaps_line_in_input(shape[0], to_add[0], shape.at(-1))) {
-                shape.push(to_add[0])
-                break add_shape;
-              }
+            let det;
+            {
+               let d1x = a.x - b.x;
+               let d1y = a.y - b.y;
+               let d2x = b.x - c.x;
+               let d2y = b.y - c.y;
+               det = (d1x*d2y - d1y*d2x);
             }
-
-            shapes.push([l, p, o]);
-          } while(false);
-
-          /* if (!overlaps_line_in_input(l, p, o)) make_shape: do {
-            for (const pt of [l, p, o]) {
-              const shape = shapes.find(shape => shape.includes(pt));
-              if (shape) {
-                for (const pt of [l, p, o]) {
-                  if (!shape.includes(pt)) shape.push(pt);
-                }
-                break make_shape;
-              }
+            if (det == 0) {
+              progress.description = `[${dir}] ignoring (${det} determinant)`;
+              progress.prospective_pt = link;
+              yield progress;
+              continue;
             }
-            shapes.push([l, p, o]);
-          } while (false); */
+          }
 
+          progress.active_pt = link;
+          break both_ways;
         }
 
-        yield ({ open_shapes: shapes, adding_shapes: [] });
+      }
+
+      if (point_b4 == progress.active_pt) {
+        progress.description = "couldn't find anything, making new shape ...";
+        progress.active_tri = null;
+        progress.prospective_pt = null;
+        if (shape.length < 3) shape.pop();
+        shape = [];
+        progress.shapes.push(shape);
+        progress.active_pt = frontier.pop();
+        yield progress;
+        continue;
+      }
+
+      if (shape.length > 2)
+        progress.description = "found new tri!";
     }
   }
 }
@@ -499,7 +604,29 @@ function bbox(vector) {
 }
 
 function clean_up_geo(lines, scale) {
-  const connects = {};
+  /* make missing points/lines for lines that are touched by other lines.
+   * e.g. this shape is implicitly relying on an adjacent line that
+   * makes up a larger/encompassing shape */
+  {
+    const dist2 = (a, b) => (a.x - b.x)*(a.x - b.x) + (a.y - b.y)*(a.y - b.y);
+
+    const len_start = lines.length;
+    for (let i = 0; i < len_start; i++) {
+      const line = lines[i];
+
+      for (const point of lines.slice(0, len_start).flat()) {
+        if (dist2(point, line[0]) < 0.01) continue;
+        if (dist2(point, line[1]) < 0.01) continue;
+
+        if (point_to_line2(line[0], line[1], point) < (scale*scale)) {
+          lines.push([line[0], point]);
+          lines.push([point, line[1]]);
+        }
+      }
+    }
+    console.log(lines.length - len_start + ' new lines');
+  }
+
   const aliases = new Set();
   const uniques = new Set();
   for (const line of lines) {
@@ -508,53 +635,18 @@ function clean_up_geo(lines, scale) {
     const x1 = Math.round(line[1].x / scale);
     const y1 = Math.round(line[1].y / scale);
 
-    connects[x0 + ',' + y0] ??= [];
-    connects[x0 + ',' + y0].push(x1 + ',' + y1);
-    connects[x1 + ',' + y1] ??= [];
-    connects[x1 + ',' + y1].push(x0 + ',' + y0);
-
     const key = x0 + ',' + y0 + '->' + x1 + ',' + y1;
     if (!aliases.has(key)) {
       uniques.add(key);
       aliases.add(x1 + ',' + y1 + '->' + x0 + ',' + y0);
     }
   }
-
-  const to_collapse = new Set();
-  for (const [from_key, to_keys] of Object.entries(connects)) {
-    const [from_x, from_y] = from_key.split(',');
-
-    for (const i_key of to_keys) {
-      const [i_x, i_y] = i_key.split(',');
-      for (const j_key of to_keys) {
-        const [j_x, j_y] = j_key.split(',');
-
-        let i_dx = i_x - from_x;
-        let i_dy = i_y - from_y;
-        const i_len = Math.sqrt(i_dx*i_dx + i_dy*i_dy);
-        i_dx /= i_len;
-        i_dy /= i_len;
-
-        let j_dx = j_x - from_x;
-        let j_dy = j_y - from_y;
-        const j_len = Math.sqrt(j_dx*j_dx + j_dy*j_dy);
-        j_dx /= j_len;
-        j_dy /= j_len;
-
-        if (i_dx == j_dx && i_dy == j_dy) {
-          if (i_len > j_len) to_collapse.add(from_key + '->' + j_key),
-                             to_collapse.add(j_key + '->' + from_key);
-          if (j_len > i_len) to_collapse.add(from_key + '->' + i_key),
-                             to_collapse.add(i_key + '->' + from_key);
-        }
-      }
-    }
-  }
+  console.log('uniques', uniques.size, 'aliases', aliases.size);
 
   const new_lines = [];
   for (const line of uniques) {
     if (aliases.has(line)) continue;
-    if (to_collapse.has(line)) continue;
+    // if (to_collapse.has(line)) continue;
 
     const [k, v] = line.split('->');
     let [x0, y0] = k.split(',');
@@ -633,6 +725,24 @@ function line_hits_tri(tri_a, tri_b, tri_c, line0, line1) {
                   ((v2.y - v3.y) * (v1.x - v3.x) + (v3.x - v2.x) * (v1.y - v3.y));
      const gamma = 1.0 - alpha - beta;
      return (alpha > 0 && beta > 0 && gamma > 0)
+  }
+}
+
+/* squared distance from point to line */
+function point_to_line2(v, w, p) {
+  const l2 = point_to_point2(v.x, v.y, w.x, w.y);
+  if (l2 == 0) return point_to_point2(p.x, p.y, v.x, v.y);
+
+  let t = ((p.x - v.x) * (w.x - v.x) + (p.y - v.y) * (w.y - v.y)) / l2;
+  t = Math.max(0, Math.min(1, t));
+  return point_to_point2(
+    p.x, p.y,
+    v.x + t * (w.x - v.x),
+    v.y + t * (w.y - v.y)
+  );
+  /* squared distance from point to point (dot product with itself) */
+  function point_to_point2(x0, y0, x1, y1) {
+    return Math.pow(x0 - x1, 2) + Math.pow(y0 - y1, 2);
   }
 }
 
