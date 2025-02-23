@@ -45,6 +45,10 @@ document, body { margin: 0px; padding: 0px; overflow: hidden; }
     <div class="hud">
         <p> Hover joint to see name </p>
         <div class="labeled_input">
+            <label for="hud_leg_to_torso">leg to torso ratio</label>
+            <input  id="hud_leg_to_torso" min="0.01" step="0.01" type="number" value="0.68"></input>
+        </div>
+        <div class="labeled_input">
             <label for="hud_line_width">line width</label>
             <input  id="hud_line_width" min="0.01" step="0.01" type="number" value="1"></input>
         </div>
@@ -80,8 +84,8 @@ const tweak_ui = new (class TweakUI {
       playing: true,
       animation_elapsed: 0,
 
-      leg_torso_ratio: 1,
-      line_width:      1,
+      leg_torso_ratio: 2.2,
+      line_width:      1.5,
       char_height:     1,
       char_width:      1,
       head_size:       1,
@@ -142,10 +146,11 @@ const tweak_ui = new (class TweakUI {
 
       /* float inputs */
       for (const [el, field] of [
-         [hud_line_width,  'line_width' ],
-         [hud_head_size,   'head_size'  ],
-         [hud_char_height, 'char_height'],
-         [hud_char_width,  'char_width' ],
+         [hud_leg_to_torso,  'leg_torso_ratio' ],
+         [hud_line_width,    'line_width'      ],
+         [hud_head_size,     'head_size'       ],
+         [hud_char_height,   'char_height'     ],
+         [hud_char_width,    'char_width'      ],
       ]) {
         el.value = save[field];
         el.oninput = () => {
@@ -358,15 +363,36 @@ requestAnimationFrame(function render(timestamp) {
 
     if (tweak_ui.save.playing) tweak_ui.save.animation_elapsed += delta_time;
 
+    const leg_set = new Set([
+        "mixamorig:RightToe_End", "mixamorig:RightToeBase", "mixamorig:RightLeg",
+        "mixamorig:LeftToe_End",  "mixamorig:LeftToeBase", "mixamorig:LeftLeg",
+        "mixamorig:Hips"
+    ]);
+    const reratio = pos => {
+      const leg_ratio = tweak_ui.save.leg_torso_ratio;
+      const   leg_frac = leg_ratio / (leg_ratio + 1);
+      const torso_frac = 1 / (leg_ratio + 1);
+
+      const hips_z = anim_data.frames[0]['mixamorig:Hips'].z;
+      const neck_z = anim_data.frames[0]['mixamorig:Neck'].z;
+
+      pos.z = (pos.z / hips_z) * (leg_frac * neck_z);
+    }
+
     const frames_total = tweak_ui.save.animation_elapsed / seconds_per_frame;
     const frame_idx = Math.floor(frames_total % anim_data.frames.length);
     const tween_t = frames_total % 1;
     const next_idx = (frame_idx + 1) % anim_data.frames.length;
-    const frame = key => ({
-      x: lerp(anim_data.frames[frame_idx][key].x, anim_data.frames[next_idx][key].x, tween_t),
-      y: lerp(anim_data.frames[frame_idx][key].y, anim_data.frames[next_idx][key].y, tween_t),
-      z: lerp(anim_data.frames[frame_idx][key].z, anim_data.frames[next_idx][key].z, tween_t)
-    })
+    const frame = key => {
+      const res = {
+        x: lerp(anim_data.frames[frame_idx][key].x, anim_data.frames[next_idx][key].x, tween_t),
+        y: lerp(anim_data.frames[frame_idx][key].y, anim_data.frames[next_idx][key].y, tween_t),
+        z: lerp(anim_data.frames[frame_idx][key].z, anim_data.frames[next_idx][key].z, tween_t)
+      };
+      if (leg_set.has(key)) reratio(res);
+      return res;
+    }
+
 
     const ignore_key = key => {
         if (key.includes("Hand") && !key.endsWith("Hand")) return true;
