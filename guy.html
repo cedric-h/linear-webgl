@@ -403,8 +403,8 @@ requestAnimationFrame(function render(timestamp) {
         if (key.endsWith("UpLeg")) return true;
         return false;
     };
-    const line_width = tweak_ui.save.line_width * window.innerHeight * 0.07;
-    const head_size = tweak_ui.save.head_size * window.innerHeight * 0.4;
+    const line_width = tweak_ui.save.line_width * window.innerHeight * 0.035 * window.devicePixelRatio;
+    const head_size = tweak_ui.save.head_size * window.innerHeight * 0.2 * window.devicePixelRatio;
 
     // ctx.globalAlpha = 0.8;
 
