@@ -9,12 +9,84 @@
 document, body { margin: 0px; padding: 0px; overflow: hidden; }
 .hud {
     position: absolute;
-    top: 0px;
-    left: 0px;
-    background-color: rgba(70, 70, 70, 0.8);
+    bottom: 0px;
+    right: 0px;
     color: white;
-    font-family: monospace;
+    font-family: sans-serif;
     padding: 0.3rem;
+    margin: 0;
+
+    gap: 0;
+    display: flex;
+    flex-direction: column;
+
+    a {
+      color: cyan;
+    }
+    pre {
+      width: fit-content;
+      background-color: rgb(100, 100, 100);
+    }
+
+    h4 {
+      margin-bottom: 0;
+      padding-bottom: 0;
+    }
+
+    #hud_body {
+      padding: 0.4rem;
+      background-color: rgb(80, 80, 80);
+      border: 2px solid black;
+
+      .tab_body {
+        width: 22rem;
+        height: 18rem;
+        overflow: scroll;
+
+        display: none;
+
+        border-bottom: 2px solid #333333;
+        margin-bottom: 0.35rem;
+
+        &.selected {
+          display: block;
+        }
+      }
+
+      #tab_simplify_ignored_joints {
+        .labeled_input:hover { background-color: rgb(100, 100, 100); }
+      }
+      #tab_simplify_added_connections {
+        .connection_entry:hover { background-color: rgb(100, 100, 100); }
+        .connection_entry {
+          display: flex;
+          justify-content: space-evenly;
+          align-items: center;
+          padding: 0.2rem;
+          select { width: 7.5rem; }
+        }
+      }
+    }
+
+    #hud_tabs {
+      .tab {
+        cursor: pointer;
+        background-color: rgb(80, 80, 80);
+        padding: 0.1rem 0.5rem 0.1rem 0.5rem;
+        border: 2px solid black;
+        border-radius: 0.3rem 0.3rem 0 0;
+        translate: 0 2px;
+        color: rgb(200, 200, 200);
+        &.selected {
+          color: white;
+          cursor: default;
+          border-bottom: 2px solid rgb(80, 80, 80);
+        }
+      }
+      display: flex;
+      gap: 0.3rem;
+      margin: 0;
+    }
 
     button {
         margin: 0.3rem;
@@ -43,32 +115,146 @@ document, body { margin: 0px; padding: 0px; overflow: hidden; }
 
   <body>
     <div class="hud">
-        <p> Hover joint to see name </p>
-        <div class="labeled_input">
+      <div id="hud_tabs">
+          <div id="tab_intro"    class="tab selected"> intro </div>
+          <div id="tab_tweak"    class="tab"         > tweak </div>
+          <div id="tab_codegen"  class="tab"         > codegen </div>
+          <div id="tab_simplify" class="tab"         > simplify </div>
+          <div id="tab_options" class="tab"         > misc </div>
+      </div>
+      <div id="hud_body">
+
+        <div id="tab_intro_body" class="tab_body selected">
+          <h3> TLDR </h3>
+
+          <h4> give animation → get line array </h4>
+          <p> Drop an animation (e.g. an .fbx from <a href="https://www.mixamo.com/#/">mixamo</a>) onto this tool,
+              and it turns it into an array of lines for each frame in the animation. </p>
+
+          <h4> draw lines → get stickman </h4>
+          <p> The "codegen" tab has an array literal in your language; there are also integration examples
+              demonstrating how to use these arrays to create the basic "stickman renderer" in a language/graphics backend of your choosing.</p>
+
+          <h3> why? </h3>
+
+          <p> This is useful for game jams and rapidly prototyping games before you know exactly what you want your character to feel like;
+              head size, torso:leg ratios, etc. are parameterized, so you can get a
+              feel for the
+              <a href="https://www.kongregate.com/pages/design-tips-for-in-game-character-proportions">
+                proportions</a> you want your character to have. (see the "tweak" tab)
+            </p>
+
+          <p> There is of course no requirement that you later replace the stick figure with a fully rigged 3D model;
+              in fact, I would love to see more stickman homages to the flash games I grew up playing. </p>
+        </div id="tab_intro_body">
+
+        <div id="tab_tweak_body" class="tab_body">
+          <div class="labeled_input">
             <label for="hud_leg_to_torso">leg to torso ratio</label>
             <input  id="hud_leg_to_torso" min="0.01" step="0.01" type="number" value="0.68"></input>
-        </div>
-        <div class="labeled_input">
+          </div>
+          <div class="labeled_input">
             <label for="hud_line_width">line width</label>
             <input  id="hud_line_width" min="0.01" step="0.01" type="number" value="1"></input>
-        </div>
-        <div class="labeled_input">
+          </div>
+          <div class="labeled_input">
             <label for="hud_char_height">character height</label>
             <input  id="hud_char_height" min="0.01" step="0.01" type="number" value="1"></input>
-        </div>
-        <div class="labeled_input">
+          </div>
+          <div class="labeled_input">
             <label for="hud_char_width">character width</label>
             <input  id="hud_char_width" min="0.01" step="0.01" type="number" value="1"></input>
-        </div>
-        <div class="labeled_input">
+          </div>
+          <div class="labeled_input">
             <label for="hud_head_size">head size</label>
             <input  id="hud_head_size" min="0.01" step="0.01" type="number" value="1"></input>
+          </div>
         </div>
+
+        <div id="tab_codegen_body" class="tab_body">
+          <div style="display:flex;justify-content:space-evenly;padding: 0.3rem 0rem;">
+            <label for="codegen_joint_prefix_from">joint prefix replace</label>
+            <input style="width:5rem;" id="codegen_joint_prefix_from" type="text"></input>
+            →
+            <input style="width:5rem;" id="codegen_joint_prefix_to" type="text"></input>
+          </div>
+          <div class="labeled_input">
+            <label for="codegen_flavor"> codegen output </label>
+            <select id="codegen_flavor">
+               <option> json </option>
+               <option> C </option>
+               <!-- <option> lua </option> -->
+               <!-- <option> zig </option> -->
+               <!-- <option> swift </option> -->
+               <!-- <option> odin </option> -->
+               <!-- <option> jai </option> -->
+            </select>
+          </div>
+          <div id="codegen_flavor_specific_settings"></div>
+          <div>
+            <button id="codegen_copy" title="copy codegen output" style="position:absolute;right:0.5rem;">📋</button>
+            <pre id="codegen_out"></pre>
+          </div>
+        </div id="tab_codegen_body">
+
+        <div id="tab_simplify_body" class="tab_body">
+          <p> Animations from e.g. mixamo have many more joints than a simple stickman needs,
+              so we hide most of them and then add back a couple connections so he doesn't have big ole holes in him. </p>
+
+          <p> If you hover over a joint on the canvas (it helps to pause the animation first), you can see what its name will be below. </p>
+
+          <h3> added connections </h3>
+          <div id="tab_simplify_added_connections"></div>
+          <h3> ignored joints </h3>
+          <div id="tab_simplify_ignored_joints"></div>
+        </div id="tab_simplify_body">
+
+        <div id="tab_options_body" class="tab_body">
+          <button id="options_reset_to_default"> reset everything to defaults </button>
+          <p> The following blender export script gives you a JSON you can drag and drop onto this tool. </p>
+          <pre># blender export script
+import bpy
+import json     
+
+def log_bone_positions(armature, output_file=None):
+    frames = []
+    bone_connections = []
+
+    if armature.type != 'ARMATURE':
+    print("Error: Selected object is not an armature.")
+    return
+
+    for bone in armature.pose.bones:
+    if len(bone.children) > 0:
+    for child_bone in bone.children:
+    bone_connections.append([bone.name, child_bone.name])
+
+    start_frame = bpy.context.scene.frame_start
+    end_frame = bpy.context.scene.frame_end
+    for frame in range(start_frame, end_frame):
+    bpy.context.scene.frame_set(frame)
+
+    bone_poses = {}
+
+    for bone in armature.pose.bones:
+        # Get the location of the bone in world space
+        p = armature.matrix_world @ bone.head
+        bone_poses[str(bone.name)] = { 'x': p.x, 'y': p.y, 'z': p.z }
+
+        frames.append(bone_poses)
+
+     with open("./bone_frames.json", "w+") as fp:
+         json.dump({ 'frames': frames, 'connections': bone_connections }, fp)
+
+log_bone_positions(bpy.context.object)</pre>
+        </div id="tab_options_body">
+
         <div class="directional_group">
           <button id="scrubber_prev">⬅️  prev frame</button>
           <button id="scrubber_playpause">⏸️</span>
           <button id="scrubber_next">next frame ➡️ </button>
         </div>
+      </div>
     </div>
 
     <canvas id="glcanvas"></canvas>
@@ -81,6 +267,37 @@ const tweak_ui = new (class TweakUI {
 
   static default_save() {
     return {
+      active_tab: 'intro',
+      codegen_flavor: 'json',
+      codegen_c_prefix: 'animdata_',
+      codegen_joint_prefix_from: 'mixamorig:',
+      codegen_joint_prefix_to  : '',
+
+      ignored_joints: [
+        "mixamorig:Spine", "mixamorig:Spine1", "mixamorig:Spine2", "mixamorig:HeadTop_End", "mixamorig:RightShoulder",
+        "mixamorig:RightHandThumb1", "mixamorig:RightHandThumb2", "mixamorig:RightHandThumb3", "mixamorig:RightHandThumb4",
+        "mixamorig:RightHandIndex1", "mixamorig:RightHandIndex2", "mixamorig:RightHandIndex3", "mixamorig:RightHandIndex4",
+        "mixamorig:RightHandMiddle1", "mixamorig:RightHandMiddle2", "mixamorig:RightHandMiddle3", "mixamorig:RightHandMiddle4",
+        "mixamorig:RightHandRing1", "mixamorig:RightHandRing2", "mixamorig:RightHandRing3", "mixamorig:RightHandRing4",
+        "mixamorig:RightHandPinky1", "mixamorig:RightHandPinky2", "mixamorig:RightHandPinky3", "mixamorig:RightHandPinky4",
+        "mixamorig:LeftShoulder", "mixamorig:LeftHandThumb1", "mixamorig:LeftHandThumb2", "mixamorig:LeftHandThumb3",
+        "mixamorig:LeftHandThumb4", "mixamorig:LeftHandIndex1", "mixamorig:LeftHandIndex2", "mixamorig:LeftHandIndex3",
+        "mixamorig:LeftHandIndex4", "mixamorig:LeftHandMiddle1", "mixamorig:LeftHandMiddle2", "mixamorig:LeftHandMiddle3",
+        "mixamorig:LeftHandMiddle4", "mixamorig:LeftHandRing1", "mixamorig:LeftHandRing2", "mixamorig:LeftHandRing3",
+        "mixamorig:LeftHandRing4", "mixamorig:LeftHandPinky1", "mixamorig:LeftHandPinky2", "mixamorig:LeftHandPinky3",
+        "mixamorig:LeftHandPinky4", "mixamorig:RightUpLeg", "mixamorig:RightFoot", "mixamorig:LeftUpLeg", "mixamorig:LeftFoot"
+      ],
+
+      added_connections: [
+        ["mixamorig:RightLeg", "mixamorig:RightToeBase"],
+        ["mixamorig:LeftLeg",  "mixamorig:LeftToeBase" ],
+        ["mixamorig:Neck",     "mixamorig:RightArm"    ],
+        ["mixamorig:Neck",     "mixamorig:LeftArm"     ],
+        ["mixamorig:Hips",     "mixamorig:RightLeg"    ],
+        ["mixamorig:Hips",     "mixamorig:LeftLeg"     ],
+        ["mixamorig:Hips",     "mixamorig:Neck"        ]
+      ],
+
       playing: true,
       animation_elapsed: 0,
 
@@ -108,6 +325,9 @@ const tweak_ui = new (class TweakUI {
   }
 
   constructor() {
+    this.hovered_joint = null;
+    this.hovered_connection = null;
+
     const save = this.save = TweakUI.get_save();
 
     {
@@ -138,7 +358,6 @@ const tweak_ui = new (class TweakUI {
             save.animation_elapsed = seconds_per_frame * anim_data.frames.length - save.animation_elapsed;
 
           this.do_save();
-          console.log(save.animation_offset);
         }
         scrubber_next.onclick = () => change_offset( 1);
         scrubber_prev.onclick = () => change_offset(-1);
@@ -158,6 +377,230 @@ const tweak_ui = new (class TweakUI {
           this.do_save();
         }
       }
+
+      const that = this;
+      function render_simplify_tab() {
+        tab_simplify_added_connections.innerHTML = '';
+        tab_simplify_ignored_joints.innerHTML = '';
+
+        for (const [idx, joint] of Object.entries(Object.keys(anim_data.frames[0]))) {
+          const div = document.createElement('div');
+          div.className = 'labeled_input';
+
+          div.onmouseover = () => that.hovered_joint = joint;
+          div.onmouseleave = () => that.hovered_joint = null;
+
+          const input = document.createElement('input');
+          input.type = 'checkbox';
+          input.checked = save.ignored_joints.includes(joint);
+          input.id = 'tab_simplify_hidden_joint' + idx;
+          input.onclick = () => {
+            const ignored = new Set(save.ignored_joints);
+            if (input.checked) ignored.add(joint);
+            else               ignored.delete(joint);
+            save.ignored_joints = [...ignored];
+          }
+
+          const label = document.createElement('label');
+          label.style.fontFamily = 'monospace';
+          label.textContent = joint;
+          label.for = input.id;
+          div.append(label, input);
+
+          tab_simplify_ignored_joints.appendChild(div);
+        }
+
+        /* list all added connections */
+        for (const conn of save.added_connections) {
+          const [from, to] = conn;
+
+          const div = document.createElement('div');
+          div.className = 'connection_entry';
+
+          div.onmouseover = () => that.hovered_connection = conn;
+          div.onmouseleave = () => that.hovered_connection = null;
+
+          const from_select = document.createElement('select');
+          const to_select = document.createElement('select');
+          for (const k in anim_data.frames[0]) if (!save.ignored_joints.includes(k)) {
+            for (const select of [from_select, to_select]) {
+              const o = document.createElement('option');
+              o.textContent = k;
+              o.value = k;
+              select.append(o);
+            }
+          }
+          from_select.value = from;
+          to_select.value = to;
+
+          from_select.oninput = () => {
+            conn[0] = from_select.value;
+            that.do_save();
+          }
+          to_select.oninput = () => {
+            conn[1] = to_select.value;
+            that.do_save();
+          }
+
+          const arrow = document.createElement('span');
+          arrow.textContent = '→';
+
+          const remove = document.createElement('button');
+          remove.textContent = '🗑️';
+          remove.onclick = () => {
+            save.added_connections.splice(save.added_connections.indexOf(conn), 1);
+            that.do_save();
+            render_simplify_tab();
+          }
+
+          div.append(from_select, arrow, to_select, remove);
+          tab_simplify_added_connections.appendChild(div);
+        }
+
+        /* button to add new connections */
+        {
+          const new_connection = document.createElement('button');
+          new_connection.style.width = '96%';
+          new_connection.textContent = 'add new connection';
+          new_connection.onclick = () => {
+            const all_keys = Object.keys(anim_data.frames[0]);
+            const good_keys = all_keys.filter(x => !save.ignored_joints.includes(x));
+            save.added_connections.push([good_keys[0] ?? all_keys[0], good_keys[1] ?? all_keys[1]]);
+            render_simplify_tab();
+          }
+          tab_simplify_added_connections.appendChild(new_connection);
+        }
+      }
+
+      function render_codegen_tab() {
+        const ignored = k => save.ignored_joints.includes(k);
+        const flavor = save.codegen_flavor;
+
+        codegen_joint_prefix_from.value = save.codegen_joint_prefix_from;
+        codegen_joint_prefix_to  .value = save.codegen_joint_prefix_to  ;
+        const apply_replace = key => key.replace(codegen_joint_prefix_from.value, codegen_joint_prefix_to.value);
+
+        codegen_out.textContent = '...';
+        codegen_flavor_specific_settings.innerHTML = '';
+
+        const connections = [...save.added_connections, ...anim_data.connections]
+          .filter(([l, r]) => !ignored(l) && !ignored(r))
+          .map(([l, r]) => [apply_replace(l), apply_replace(r)]);
+        const frames = anim_data.frames.map(f => Object.fromEntries(
+          Object
+            .entries(f)
+            .filter(([k, v]) => !ignored(k))
+            .map(([k, v]) => [apply_replace(k), v])
+        ));
+
+        if (flavor == 'json')
+          codegen_out.textContent = JSON.stringify({ fps: 24, connections, frames }, null, 2);
+        if (flavor == 'C') {
+
+          /* add prefix input */
+          {
+            const label = document.createElement('label');
+            const input = document.createElement('input');
+            input.id = label.for = 'codegen_c_prefix_input';
+            input.type = 'text';
+            input.style.fontFamily = 'monospace';
+            input.value = save.codegen_c_prefix;
+            label.textContent = 'prefix';
+
+            const div = document.createElement('div');
+            div.className = 'labeled_input';
+            div.append(label, input);
+            codegen_flavor_specific_settings.append(div);
+
+            input.oninput = () => {
+              save.codegen_c_prefix = input.value;
+              this.do_save();
+              render_codegen_tab();
+            }
+          }
+
+          const prefix = save.codegen_c_prefix;
+          let out = '';
+          out += `typedef enum ${prefix}JointKey {\n`;
+          for (const key in frames[0]) out += `  ${prefix}JointKey_${key},\n`;
+          out += `  ${prefix}JointKey_COUNT\n`;
+          out += `} ${prefix}JointKey_t;\n`;
+
+          out += '\n';
+
+          out += `struct { ${prefix}JointKey_t from, to; } ${prefix}limb_connections[] = {\n`;
+          const longest_joint_name_len = Object.keys(frames[0]).reduce((a, x) => Math.max(a, x.length), 0);
+          for (const [from, to] of connections) {
+            let from_clause = `${prefix}JointKey_${from},`;
+            let to_clause = `${prefix}JointKey_${to}`;
+
+            from_clause = from_clause.padEnd(`${prefix}JointKey_,`.length + longest_joint_name_len);
+              to_clause =   to_clause.padEnd(`${prefix}JointKey_` .length + longest_joint_name_len);
+
+            out += `  { .from = ${from_clause} .to = ${to_clause} },\n`;
+          }
+          out += '};\n';
+
+          out += '\n';
+
+          out += `struct { struct { float x, y, z; } joint_pos[${prefix}JointKey_COUNT]; } ${prefix}frames[] = {\n`;
+          for (const frame of frames) {
+            out += '  { .joint_pos = { \n';
+            for (const key in frame) {
+              const { x, y, z } = frame[key];
+              let key_clause = `${prefix}JointKey_${key}`;
+              key_clause = key_clause.padEnd(`${prefix}JointKey_`.length + longest_joint_name_len);
+              out += `    [${key_clause}] = { ${x}, ${y}, ${z} },\n`
+            }
+            out += '  }},\n';
+          }
+          out += `};`;
+
+          codegen_out.textContent = out;
+        }
+
+        codegen_flavor.value = save.codegen_flavor;
+        codegen_flavor.onchange = () => {
+          save.codegen_flavor = codegen_flavor.value;
+          that.do_save();
+          render_codegen_tab();
+        }
+
+        codegen_copy.onclick = () => {
+          codegen_copy.textContent = '✅';
+          setTimeout(() => codegen_copy.textContent = '📋', 250);
+          navigator.clipboard.writeText(codegen_out.textContent);
+        }
+      }
+
+      /* because i need the anim_data global variable in those functions lol */
+      setTimeout(render_simplify_tab, 1);
+      setTimeout(render_codegen_tab, 1);
+
+      options_reset_to_default.onclick = () => (localStorage.clear(), location.reload());
+
+      const tabs = {
+        intro:    [tab_intro,    tab_intro_body   ],
+        tweak:    [tab_tweak,    tab_tweak_body   ],
+        codegen:  [tab_codegen,  tab_codegen_body ],
+        simplify: [tab_simplify, tab_simplify_body],
+        options:  [tab_options,  tab_options_body ]
+      };
+      for (const [key, [tab, body]] of Object.entries(tabs)) {
+        tab.onclick = () => {
+          for (const [key, body] of Object.values(tabs)) {
+            key.classList.remove("selected");
+            body.classList.remove("selected");
+          }
+
+          tab .classList.add("selected");
+          body.classList.add("selected");
+
+          save.active_tab = key;
+          this.do_save();
+        }
+      }
+      tabs[save.active_tab][0].click();
     }
   }
 })();
@@ -394,39 +837,11 @@ requestAnimationFrame(function render(timestamp) {
     }
 
 
-    const ignore_key = key => {
-        if (key.includes("Hand") && !key.endsWith("Hand")) return true;
-        if (key.includes("Foot")) return true;
-        if (key.endsWith("HeadTop_End")) return true;
-        if (key.endsWith("Shoulder")) return true;
-        if (key.includes("Spine")) return true;
-        if (key.endsWith("UpLeg")) return true;
-        return false;
-    };
+    const ignore_key = key => tweak_ui.save.ignored_joints.includes(key);
     const line_width = tweak_ui.save.line_width * window.innerHeight * 0.035 * window.devicePixelRatio;
     const head_size = tweak_ui.save.head_size * window.innerHeight * 0.2 * window.devicePixelRatio;
 
     // ctx.globalAlpha = 0.8;
-
-    /* show vertices */
-    for (const key in anim_data.frames[0]) if (!ignore_key(key)) {
-      const p = frame(key);
-      const point = new DOMPoint(p.x, p.y, p.z, 1.0);
-      const screen = transform(point);
-      ctx.beginPath();
-      ctx.arc(screen.x, screen.y, line_width*0.5 / input.dist_to_cam(point), 0, Math.PI*2);
-
-      const hover = ctx.isPointInPath(input.mouse_x, input.mouse_y);
-      ctx.fillStyle = hover ? "red" : SECONDARY_COLOR;
-
-      ctx.fill();
-
-      if (hover) {
-        ctx.font = '20px monospace';
-        ctx.textBaseline = 'middle';
-        ctx.fillText(key, 15 + screen.x, screen.y);
-      }
-    }
 
     /* draw head */
     {
@@ -445,8 +860,8 @@ requestAnimationFrame(function render(timestamp) {
     }
 
     /* draw lines */
-    for (const [from_key, to_key] of anim_data.connections) {
-      if (ignore_key(from_key) || ignore_key(to_key)) continue;
+    const draw_connection = (from_key, to_key) => {
+      if (ignore_key(from_key) || ignore_key(to_key)) return;
 
       let from = frame(from_key)
       const from_dist = input.dist_to_cam(from);
@@ -457,10 +872,46 @@ requestAnimationFrame(function render(timestamp) {
       to = transform(new DOMPoint(to.x, to.y, to.z, 1.0));
 
       ctx.beginPath();
+      const color = (tweak_ui.hovered_connection                &&
+                     tweak_ui.hovered_connection[0] == from_key &&
+                     tweak_ui.hovered_connection[1] ==   to_key) ? 'red' : SECONDARY_COLOR;
+      ctx.strokeStyle = color;
       ctx.lineWidth = line_width / lerp(from_dist, to_dist, 0.5);
       ctx.moveTo(from.x, from.y)
       ctx.lineTo(  to.x,   to.y)
       ctx.stroke();
+    }
+    for (const [from_key, to_key] of           anim_data.connections) draw_connection(from_key, to_key);
+    for (const [from_key, to_key] of tweak_ui.save.added_connections) draw_connection(from_key, to_key);
+
+    /* show vertices */
+    for (const key in anim_data.frames[0]) {
+      const p = frame(key);
+      const point = new DOMPoint(p.x, p.y, p.z, 1.0);
+      const screen = transform(point);
+
+      const ui_hovered = tweak_ui.hovered_joint == key;
+      const mouse_hovered = Math.sqrt((input.mouse_x - screen.x)*(input.mouse_x - screen.x) +
+                                      (input.mouse_y - screen.y)*(input.mouse_y - screen.y)) < line_width*0.1;
+      const hovered = ui_hovered || mouse_hovered;
+
+      if (ignore_key(key) && !ui_hovered) continue;
+
+      ctx.beginPath();
+      const size = hovered ? line_width * 2 : line_width;
+      ctx.arc(screen.x, screen.y, size*0.5 / input.dist_to_cam(point), 0, Math.PI*2);
+
+      ctx.fillStyle = hovered ? "red" : SECONDARY_COLOR;
+      ctx.strokeStyle = 'red';
+      ctx.lineWidth = 2;
+
+      ignore_key(key) ? ctx.stroke() : ctx.fill();
+
+      if (hovered) {
+        ctx.font = '20px monospace';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(key, 30 + screen.x, screen.y);
+      }
     }
 
   }
@@ -541,44 +992,6 @@ function mat4_target_to(out, eye, target, up) {
 
 function lerp(v0, v1, t) { return (1 - t) * v0 + t * v1; }
 function inv_lerp(min, max, p) { return (p - min) / (max - min); }
-
-/*
-# blender export script
-import bpy
-import json     
-
-def log_bone_positions(armature, output_file=None):
-    frames = []
-    bone_connections = []
-
-    if armature.type != 'ARMATURE':
-    print("Error: Selected object is not an armature.")
-    return
-
-    for bone in armature.pose.bones:
-    if len(bone.children) > 0:
-    for child_bone in bone.children:
-    bone_connections.append([bone.name, child_bone.name])
-
-    start_frame = bpy.context.scene.frame_start
-    end_frame = bpy.context.scene.frame_end
-    for frame in range(start_frame, end_frame):
-    bpy.context.scene.frame_set(frame)
-
-    bone_poses = {}
-
-    for bone in armature.pose.bones:
-        # Get the location of the bone in world space
-        p = armature.matrix_world @ bone.head
-        bone_poses[str(bone.name)] = { 'x': p.x, 'y': p.y, 'z': p.z }
-
-        frames.append(bone_poses)
-
-     with open("/Users/ced_n_niko/Desktop/blender stuff/bone_frames.json", "w+") as fp:
-         json.dump({ 'frames': frames, 'connections': bone_connections }, fp)
-
-log_bone_positions(bpy.context.object)
-*/
 
 const anim_data = {
     "frames": [
@@ -2258,13 +2671,6 @@ const anim_data = {
         [ "mixamorig:LeftToeBase", "mixamorig:LeftToe_End" ]
     ]
 }
-anim_data.connections.push(["mixamorig:RightLeg", "mixamorig:RightToeBase"]);
-anim_data.connections.push(["mixamorig:LeftLeg", "mixamorig:LeftToeBase"]);
-anim_data.connections.push(["mixamorig:Neck", "mixamorig:RightArm"]);
-anim_data.connections.push(["mixamorig:Neck", "mixamorig:LeftArm"]);
-anim_data.connections.push(["mixamorig:Hips", "mixamorig:RightLeg"]);
-anim_data.connections.push(["mixamorig:Hips", "mixamorig:LeftLeg"]);
-anim_data.connections.push(["mixamorig:Hips", "mixamorig:Neck"]);
     </script>
   </body>
 </html>
