@@ -23,6 +23,7 @@ const ctx = canvas.getContext('2d');
 
 let input = {
   cam: { zoom: 1, x: 0, y: 0 },
+  has_horizontal_scroll: false,
   world_transform: null,
   mouse_down: false,
   cam_down_x: 0,
@@ -52,11 +53,33 @@ let input = {
     }
   };
   canvas.onwheel = e => {
+    e.preventDefault();
+
+    let delta_x = e.deltaX;
+    let delta_y = e.deltaY;
+    if (Math.abs(delta_x) > 0) {
+      input.has_horizontal_scroll = true;
+    }
+
+    /* on trackpads, people expect vertical scrolling to pan instead of zoom.
+     * that's fine, except the only way I know of to tell if they're using a trackpad is ...
+     * did they ever do a horizontal zoom? */
+    if (input.has_horizontal_scroll && !e.ctrlKey && !e.shiftKey) {
+      input.cam.x -= delta_x;
+      input.cam.y -= delta_y;
+      return;
+    }
+    if (e.ctrlKey) {
+      /* also, if you ARE using a trackpad, ctrlKey is set to true for "pinch to zoom events,"
+       * and those are much weaker relative to typical scroll */
+      delta_y *= 10;
+    }
+
     if (!input.world_transform) return;
 
     const mouse = input.world_transform.transformPoint(new DOMPoint(input.mouse_x, input.mouse_y));
 
-    let next_zoom = input.cam.zoom * (1 - e.deltaY * 0.001);
+    let next_zoom = input.cam.zoom * (1 - delta_y * 0.001);
     next_zoom = Math.max(0.15, next_zoom);
 
 
@@ -86,7 +109,7 @@ let input = {
 requestAnimationFrame(function render(now) {
   requestAnimationFrame(render);
 
-  ctx.fillStyle = "white";
+  ctx.fillStyle = "black";
   ctx.fillRect(0, 0, canvas.width, canvas.height);
 
   ctx.save();
