@@ -1,0 +1,184 @@
+<!-- vim: sw=2 ts=2 expandtab smartindent ft=javascript
+-->
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Canvas Demo</title>
+    <style> document, body { margin: 0px; padding: 0px; overflow: hidden; } </style>
+  </head>
+
+  <body>
+    <canvas id="glcanvas"></canvas>
+    <script>"use strict";
+
+const canvas = document.getElementById("glcanvas");
+const ctx = canvas.getContext('2d');
+(window.onresize = () => {
+   canvas.width = window.innerWidth*window.devicePixelRatio,
+   canvas.height = window.innerHeight*window.devicePixelRatio
+   canvas.style.width = window.innerWidth + 'px';
+   canvas.style.height = window.innerHeight + 'px';
+})();
+
+let world_transform = null;
+let mouse_hovered = { kind: null };
+let mouse_held = { kind: null };
+let mouse_hovered_on_down = { kind: null };
+let mouse_down = false;
+let mouse_down_pos = new DOMPoint();
+let mouse_pos = new DOMPoint();
+window.onmousedown = e => {
+  if (e.detail == 2) {
+    e.preventDefault();
+
+    const link0 = { x: mouse_pos.x + -100, y: mouse_pos.y + -100, next: null  };
+    const link1 = { x: mouse_pos.x +  100, y: mouse_pos.y +  100, next: link0 };
+
+    links.push(link0, link1);
+  }
+  mouse_down = true;
+  mouse_down_pos.x = mouse_pos.x;
+  mouse_down_pos.y = mouse_pos.y;
+  mouse_held = mouse_hovered;
+  mouse_hovered_on_down = structuredClone(mouse_hovered)
+};
+window.onmouseup = () => {
+  mouse_down = false;
+  mouse_held = { kind: null };
+};
+window.onmousemove = e => {
+  if (!world_transform) return;
+  mouse_pos.x = e.offsetX * window.devicePixelRatio;
+  mouse_pos.y = e.offsetY * window.devicePixelRatio;
+  mouse_pos = world_transform.transformPoint(mouse_pos);
+}
+
+const links = [
+  { x: -100, y: -100, next: null},
+  { x:  100, y:  100, next: null},
+]
+links[0].next = links[1];
+
+requestAnimationFrame(function render(now) {
+  requestAnimationFrame(render);
+
+  ctx.fillStyle = "black";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  ctx.save();
+  {
+    ctx.translate(canvas.width/2, canvas.height/2);
+    world_transform = ctx.getTransform().inverse();
+
+    if (mouse_held.kind == 'join' && mouse_down) {
+      const [l, r] = mouse_held.join;
+
+      let remove;
+      if (l.next && !l.next.next) l.next.next = r, remove = l;
+      if (r.next && !r.next.next) r.next.next = l, remove = r;
+
+      if (remove) links.splice(links.indexOf(remove), 1);
+
+      mouse_held = { kind: null };
+    }
+    if (mouse_held.kind == 'point' && mouse_down) {
+      mouse_held.point.x = mouse_pos.x;
+      mouse_held.point.y = mouse_pos.y;
+    }
+    if (mouse_held.kind == 'link' && mouse_down) {
+      const dx = mouse_pos.x - mouse_down_pos.x;
+      const dy = mouse_pos.y - mouse_down_pos.y;
+      mouse_held.link.x      = mouse_hovered_on_down.link.x + dx;
+      mouse_held.link.y      = mouse_hovered_on_down.link.y + dy;
+      mouse_held.link.next.x = mouse_hovered_on_down.link.next.x + dx;
+      mouse_held.link.next.y = mouse_hovered_on_down.link.next.y + dy;
+    }
+
+    let hover_dist         = mouse_down ? -Infinity : Infinity;
+    let next_mouse_hovered = mouse_down ? mouse_held : { kind: null };
+    for (const link of links) {
+      const a = link;
+      const b = link.next;
+      if (!b) continue;
+
+      ctx.beginPath();
+      ctx.moveTo(a.x, a.y);
+      ctx.lineTo(b.x, b.y);
+
+      ctx.strokeStyle = "white";
+      ctx.lineWidth = 15;
+      ctx.stroke();
+
+      for (const p of [a, b]) {
+        const dist = Math.sqrt((p.x - mouse_pos.x)*(p.x - mouse_pos.x) + 
+                               (p.y - mouse_pos.y)*(p.y - mouse_pos.y)) - 16;
+
+        if (dist < 0 && dist < hover_dist) {
+          hover_dist = dist;
+          if (next_mouse_hovered.kind == 'point') {
+            next_mouse_hovered.kind = 'join';
+            next_mouse_hovered.join = [next_mouse_hovered.point, p];
+          } else {
+            next_mouse_hovered.kind = 'point';
+            next_mouse_hovered.point = p;
+          }
+        }
+
+        if (mouse_hovered.kind == 'point' && mouse_hovered.point == p) {
+          ctx.beginPath();
+          ctx.strokeStyle = "rgba(255, 0, 0, 0.7)";
+          ctx.arc(p.x, p.y, 8, 0, Math.PI*2);
+          ctx.stroke();
+        }
+
+        if (mouse_hovered.kind == 'join' && mouse_hovered.join.some(x => x.point == p)) {
+          ctx.beginPath();
+          ctx.strokeStyle = "rgba(0, 0, 255, 0.7)";
+          ctx.arc(p.x, p.y, 8, 0, Math.PI*2);
+          ctx.stroke();
+        }
+      }
+
+      const line_dist = sd_line(mouse_pos.x, mouse_pos.y, a.x, a.y, b.x, b.y) - 8;
+      if ((next_mouse_hovered.kind == null) && line_dist < 0 && line_dist < hover_dist) {
+        hover_dist = line_dist;
+        next_mouse_hovered.kind = 'link';
+        next_mouse_hovered.link = link;
+      }
+
+      if (mouse_hovered.kind == 'link' && mouse_hovered.link == link) {
+        ctx.strokeStyle = "rgba(255, 0, 0, 0.7)";
+        ctx.lineWidth = 20;
+        ctx.stroke();
+      }
+
+    }
+    mouse_hovered = {
+      kind: next_mouse_hovered.kind,
+      [next_mouse_hovered.kind]: next_mouse_hovered[next_mouse_hovered.kind],
+    };
+
+  }
+  ctx.restore();
+})
+
+function sd_line(p_x, p_y, a_x, a_y, b_x, b_y) {
+  const pa_x = p_x - a_x;
+  const pa_y = p_y - a_y;
+  const ba_x = b_x - a_x;
+  const ba_y = b_y - a_y;
+
+  const paba_dot = (pa_x * ba_x) + (pa_y * ba_y);
+  const baba_dot = (ba_x * ba_x) + (ba_y * ba_y);
+
+  const h = Math.max(0, Math.min(1, paba_dot/baba_dot));
+  return Math.sqrt((pa_x - (ba_x*h))*(pa_x - (ba_x*h)) +
+                   (pa_y - (ba_y*h))*(pa_y - (ba_y*h)));
+}
+
+function lerp(v0, v1, t) { return (1 - t) * v0 + t * v1; }
+function inv_lerp(min, max, p) { return (p - min) / (max - min); }
+    </script>
+  </body>
+</html>
