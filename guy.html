@@ -230,13 +230,13 @@ document, body { margin: 0px; padding: 0px; overflow: hidden; }
 import bpy
 import json     
 
-def log_bone_positions(armature, output_file=None):
+def write_bone_positions(armature, output_file=None):
     frames = []
     bone_connections = []
 
     if armature.type != 'ARMATURE':
     print("Error: Selected object is not an armature.")
-    return
+      return
 
     for bone in armature.pose.bones:
     if len(bone.children) > 0:
@@ -260,7 +260,7 @@ def log_bone_positions(armature, output_file=None):
      with open("./bone_frames.json", "w+") as fp:
          json.dump({ 'frames': frames, 'connections': bone_connections }, fp)
 
-log_bone_positions(bpy.context.object)</pre>
+write_bone_positions(bpy.context.object)</pre>
         </div id="tab_options_body">
 
         <div class="directional_group">
