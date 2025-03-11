@@ -1,0 +1,83 @@
+<!-- vim: sw=2 ts=2 expandtab smartindent ft=javascript
+-->
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Canvas Demo</title>
+    <style> document, body { margin: 0px; padding: 0px; overflow: hidden; } </style>
+  </head>
+
+  <body>
+    <canvas id="glcanvas"></canvas>
+    <script>"use strict";
+
+const canvas = document.getElementById("glcanvas");
+const ctx = canvas.getContext('2d');
+(window.onresize = () => {
+   canvas.width = window.innerWidth*window.devicePixelRatio,
+   canvas.height = window.innerHeight*window.devicePixelRatio
+   canvas.style.width = window.innerWidth + 'px';
+   canvas.style.height = window.innerHeight + 'px';
+})();
+
+let mouse_x = 0;
+let mouse_y = 0;
+let camera_scale = 1;
+window.onwheel = (ev) => {
+    camera_scale = Math.max(0.01, camera_scale + 0.001*ev.deltaY);
+};
+window.onmousemove = ev => {
+    mouse_x = window.devicePixelRatio * (ev.offsetX - window.innerWidth *0.5);
+    mouse_y = window.devicePixelRatio * (ev.offsetY - window.innerHeight*0.5);
+};
+
+requestAnimationFrame(function render(now) {
+  requestAnimationFrame(render);
+
+  ctx.fillStyle = "white";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  ctx.save();
+  {
+    ctx.translate(canvas.width/2, canvas.height/2);
+
+    ctx.strokeStyle = "red";
+    ctx.lineWidth = 10;
+    const window_size_x = 16*90;
+    const window_size_y =  9*90;
+    const window_min_x = -window_size_x*0.5;
+    const window_min_y = -window_size_y*0.5;
+    const window_max_x =  window_size_x*0.5;
+    const window_max_y =  window_size_y*0.5;
+    ctx.strokeRect(window_min_x, window_min_y, window_size_x, window_size_y);
+
+    const camera_size_x = Math.min(window_size_x, 16 * 20 * camera_scale);
+    const camera_size_y = Math.min(window_size_y,  9 * 20 * camera_scale);
+    let camera_x = mouse_x;
+    let camera_y = mouse_y;
+    let camera_min_x = camera_x-camera_size_x*0.5;
+    let camera_min_y = camera_y-camera_size_y*0.5;
+    let camera_max_x = camera_x+camera_size_x*0.5;
+    let camera_max_y = camera_y+camera_size_y*0.5;
+    {
+        camera_x += Math.max(0, window_min_x - camera_min_x);
+        camera_x += Math.min(0, window_max_x - camera_max_x);
+        camera_y += Math.max(0, window_min_y - camera_min_y);
+        camera_y += Math.min(0, window_max_y - camera_max_y);
+    }
+
+    camera_min_x = camera_x-camera_size_x*0.5;
+    camera_min_y = camera_y-camera_size_y*0.5;
+    camera_max_x = camera_x+camera_size_x*0.5;
+    camera_max_y = camera_y+camera_size_y*0.5;
+    ctx.strokeRect(camera_min_x, camera_min_y, camera_size_x, camera_size_y);
+  }
+  ctx.restore();
+})
+
+function lerp(v0, v1, t) { return (1 - t) * v0 + t * v1; }
+function inv_lerp(min, max, p) { return (p - min) / (max - min); }
+    </script>
+  </body>
+</html>
