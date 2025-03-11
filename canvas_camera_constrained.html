@@ -58,6 +58,7 @@ const fit_cam_to_bounds = () => {
         camera_y += Math.min(0, bounds_max_y - camera_max_y);
     }
 }
+phone_orientation.onchange = fit_cam_to_bounds;
 
 window.onwheel = (ev) => {
     camera_scale = Math.max(0.01, camera_scale + 0.001*ev.deltaY);
