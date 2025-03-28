@@ -223,17 +223,20 @@ const TinySDF = (() => {
             const h = ('' + data.glyph.height).padStart(3);
             body += `    { '${letter}', ${w}, ${h} },\n`;
         }
+        body += '};\n\n';
+        body += `uint8_t bytes[${bytes.length}] = {`;
         outer:
         for (let i = 0; true; i++) {
             body += '\n    ';
             for (let j = 0; j < 30; j++) {
                 if (i >= bytes.length) break outer;
-                body += ('0x' + bytes[i].toString(16)).padEnd(4) + ', ';
+                body += ('0x' + bytes[i].toString(16)).padEnd(4);
+                if (j == 29 && i != (bytes.length - 1)) body += ',';
             }
         }
-        body += '\n';
-        let str = `uint8_t bytes[${bytes.length}] = {${body}};`;
-        pre.textContent = str;
+
+        body += '};\n';
+        pre.textContent = body;
         document.body.append(pre);
     }
 }

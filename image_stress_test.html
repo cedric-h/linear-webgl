@@ -1,0 +1,266 @@
+<!-- vim: sw=4 ts=4 expandtab smartindent ft=javascript
+-->
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>WebGL Demo</title>
+    <style> document, body { margin: 0px; padding: 0px; overflow: hidden; } </style>
+  </head>
+
+  <body>
+    <canvas id="glcanvas"></canvas>
+    <div style="position:absolute;top:0px;left:0px;margin:0.2rem;">
+        <button id="plus_hundred">
+            +100
+        </button>
+        <button id="plus_thousand">
+            +1000
+        </button>
+    </div>
+    <script>
+const canvas = document.getElementById('glcanvas');
+const gl = canvas.getContext('webgl2', {antialias: true});
+if (!gl) { alert('Failed to initialize WebGL'); }
+
+(window.onresize = () => {
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+
+    /* account for e.g. high-retina macbook screens */
+    if (window.devicePixelRatio > 1) {
+        canvas.style.width = `${canvas.width}px`;
+        canvas.style.height = `${canvas.height}px`;
+        canvas.width *= window.devicePixelRatio;
+        canvas.height *= window.devicePixelRatio;
+    }
+
+    gl.viewport(
+        0,
+        0,
+        canvas.width,
+        canvas.height
+    );
+})();
+
+const geo_vbuf_pos = gl.createBuffer();
+const geo_vbuf_uv = gl.createBuffer();
+const geo_ibuf = gl.createBuffer();
+
+let shaders;
+/* compile shaders */
+{
+    const vs_geo = `
+        attribute vec3 a_pos;
+        attribute vec2 a_uv;
+
+        varying vec2 v_uv;
+
+        void main() {
+            gl_Position = vec4(a_pos.xyz, 1);
+            v_uv = a_uv;
+        }`;
+
+    const fs_geo = `
+        precision mediump float;
+
+        uniform sampler2D u_texture;
+
+        varying vec2 v_uv;
+
+        void main() {
+            gl_FragColor = texture2D(u_texture, v_uv);
+        }`;
+
+    function createProgram(gl, vertexSource, fragmentSource) {
+        function createShader(gl, type, source) {
+            const shader = gl.createShader(type);
+            gl.shaderSource(shader, source);
+            gl.compileShader(shader);
+            if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+                throw new Error(gl.getShaderInfoLog(shader));
+            }
+            return shader;
+        }
+
+        const program = gl.createProgram();
+
+        const vertexShader = createShader(gl, gl.VERTEX_SHADER, vertexSource);
+        const fragmentShader = createShader(gl, gl.FRAGMENT_SHADER, fragmentSource);
+
+        gl.attachShader(program, vertexShader);
+        gl.attachShader(program, fragmentShader);
+
+        gl.linkProgram(program);
+        if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+            throw new Error(gl.getProgramInfoLog(program));
+        }
+
+        const wrapper = {program};
+
+        const numAttributes = gl.getProgramParameter(program, gl.ACTIVE_ATTRIBUTES);
+        for (let i = 0; i < numAttributes; i++) {
+            const attribute = gl.getActiveAttrib(program, i);
+            wrapper[attribute.name] = gl.getAttribLocation(program, attribute.name);
+        }
+        const numUniforms = gl.getProgramParameter(program, gl.ACTIVE_UNIFORMS);
+        for (let i = 0; i < numUniforms; i++) {
+            const uniform = gl.getActiveUniform(program, i);
+            wrapper[uniform.name] = gl.getUniformLocation(program, uniform.name);
+        }
+
+        return wrapper;
+    }
+
+
+    shaders = {
+        geo: createProgram(gl, vs_geo, fs_geo)
+    }
+}
+
+const makeTexture = () => {
+    let atlas = gl.createTexture();
+
+    {
+        const emojis = [
+            "😀", "😃", "😄", "😁", "😆", "😅", "😂", "🤣", "😜", "😝", "😛", "🤑", "🤗", "🤩", "😍", "🥰", "😘",
+            "😗", "😙", "😚", "🥺", "😋", "😎", "🥳", "🤔", "🤨", "😐", "😑", "😶", "🙄", "😯", "😦", "😧", "😮",
+            "😲", "😳", "🥴", "😵", "🤐", "😷", "🤒", "🤕", "🤢", "🤮", "🤧", "😇", "🤠", "🥸", "🧐", "😈", "👿",
+            "💀", "☠️", "👻", "👽", "🤖", "🎃", "😺", "😸", "😹", "😻", "😼", "😽", "🙀", "😿", "😾", "🐶", "🐱",
+            "🦁", "🐯", "🐅", "🦊", "🐴", "🦄", "🦓", "🦒", "🐮", "🐷", "🐗", "🦢", "🦩", "🦜", "🐦", "🦋", "🐝",
+            "🐞", "🐜", "🐌", "🦗", "🕷", "🕸", "🦠", "🐢", "🐍", "🦎", "🐉", "🦖"
+        ];
+        const canvas = document.createElement("canvas");
+        const SIZE = canvas.width = canvas.height = 1024;
+        const ctx = canvas.getContext("2d");
+
+        const PAD = SIZE*0.05;
+        ctx.font = (SIZE - PAD*2) + 'px sans-serif';
+        ctx.fillText(emojis[Math.floor(emojis.length * Math.random())], PAD, SIZE - PAD*2);
+
+        gl.bindTexture(gl.TEXTURE_2D, atlas);
+        gl.texImage2D(
+            /* target         */ gl.TEXTURE_2D,
+            /* level          */ 0,
+            /* internalformat */ gl.RGBA,
+            /* width          */ canvas.width,
+            /* height         */ canvas.height,
+            /* border,        */ 0,
+            /* format,        */ gl.RGBA,
+            /* type,          */ gl.UNSIGNED_BYTE,
+            /* data           */ canvas
+        );
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    }
+
+    return atlas;
+}
+
+const textures = [];
+for (let i = 0; i < 10; i++) add_tex();
+
+function add_tex() {
+    document.title = textures.length + ' 1024p images!';
+    textures.push(makeTexture());
+}
+
+plus_hundred .onclick = () => { for (let i = 0; i <  100; i++) add_tex(); }
+plus_thousand.onclick = () => { for (let i = 0; i < 1000; i++) add_tex(); }
+
+let addInterval;
+window.onpointerdown = e => {
+    addInterval = setInterval(() => add_tex(), 50);
+    e.preventDefault();
+}
+window.onpointerup = e => {
+    clearInterval(addInterval);
+    e.preventDefault();
+}
+
+requestAnimationFrame(function frame(timestamp) {
+    requestAnimationFrame(frame);
+
+    /* set up premultiplied alpha */
+    gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
+    gl.enable(gl.BLEND);
+
+    gl.enable(gl.DEPTH_TEST);
+    gl.depthFunc(gl.LEQUAL);
+
+    /* clear all */
+    gl.clearColor(1, 1, 1, 1);
+    gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+
+    const tlen = Math.floor(Math.sqrt(textures.length));
+    let size = 0.5;
+    if (size * tlen > 1) {
+        size = 1 / (tlen + 1);
+    }
+    for (let i = 0; i < textures.length; i++) {
+        const geo_idx = [];
+        const geo_pos = [];
+        const geo_uv  = [];
+
+        const atlas = textures[i];
+        const tile_x =            i % tlen ;
+        const tile_y = Math.floor(i / tlen);
+        const x = 2 * (tile_x * size) - 1;
+        const y = 2 * (tile_y * size) - 1;
+
+        {
+            geo_uv.push(
+                1, 1,
+                0, 1,
+                0, 0,
+                1, 0,
+            );
+
+            const vbuf_i = geo_pos.length / 3;
+            const ar = window.innerWidth / window.innerHeight;
+            geo_pos.push((x +  size) * 0.8, (y + -size*ar) * 0.8, 0.1);
+            geo_pos.push((x + -size) * 0.8, (y + -size*ar) * 0.8, 0.1);
+            geo_pos.push((x + -size) * 0.8, (y +  size*ar) * 0.8, 0.1);
+            geo_pos.push((x +  size) * 0.8, (y +  size*ar) * 0.8, 0.1);
+
+            geo_idx.push(0, 1, 2, 2, 3, 0);
+        }
+
+        /* geo pass */
+        {
+            gl.useProgram(shaders.geo.program);
+            gl.enableVertexAttribArray(shaders.geo.a_pos);
+            gl.enableVertexAttribArray(shaders.geo.a_uv);
+
+            /* upload/bind atlas */
+            {
+                gl.activeTexture(gl.TEXTURE0);
+                gl.bindTexture(gl.TEXTURE_2D, atlas);
+                gl.uniform1i(shaders.geo.u_texture, 0);
+            }
+
+            /* upload/bind geometry */
+            {
+                gl.bindBuffer(gl.ARRAY_BUFFER, geo_vbuf_pos);
+                gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(geo_pos), gl.STATIC_DRAW);
+                gl.vertexAttribPointer(shaders.geo.a_pos, 3, gl.FLOAT, false, 0, 0);
+
+                gl.bindBuffer(gl.ARRAY_BUFFER, geo_vbuf_uv);
+                gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(geo_uv), gl.STATIC_DRAW);
+                gl.vertexAttribPointer(shaders.geo.a_uv, 2, gl.FLOAT, false, 0, 0);
+
+                gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, geo_ibuf);
+                gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, new Uint16Array(geo_idx), gl.STATIC_DRAW);
+            }
+
+            gl.drawElements(gl.TRIANGLES, geo_idx.length, gl.UNSIGNED_SHORT, 0);
+        }
+    }
+})
+
+
+    </script>
+  </body>
+</html>
