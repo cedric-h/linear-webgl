@@ -12,6 +12,9 @@ document, body { margin: 0px; padding: 0px; overflow: hidden; }
         font-size: 6rem;
         margin: 2rem;
     }
+    h1 {
+        font-size: 3rem;
+    }
 }
     </style>
   </head>
@@ -21,6 +24,7 @@ document, body { margin: 0px; padding: 0px; overflow: hidden; }
     <div style="position:absolute;top:0px;left:0px;margin:0.2rem;">
         <button id="plus_hundred"> +100 </button>
         <button id="plus_thousand"> +1000 </button>
+        <h1 id="image_count" style="font-family: monospace;"> 10 images </h1>
     </div>
     <script>
 const canvas = document.getElementById('glcanvas');
@@ -168,7 +172,8 @@ const textures = [];
 for (let i = 0; i < 10; i++) add_tex();
 
 function add_tex() {
-    document.title = textures.length + ' 1024p images!';
+    document.title = (textures.length + 1) + ' 1024p textures!';
+    image_count.textContent = (textures.length + 1) + ' 1024p textures!';
     textures.push(makeTexture());
 }
 
@@ -176,14 +181,8 @@ plus_hundred .onclick = () => { for (let i = 0; i <  100; i++) add_tex(); }
 plus_thousand.onclick = () => { for (let i = 0; i < 1000; i++) add_tex(); }
 
 let addInterval;
-window.onpointerdown = e => {
-    addInterval = setInterval(() => add_tex(), 50);
-    e.preventDefault();
-}
-window.onpointerup = e => {
-    clearInterval(addInterval);
-    e.preventDefault();
-}
+canvas.onpointerdown = e => addInterval = setInterval(() => add_tex(), 50);
+canvas.onpointerup = e => clearInterval(addInterval);
 
 requestAnimationFrame(function frame(timestamp) {
     requestAnimationFrame(frame);
