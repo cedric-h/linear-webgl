@@ -5,18 +5,22 @@
   <head>
     <meta charset="utf-8" />
     <title>WebGL Demo</title>
-    <style> document, body { margin: 0px; padding: 0px; overflow: hidden; } </style>
+    <style>
+document, body { margin: 0px; padding: 0px; overflow: hidden; }
+@media (pointer: coarse) {
+    button {
+        font-size: 6rem;
+        margin: 2rem;
+    }
+}
+    </style>
   </head>
 
   <body>
     <canvas id="glcanvas"></canvas>
     <div style="position:absolute;top:0px;left:0px;margin:0.2rem;">
-        <button id="plus_hundred">
-            +100
-        </button>
-        <button id="plus_thousand">
-            +1000
-        </button>
+        <button id="plus_hundred"> +100 </button>
+        <button id="plus_thousand"> +1000 </button>
     </div>
     <script>
 const canvas = document.getElementById('glcanvas');
