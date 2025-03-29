@@ -21,6 +21,7 @@
     <script>
 const canvas = document.getElementById('glcanvas');
 const gl = canvas.getContext('webgl2', {antialias: true});
+gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, true);
 if (!gl) { alert('Failed to initialize WebGL'); }
 
 (window.onresize = () => {
