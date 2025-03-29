@@ -6,7 +6,17 @@
     <meta charset="utf-8" />
     <title>WebGL Demo</title>
     <style>
-document, body { margin: 0px; padding: 0px; overflow: hidden; }
+document, body {
+    margin: 0px; padding: 0px;
+    overflow: hidden; position: relative;
+    width: 100vw;
+    height: 100vh;
+}
+
+button {
+    font-size: 2rem;
+}
+
 @media (pointer: coarse) {
     button {
         font-size: 6rem;
@@ -21,10 +31,13 @@ document, body { margin: 0px; padding: 0px; overflow: hidden; }
 
   <body>
     <canvas id="glcanvas"></canvas>
-    <div style="position:absolute;top:0px;left:0px;margin:0.2rem;">
+    <div style="position:absolute;bottom:0px;left:0px;margin:0.2rem;">
         <button id="plus_hundred"> +100 </button>
         <button id="plus_thousand"> +1000 </button>
+    </div>
+    <div style="position:absolute;top:0px;left:0px;margin:0.2rem;">
         <h1 id="image_count" style="font-family: monospace;"> 10 images </h1>
+        <h1 id="fps_count" style="font-family: monospace;"> 60 fps </h1>
     </div>
     <script>
 const canvas = document.getElementById('glcanvas');
@@ -59,26 +72,52 @@ const geo_ibuf = gl.createBuffer();
 let shaders;
 /* compile shaders */
 {
-    const vs_geo = `
-        attribute vec3 a_pos;
-        attribute vec2 a_uv;
+    const vs_geo = `#version 300 es
+        in vec3 a_pos;
+        in vec2 a_uv;
 
-        varying vec2 v_uv;
+        out vec2 v_uv;
 
         void main() {
             gl_Position = vec4(a_pos.xyz, 1);
             v_uv = a_uv;
         }`;
 
-    const fs_geo = `
+    const fs_geo = `#version 300 es
+        #define PI 3.1415926538
         precision mediump float;
 
         uniform sampler2D u_texture;
+        uniform float u_time;
+        uniform int u_id;
 
-        varying vec2 v_uv;
+        in vec2 v_uv;
+
+        out vec4 a_color;
+
+        const uint k = 1103515245U;  // GLIB C
+
+        vec3 hash33( uvec3 x ) {
+            x = ((x>>8U)^x.yzx)*k;
+            x = ((x>>8U)^x.yzx)*k;
+            x = ((x>>8U)^x.yzx)*k;
+
+            return vec3(x)*(1.0/float(0xffffffffU));
+        }
 
         void main() {
-            gl_FragColor = texture2D(u_texture, v_uv);
+            float cycle = 0.0005;
+            float t = smoothstep(0.0, 1.0, mod(u_time * cycle, 1.0));
+            int special = int(round(hash33(uvec3(u_id, 100 + int(u_time * cycle), 0)).x - 0.46));
+
+            vec2 uv = v_uv;
+            uv.x -= 0.5;
+            uv.x *= 2.0;
+            uv.x /= (special == 1) ? -cos(t*PI*2.0 + PI) : 1.0;
+            uv.x *= 0.5;
+            uv.x += 0.5;
+
+            a_color = texture(u_texture, uv);
         }`;
 
     function createProgram(gl, vertexSource, fragmentSource) {
@@ -181,11 +220,28 @@ plus_hundred .onclick = () => { for (let i = 0; i <  100; i++) add_tex(); }
 plus_thousand.onclick = () => { for (let i = 0; i < 1000; i++) add_tex(); }
 
 let addInterval;
-canvas.onpointerdown = e => addInterval = setInterval(() => add_tex(), 50);
+canvas.onpointerdown = e => {
+    clearInterval(addInterval);
+    addInterval = setInterval(() => add_tex(), 50);
+    e.preventDefault();
+};
+canvas.oncontextmenu = e => {
+    e.preventDefault();
+    return false;
+}
 canvas.onpointerup = e => clearInterval(addInterval);
 
+let last_timestamp;
+let dt_avg = 1000 / 60.5;
 requestAnimationFrame(function frame(timestamp) {
     requestAnimationFrame(frame);
+
+    last_timestamp ??= timestamp;
+    const dt = timestamp - last_timestamp;
+    last_timestamp = timestamp;
+
+    dt_avg = dt_avg * 0.99 + dt * 0.01;
+    fps_count.textContent = (1000 / dt_avg).toFixed(1) + ' fps';
 
     /* set up premultiplied alpha */
     gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
@@ -254,6 +310,8 @@ requestAnimationFrame(function frame(timestamp) {
                 gl.bindBuffer(gl.ARRAY_BUFFER, geo_vbuf_uv);
                 gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(geo_uv), gl.STATIC_DRAW);
                 gl.vertexAttribPointer(shaders.geo.a_uv, 2, gl.FLOAT, false, 0, 0);
+                gl.uniform1f(shaders.geo.u_time, timestamp);
+                gl.uniform1i(shaders.geo.u_id, i);
 
                 gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, geo_ibuf);
                 gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, new Uint16Array(geo_idx), gl.STATIC_DRAW);
