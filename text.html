@@ -573,13 +573,13 @@ requestAnimationFrame(function frame(timestamp) {
             const by = sdfs[str[i]].glyph.glyphTop - (fontsize / 2 + buf); // bearing y
 
             vertexElements.push(
-                pen.x + ((bx - buf) * scale), pen.y - by * scale,
-                pen.x + ((bx - buf + width) * scale), pen.y - by * scale,
-                pen.x + ((bx - buf) * scale), pen.y + (height - by) * scale,
+                pen.x + ((bx - buf         ) * scale), pen.y           - by  * scale,
+                pen.x + ((bx - buf  + width) * scale), pen.y           - by  * scale,
+                pen.x + ((bx - buf         ) * scale), pen.y + (height - by) * scale,
 
-                pen.x + ((bx - buf + width) * scale), pen.y - by * scale,
-                pen.x + ((bx - buf) * scale), pen.y + (height - by) * scale,
-                pen.x + ((bx - buf + width) * scale), pen.y + (height - by) * scale
+                pen.x + ((bx - buf  + width) * scale), pen.y           - by  * scale,
+                pen.x + ((bx - buf         ) * scale), pen.y + (height - by) * scale,
+                pen.x + ((bx - buf  + width) * scale), pen.y + (height - by) * scale
             );
 
             textureElements.push(

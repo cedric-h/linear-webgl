@@ -4,7 +4,7 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <title>WebGL Demo</title>
+    <title>🍲 font cooker</title>
     <style> document, body { margin: 0px; padding: 0px; } </style>
   </head>
 
@@ -201,10 +201,11 @@ const TinySDF = (() => {
             const glyph = sdf.draw(chars[i]);
             const {data, width, height} = glyph;
 
+            const idx = bytes.length;
             bytes.push(...data);
 
             delete glyph.data;
-            sdfs[chars[i]] = { x, y, glyph };
+            sdfs[chars[i]] = { x, y, glyph, idx };
             ctx.putImageData(makeRGBAImageData(data, width, height), x, y);
             i++;
         }
@@ -217,21 +218,35 @@ const TinySDF = (() => {
         const pre = document.createElement('pre');
         pre.style.marginLeft = '0.5rem';
         let body = '';
-        body += 'struct { char letter; usize size_x, size_y; } letters = {\n';
+        body += 'typedef struct {\n';
+        body += '  size_t x, y, size_x, size_y, data_start;\n';
+        body += '  float advance, top;\n';
+        body += '} font_LetterRegion;\n\n';
+        body += 'font_LetterRegion font_letter_regions[256] = {\n';
         for (const [letter, data] of Object.entries(sdfs)) {
-            const w = ('' + data.glyph.width ).padStart(3);
-            const h = ('' + data.glyph.height).padStart(3);
-            body += `    { '${letter}', ${w}, ${h} },\n`;
+            const x = ('' + data.x                 ).padStart(3);
+            const y = ('' + data.y                 ).padStart(3);
+            const w = ('' + data.glyph.width       ).padStart(3);
+            const h = ('' + data.glyph.height      ).padStart(3);
+            const i = ('' + data.idx               ).padStart(5);
+            const advance = data.glyph.glyphAdvance.toFixed(3).padStart(6);
+            const     top = data.glyph.glyphTop    .toFixed(3).padStart(6);
+            let char = `'${letter}'`;
+            if (letter == "'" ) char = "'\\''";
+            if (letter == "\\") char = "'\\\\'";
+            body += `    [${char.padEnd(4)}] = { ${x}, ${y}, ${w}, ${h}, ${i}, ${advance}, ${top} },\n`;
         }
         body += '};\n\n';
-        body += `uint8_t bytes[${bytes.length}] = {`;
+
+        body += `#define font_TEX_SIZE_X ${fontCanvas.width}\n`;
+        body += `#define font_TEX_SIZE_Y ${fontCanvas.height}\n`;
+        body += `uint8_t font_tex_bytes[${bytes.length}] = {`;
         outer:
-        for (let i = 0; true; i++) {
+        for (let i = 0; true;) {
             body += '\n    ';
             for (let j = 0; j < 30; j++) {
-                if (i >= bytes.length) break outer;
-                body += ('0x' + bytes[i].toString(16)).padEnd(4);
-                if (j == 29 && i != (bytes.length - 1)) body += ',';
+                if (i >= bytes.length) { body += '\n'; break outer; }
+                body += ('0x' + bytes[i++].toString(16)).padStart(5) + ',';
             }
         }
 
