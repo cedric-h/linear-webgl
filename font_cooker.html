@@ -383,6 +383,7 @@ function update() {
 
             body += `#define font_TEX_SIZE_X ${font_canvas.width}\n`;
             body += `#define font_TEX_SIZE_Y ${font_canvas.height}\n`;
+            body += `#define font_BASE_CHAR_SIZE ${SDF_FONT_SIZE}\n`;
             body += `uint8_t font_tex_bytes[${bytes.length}] = {`;
             outer:
             for (let i = 0; true;) {
