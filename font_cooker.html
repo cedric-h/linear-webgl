@@ -3,258 +3,407 @@
 <!DOCTYPE html>
 <html lang="en">
   <head>
-    <meta charset="utf-8" />
-    <title>🍲 font cooker</title>
-    <style> document, body { margin: 0px; padding: 0px; } </style>
+      <meta charset="utf-8" />
+      <title>🍲 font cooker</title>
+      <style>
+document, body { margin: 0px; padding: 0px; }
+
+body {
+    display: flex;
+    background-color: gray;
+    overflow: hidden;
+}
+
+#hud {
+    background-color: #cccccc;
+    position: absolute;
+    top: 0px;
+    right: 0px;
+
+    font-family: monospace;
+
+    margin: 0.5rem;
+    padding: 0.5rem;
+
+    border: 2px solid black;
+
+    #font_canvas_box {
+        aspect-ratio: 1;
+        width: 100%;
+        display: flex;
+        justify-content: center;
+    }
+
+    .balanced_pair {
+        width: 100%;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 0.5rem;
+    }
+
+    #font_canvas {
+        background-color: white;
+    }
+}
+#code_out_box {
+    background-color: #444444;
+    color: white;
+    height: 100vh;
+    width:  100vw;
+    overflow: scroll;
+}
+
+#out_summary {
+    font-weight: bold;
+}
+
+      </style>
   </head>
 
   <body>
-    <script>
 
-/* maps character to location in spritesheet */
-const sdfs = {};
-/* higher number = prettier text using more VRAM */
-const SDF_FONT_SIZE = 16;
+      <div id="hud">
+          <div id="font_canvas_box">
+              <canvas id="font_canvas"></canvas>
+          </div>
 
-const chars = ' abcdefghijklmnopqrstuvwxyzZABCDEFGHIJKLMNOPQRSTUVWXYZ!@#$%^&*()1234567890<,>./?;:\'"\\|{}[]';
-const fontCanvas = document.createElement('canvas');
-fontCanvas.width = fontCanvas.height = 256;
-const ctx = fontCanvas.getContext('2d');
+          <p id="out_summary"> 256x256, 22 glyphs, 18kb </p>
 
-const TinySDF = (() => {
-    const INF = 1e20;
+          <div style="display:flex; flex-direction: column; gap:0.2rem;">
+              <hr style="width:100%;"/>
 
-    class TinySDF {
-        constructor({
-            fontSize = 24,
-            buffer = 3,
-            radius = 8,
-            cutoff = 0.25,
-            fontFamily = 'sans-serif',
-            fontWeight = 'normal',
-            fontStyle = 'normal'
-        } = {}) {
-            this.buffer = buffer;
-            this.cutoff = cutoff;
-            this.radius = radius;
+              <div class="balanced_pair">
+                  <label for="included_chars"> included chars: </label>
+                  <input type="text" value=" abcdefghijklmnopqrstuvwxyzZABCDEFGHIJKLMNOPQRSTUVWXYZ!@#$%^&*()1234567890<,>./?;:'\"\\|{}[]" id="included_chars"></input>
+              </div>
+              <div class="balanced_pair">
+                  <label for="font_family"> font family: </label>
+                  <input type="text" id="font_family" value="sans-serif"></input>
+              </div>
+              <div class="balanced_pair">
+                  <label for="char_size"> character size: </label>
+                  <input type="number" min="0" max="100" id="char_size" value="16"></input>
+              </div>
+              <div class="balanced_pair">
+                  <label for="canvas_size"> canvas size: </label>
+                  <input type="number" min="0" max="10000" id="canvas_size" value="256"></input>
+              </div>
 
-            // make the canvas size big enough to both have the specified buffer around the glyph
-            // for "halo", and account for some glyphs possibly being larger than their font size
-            const size = this.size = fontSize + buffer * 4;
+              <hr style="width:100%;"/>
+              <button> copy font.h </button>
+              <button> copy font_config.json </button>
+          </div>
+      </div>
 
-            const canvas = this._createCanvas(size);
-            const ctx = this.ctx = canvas.getContext('2d', {willReadFrequently: true});
-            ctx.font = `${fontStyle} ${fontWeight} ${fontSize}px ${fontFamily}`;
+      <div id="code_out_box">
+          <pre id="code_out"></pre>
+      </div>
 
-            ctx.textBaseline = 'alphabetic';
-            ctx.textAlign = 'left'; // Necessary so that RTL text doesn't have different alignment
-            ctx.fillStyle = 'black';
+      <script>
 
-            // temporary arrays for the distance transform
-            this.gridOuter = new Float64Array(size * size);
-            this.gridInner = new Float64Array(size * size);
-            this.f = new Float64Array(size);
-            this.z = new Float64Array(size + 1);
-            this.v = new Uint16Array(size);
+/*
+[ ] drag drop font file
+
+[ ] emoji
+[ ] persist config in localStorage
+[ ] save config
+[ ] copy font.h
+[ ] drag drop config
+*/
+
+document.addEventListener('dragover', e => {
+    e.preventDefault();
+});
+
+document.addEventListener('drop', (e) => {
+    e.preventDefault();
+
+    console.log(e.dataTransfer.types, 'files: ', e.dataTransfer.files.length);
+
+    const file = e.dataTransfer.files[0];
+    console.log(file);
+    if (file) {
+        const file_type = file.type;
+        const file_name = file.name.split('.')[0];
+        const reader = new FileReader();
+
+        reader.onload = (event) => {
+            const f = new FontFace(file_name, `url(${event.target.result})`);
+            f.load().then(() => {
+                document.fonts.add(f);
+                font_family.value = file_name;
+                update();
+            });
         }
 
-        _createCanvas(size) {
-            const canvas = document.createElement('canvas');
-            canvas.width = canvas.height = size;
-            return canvas;
-        }
+        reader.readAsDataURL(file);
 
-        draw(char) {
-            const {
-                width: glyphAdvance,
-                actualBoundingBoxAscent,
-                actualBoundingBoxDescent,
-                actualBoundingBoxLeft,
-                actualBoundingBoxRight
-            } = this.ctx.measureText(char);
+        return;
+    }
+    alert("no file detected.");
+});
 
-            // The integer/pixel part of the top alignment is encoded in metrics.glyphTop
-            // The remainder is implicitly encoded in the rasterization
-            const glyphTop = Math.ceil(actualBoundingBoxAscent);
-            const glyphLeft = 0;
 
-            // If the glyph overflows the canvas size, it will be clipped at the bottom/right
-            const glyphWidth = Math.max(0, Math.min(this.size - this.buffer, Math.ceil(actualBoundingBoxRight - actualBoundingBoxLeft)));
-            const glyphHeight = Math.min(this.size - this.buffer, glyphTop + Math.ceil(actualBoundingBoxDescent));
+char_size     .oninput = () => update();
+canvas_size   .oninput = () => update();
+included_chars.oninput = () => update();
+font_family   .oninput = () => update();
 
-            const width = glyphWidth + 2 * this.buffer;
-            const height = glyphHeight + 2 * this.buffer;
+function update() {
+    const extract = element => isNaN(parseInt(element.value)) ? 0 : parseInt(element.value);
 
-            const len = Math.max(width * height, 0);
-            const data = new Uint8ClampedArray(len);
-            const glyph = {data, width, height, glyphWidth, glyphHeight, glyphTop, glyphLeft, glyphAdvance};
-            if (glyphWidth === 0 || glyphHeight === 0) return glyph;
+    /* maps character to location in spritesheet */
+    const sdfs = {};
+    const SDF_FONT_SIZE = extract(char_size);
 
-            const {ctx, buffer, gridInner, gridOuter} = this;
-            ctx.clearRect(buffer, buffer, glyphWidth, glyphHeight);
-            ctx.fillText(char, buffer, buffer + glyphTop);
-            const imgData = ctx.getImageData(buffer, buffer, glyphWidth, glyphHeight);
+    const chars = included_chars.value;
+    const font_canvas = document.getElementById('font_canvas');
+    font_canvas.width = font_canvas.height = extract(canvas_size);
+    const ctx = font_canvas.getContext('2d');
 
-            // Initialize grids outside the glyph range to alpha 0
-            gridOuter.fill(INF, 0, len);
-            gridInner.fill(0, 0, len);
+    const TinySDF = (() => {
+        const INF = 1e20;
 
-            for (let y = 0; y < glyphHeight; y++) {
-                for (let x = 0; x < glyphWidth; x++) {
-                    const a = imgData.data[4 * (y * glyphWidth + x) + 3] / 255; // alpha value
-                    if (a === 0) continue; // empty pixels
+        class TinySDF {
+            constructor({
+                fontSize = 24,
+                buffer = 3,
+                radius = 8,
+                cutoff = 0.25,
+                fontFamily = 'sans-serif',
+                fontWeight = 'normal',
+                fontStyle = 'normal'
+            } = {}) {
+                this.buffer = buffer;
+                this.cutoff = cutoff;
+                this.radius = radius;
 
-                    const j = (y + buffer) * width + x + buffer;
+                // make the canvas size big enough to both have the specified buffer around the glyph
+                // for "halo", and account for some glyphs possibly being larger than their font size
+                const size = this.size = fontSize + buffer * 4;
 
-                    if (a === 1) { // fully drawn pixels
-                        gridOuter[j] = 0;
-                        gridInner[j] = INF;
+                const canvas = this._createCanvas(size);
+                const ctx = this.ctx = canvas.getContext('2d', {willReadFrequently: true});
+                ctx.font = `${fontStyle} ${fontWeight} ${fontSize}px ${fontFamily}`;
 
-                    } else { // aliased pixels
-                        const d = 0.5 - a;
-                        gridOuter[j] = d > 0 ? d * d : 0;
-                        gridInner[j] = d < 0 ? d * d : 0;
+                ctx.textBaseline = 'alphabetic';
+                ctx.textAlign = 'left'; // Necessary so that RTL text doesn't have different alignment
+                ctx.fillStyle = 'black';
+
+                // temporary arrays for the distance transform
+                this.gridOuter = new Float64Array(size * size);
+                this.gridInner = new Float64Array(size * size);
+                this.f = new Float64Array(size);
+                this.z = new Float64Array(size + 1);
+                this.v = new Uint16Array(size);
+            }
+
+            _createCanvas(size) {
+                const canvas = document.createElement('canvas');
+                canvas.width = canvas.height = size;
+                return canvas;
+            }
+
+            draw(char) {
+                const {
+                    width: glyphAdvance,
+                    actualBoundingBoxAscent,
+                    actualBoundingBoxDescent,
+                    actualBoundingBoxLeft,
+                    actualBoundingBoxRight
+                } = this.ctx.measureText(char);
+
+                // The integer/pixel part of the top alignment is encoded in metrics.glyphTop
+                // The remainder is implicitly encoded in the rasterization
+                const glyphTop = Math.ceil(actualBoundingBoxAscent);
+                const glyphLeft = 0;
+
+                // If the glyph overflows the canvas size, it will be clipped at the bottom/right
+                const glyphWidth = Math.max(0, Math.min(this.size - this.buffer, Math.ceil(actualBoundingBoxRight - actualBoundingBoxLeft)));
+                const glyphHeight = Math.min(this.size - this.buffer, glyphTop + Math.ceil(actualBoundingBoxDescent));
+
+                const width = glyphWidth + 2 * this.buffer;
+                const height = glyphHeight + 2 * this.buffer;
+
+                const len = Math.max(width * height, 0);
+                const data = new Uint8ClampedArray(len);
+                const glyph = {data, width, height, glyphWidth, glyphHeight, glyphTop, glyphLeft, glyphAdvance};
+                if (glyphWidth === 0 || glyphHeight === 0) return glyph;
+
+                const {ctx, buffer, gridInner, gridOuter} = this;
+                ctx.clearRect(buffer, buffer, glyphWidth, glyphHeight);
+                ctx.fillText(char, buffer, buffer + glyphTop);
+                const imgData = ctx.getImageData(buffer, buffer, glyphWidth, glyphHeight);
+
+                // Initialize grids outside the glyph range to alpha 0
+                gridOuter.fill(INF, 0, len);
+                gridInner.fill(0, 0, len);
+
+                for (let y = 0; y < glyphHeight; y++) {
+                    for (let x = 0; x < glyphWidth; x++) {
+                        const a = imgData.data[4 * (y * glyphWidth + x) + 3] / 255; // alpha value
+                        if (a === 0) continue; // empty pixels
+
+                        const j = (y + buffer) * width + x + buffer;
+
+                        if (a === 1) { // fully drawn pixels
+                            gridOuter[j] = 0;
+                            gridInner[j] = INF;
+
+                        } else { // aliased pixels
+                            const d = 0.5 - a;
+                            gridOuter[j] = d > 0 ? d * d : 0;
+                            gridInner[j] = d < 0 ? d * d : 0;
+                        }
                     }
+                }
+
+                edt(gridOuter, 0, 0, width, height, width, this.f, this.v, this.z);
+                edt(gridInner, buffer, buffer, glyphWidth, glyphHeight, width, this.f, this.v, this.z);
+
+                for (let i = 0; i < len; i++) {
+                    const d = Math.sqrt(gridOuter[i]) - Math.sqrt(gridInner[i]);
+                    data[i] = Math.round(255 - 255 * (d / this.radius + this.cutoff));
+                }
+
+                return glyph;
+            }
+        }
+
+        // 2D Euclidean squared distance transform by Felzenszwalb & Huttenlocher https://cs.brown.edu/~pff/papers/dt-final.pdf
+        function edt(data, x0, y0, width, height, gridSize, f, v, z) {
+            for (let x = x0; x < x0 + width; x++) edt1d(data, y0 * gridSize + x, gridSize, height, f, v, z);
+            for (let y = y0; y < y0 + height; y++) edt1d(data, y * gridSize + x0, 1, width, f, v, z);
+        }
+
+        // 1D squared distance transform
+        function edt1d(grid, offset, stride, length, f, v, z) {
+            v[0] = 0;
+            z[0] = -INF;
+            z[1] = INF;
+            f[0] = grid[offset];
+
+            for (let q = 1, k = 0, s = 0; q < length; q++) {
+                f[q] = grid[offset + q * stride];
+                const q2 = q * q;
+                do {
+                    const r = v[k];
+                    s = (f[q] - f[r] + q2 - r * r) / (q - r) / 2;
+                } while (s <= z[k] && --k > -1);
+
+                k++;
+                v[k] = q;
+                z[k] = s;
+                z[k + 1] = INF;
+            }
+
+            for (let q = 0, k = 0; q < length; q++) {
+                while (z[k + 1] < q) k++;
+                const r = v[k];
+                const qr = q - r;
+                grid[offset + q * stride] = f[r] + qr * qr;
+            }
+        }
+
+        return TinySDF
+    })()
+
+    {
+        // Convert alpha-only to RGBA so we can use `putImageData` for building the composite bitmap
+        function makeRGBAImageData(alphaChannel, width, height) {
+            const imageData = ctx.createImageData(width, height);
+            for (let i = 0; i < alphaChannel.length; i++) {
+                imageData.data[4 * i + 0] = alphaChannel[i];
+                imageData.data[4 * i + 1] = alphaChannel[i];
+                imageData.data[4 * i + 2] = alphaChannel[i];
+                imageData.data[4 * i + 3] = 255;
+            }
+            return imageData;
+        }
+
+        const charWidths = Array.from({ length: chars.length }, _ => 0);
+
+        ctx.clearRect(0, 0, font_canvas.width, font_canvas.height);
+        const fontSize = +SDF_FONT_SIZE;
+        const fontWeight = +SDF_FONT_SIZE;
+        const fontStyle = 'normal';
+        const buffer = Math.ceil(fontSize / 8);
+        const radius = Math.ceil(fontSize / 3);
+        const sdf = new TinySDF({ fontFamily: font_family.value, fontSize, buffer, radius, fontWeight, fontStyle});
+        const size = fontSize + buffer * 2;
+
+        const bytes = [];
+
+        const now = performance.now();
+        let i = 0;
+        for (let y = 0; y + size <= font_canvas.height && i < chars.length; y += size) {
+            for (let x = 0; x + size <= font_canvas.width && i < chars.length; x += size) {
+                const glyph = sdf.draw(chars[i]);
+                const {data, width, height} = glyph;
+
+                const idx = bytes.length;
+                bytes.push(...data);
+
+                delete glyph.data;
+                sdfs[chars[i]] = { x, y, glyph, idx };
+                ctx.putImageData(makeRGBAImageData(data, width, height), x, y);
+                i++;
+            }
+        }
+        console.log(`${i} characters (${fontSize}px, font-weight: ${fontWeight} with ${buffer}px buffer) rendered in ${Math.round(performance.now() - now)}ms.`)
+
+        // return ctx.getImageData(0, 0, font_canvas.width, font_canvas.height)
+        {
+            const pre = document.getElementById('code_out');
+            pre.style.marginLeft = '0.5rem';
+            let body = '';
+            body += 'typedef struct {\n';
+            body += '  size_t x, y, size_x, size_y, data_start;\n';
+            body += '  float advance, top;\n';
+            body += '} font_LetterRegion;\n\n';
+            body += 'font_LetterRegion font_letter_regions[256] = {\n';
+            for (const [letter, data] of Object.entries(sdfs)) {
+                const x = ('' + data.x                 ).padStart(3);
+                const y = ('' + data.y                 ).padStart(3);
+                const w = ('' + data.glyph.width       ).padStart(3);
+                const h = ('' + data.glyph.height      ).padStart(3);
+                const i = ('' + data.idx               ).padStart(5);
+                const advance = data.glyph.glyphAdvance.toFixed(3).padStart(6);
+                const     top = data.glyph.glyphTop    .toFixed(3).padStart(6);
+                let char = `'${letter}'`;
+                if (letter == "'" ) char = "'\\''";
+                if (letter == "\\") char = "'\\\\'";
+                body += `    [${char.padEnd(4)}] = { ${x}, ${y}, ${w}, ${h}, ${i}, ${advance}, ${top} },\n`;
+            }
+            body += '};\n\n';
+
+            body += `#define font_TEX_SIZE_X ${font_canvas.width}\n`;
+            body += `#define font_TEX_SIZE_Y ${font_canvas.height}\n`;
+            body += `uint8_t font_tex_bytes[${bytes.length}] = {`;
+            outer:
+            for (let i = 0; true;) {
+                body += '\n    ';
+                for (let j = 0; j < 30; j++) {
+                    if (i >= bytes.length) { body += '\n'; break outer; }
+                    body += ('0x' + bytes[i++].toString(16)).padStart(5) + ',';
                 }
             }
 
-            edt(gridOuter, 0, 0, width, height, width, this.f, this.v, this.z);
-            edt(gridInner, buffer, buffer, glyphWidth, glyphHeight, width, this.f, this.v, this.z);
-
-            for (let i = 0; i < len; i++) {
-                const d = Math.sqrt(gridOuter[i]) - Math.sqrt(gridInner[i]);
-                data[i] = Math.round(255 - 255 * (d / this.radius + this.cutoff));
-            }
-
-            return glyph;
-        }
-    }
-
-    // 2D Euclidean squared distance transform by Felzenszwalb & Huttenlocher https://cs.brown.edu/~pff/papers/dt-final.pdf
-    function edt(data, x0, y0, width, height, gridSize, f, v, z) {
-        for (let x = x0; x < x0 + width; x++) edt1d(data, y0 * gridSize + x, gridSize, height, f, v, z);
-        for (let y = y0; y < y0 + height; y++) edt1d(data, y * gridSize + x0, 1, width, f, v, z);
-    }
-
-    // 1D squared distance transform
-    function edt1d(grid, offset, stride, length, f, v, z) {
-        v[0] = 0;
-        z[0] = -INF;
-        z[1] = INF;
-        f[0] = grid[offset];
-
-        for (let q = 1, k = 0, s = 0; q < length; q++) {
-            f[q] = grid[offset + q * stride];
-            const q2 = q * q;
-            do {
-                const r = v[k];
-                s = (f[q] - f[r] + q2 - r * r) / (q - r) / 2;
-            } while (s <= z[k] && --k > -1);
-
-            k++;
-            v[k] = q;
-            z[k] = s;
-            z[k + 1] = INF;
+            body += '};\n';
+            pre.textContent = body;
         }
 
-        for (let q = 0, k = 0; q < length; q++) {
-            while (z[k + 1] < q) k++;
-            const r = v[k];
-            const qr = q - r;
-            grid[offset + q * stride] = f[r] + qr * qr;
-        }
-    }
-
-    return TinySDF
-})()
-
-{
-    // Convert alpha-only to RGBA so we can use `putImageData` for building the composite bitmap
-    function makeRGBAImageData(alphaChannel, width, height) {
-        const imageData = ctx.createImageData(width, height);
-        for (let i = 0; i < alphaChannel.length; i++) {
-            imageData.data[4 * i + 0] = alphaChannel[i];
-            imageData.data[4 * i + 1] = alphaChannel[i];
-            imageData.data[4 * i + 2] = alphaChannel[i];
-            imageData.data[4 * i + 3] = 255;
-        }
-        return imageData;
-    }
-
-    const charWidths = Array.from({ length: chars.length }, _ => 0);
-
-    ctx.clearRect(0, 0, fontCanvas.width, fontCanvas.height);
-    const fontSize = +SDF_FONT_SIZE;
-    const fontWeight = +SDF_FONT_SIZE;
-    const fontStyle = 'normal';
-    const buffer = Math.ceil(fontSize / 8);
-    const radius = Math.ceil(fontSize / 3);
-    const sdf = new TinySDF({fontSize, buffer, radius, fontWeight, fontStyle});
-    const size = fontSize + buffer * 2;
-
-    const bytes = [];
-
-    const now = performance.now();
-    let i = 0;
-    for (let y = 0; y + size <= fontCanvas.height && i < chars.length; y += size) {
-        for (let x = 0; x + size <= fontCanvas.width && i < chars.length; x += size) {
-            const glyph = sdf.draw(chars[i]);
-            const {data, width, height} = glyph;
-
-            const idx = bytes.length;
-            bytes.push(...data);
-
-            delete glyph.data;
-            sdfs[chars[i]] = { x, y, glyph, idx };
-            ctx.putImageData(makeRGBAImageData(data, width, height), x, y);
-            i++;
-        }
-    }
-    console.log(`${i} characters (${fontSize}px, font-weight: ${fontWeight} with ${buffer}px buffer) rendered in ${Math.round(performance.now() - now)}ms.`)
-
-    // return ctx.getImageData(0, 0, fontCanvas.width, fontCanvas.height)
-    document.body.append(fontCanvas);
-    {
-        const pre = document.createElement('pre');
-        pre.style.marginLeft = '0.5rem';
-        let body = '';
-        body += 'typedef struct {\n';
-        body += '  size_t x, y, size_x, size_y, data_start;\n';
-        body += '  float advance, top;\n';
-        body += '} font_LetterRegion;\n\n';
-        body += 'font_LetterRegion font_letter_regions[256] = {\n';
-        for (const [letter, data] of Object.entries(sdfs)) {
-            const x = ('' + data.x                 ).padStart(3);
-            const y = ('' + data.y                 ).padStart(3);
-            const w = ('' + data.glyph.width       ).padStart(3);
-            const h = ('' + data.glyph.height      ).padStart(3);
-            const i = ('' + data.idx               ).padStart(5);
-            const advance = data.glyph.glyphAdvance.toFixed(3).padStart(6);
-            const     top = data.glyph.glyphTop    .toFixed(3).padStart(6);
-            let char = `'${letter}'`;
-            if (letter == "'" ) char = "'\\''";
-            if (letter == "\\") char = "'\\\\'";
-            body += `    [${char.padEnd(4)}] = { ${x}, ${y}, ${w}, ${h}, ${i}, ${advance}, ${top} },\n`;
-        }
-        body += '};\n\n';
-
-        body += `#define font_TEX_SIZE_X ${fontCanvas.width}\n`;
-        body += `#define font_TEX_SIZE_Y ${fontCanvas.height}\n`;
-        body += `uint8_t font_tex_bytes[${bytes.length}] = {`;
-        outer:
-        for (let i = 0; true;) {
-            body += '\n    ';
-            for (let j = 0; j < 30; j++) {
-                if (i >= bytes.length) { body += '\n'; break outer; }
-                body += ('0x' + bytes[i++].toString(16)).padStart(5) + ',';
-            }
-        }
-
-        body += '};\n';
-        pre.textContent = body;
-        document.body.append(pre);
+        /* technically they're not all float sized on 64-bit architectures; only on 32-bit like wasm */
+        const n_bytes = bytes.length + (Object.keys(sdfs).length * 7 * Float32Array.BYTES_PER_ELEMENT);
+        let size_readout = `${n_bytes} bytes`;
+        if (n_bytes > (1 << 10)) size_readout = `${n_bytes >> 10} KiB`;
+        if (n_bytes > (1 << 20)) size_readout = `${n_bytes >> 20} MiB`;
+        out_summary.textContent = `${font_canvas.width}x${font_canvas.height}, ${chars.length} glyphs, ${size_readout}`;
     }
 }
+
+update();
 
     </script>
   </body>
