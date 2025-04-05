@@ -14,7 +14,7 @@
 
 window.onload = () => {
   const canvas = document.querySelector("#glcanvas");
-  const gl = canvas.getContext("webgl");
+  const gl = canvas.getContext("webgl2");
 
   if (gl === null) {
     alert(
@@ -34,29 +34,35 @@ window.onload = () => {
      canvas.style.height = window.innerHeight + 'px';
    })();
 
-  const vsSource = `
-    attribute vec4 a_vpos;
-    attribute float a_palette_index;
+  const vsSource = `#version 300 es
+    precision mediump float;
 
-    varying float v_palette_index;
+    in vec4 a_vpos;
+    in float a_palette_index;
+
+    flat out int v_palette_index;
 
     void main(void) {
-      v_palette_index = a_palette_index;
+      v_palette_index = int(round(a_palette_index));
       gl_Position = a_vpos;
     }
   `;
 
-  const fsSource = `
-    varying lowp float v_palette_index;
+  const fsSource = `#version 300 es
+    precision mediump float;
+
+    flat in int v_palette_index;
+
+    out vec4 color;
 
     void main(void) {
-      gl_FragColor = vec4(1.0, 0.0, 1.0, 1.0);
-      if (0.0 == v_palette_index) gl_FragColor = vec4(0.8, 0.1, 0.1, 1.0);
-      if (1.0 == v_palette_index) gl_FragColor = vec4(0.1, 0.8, 0.1, 1.0);
-      if (2.0 == v_palette_index) gl_FragColor = vec4(0.1, 0.1, 0.8, 1.0);
-      if (3.0 == v_palette_index) gl_FragColor = vec4(1.0, 0.4, 0.4, 1.0);
-      if (4.0 == v_palette_index) gl_FragColor = vec4(0.4, 1.0, 0.4, 1.0);
-      if (5.0 == v_palette_index) gl_FragColor = vec4(0.4, 0.4, 1.0, 1.0);
+      color = vec4(1.0, 0.0, 1.0, 1.0);
+      if (0 == v_palette_index) color = vec4(0.8, 0.1, 0.1, 1.0);
+      if (1 == v_palette_index) color = vec4(0.1, 0.8, 0.1, 1.0);
+      if (2 == v_palette_index) color = vec4(0.1, 0.1, 0.8, 1.0);
+      if (3 == v_palette_index) color = vec4(1.0, 0.4, 0.4, 1.0);
+      if (4 == v_palette_index) color = vec4(0.4, 1.0, 0.4, 1.0);
+      if (5 == v_palette_index) color = vec4(0.4, 0.4, 1.0, 1.0);
 
       // gl_FragColor *= 0.6;
     }
@@ -203,20 +209,18 @@ window.onload = () => {
         ibuf = new Uint16Array(8192 / 2);
 
         function line(a, b, a_thick, b_thick, c, z_push=0) {
-          const aspect_ratio = gl.canvas.clientWidth / gl.canvas.clientHeight;
-
           mat4_transform_vec4(a, a, u_mvp);
           mat4_transform_vec4(b, b, u_mvp);
           
           const dx = b[0] - a[0];
           const dy = b[1] - a[1];
-          const nx = -dy; /* perp */
-          const ny = dx*aspect_ratio;
+          const nx = -dy;
+          const ny =  dx;
           const tlen = Math.sqrt(nx*nx + ny*ny);
           if (tlen <= 0) return;
-          let a_tx = nx/tlen * 0.5*a_thick / aspect_ratio;
+          let a_tx = nx/tlen * 0.5*a_thick;
           let a_ty = ny/tlen * 0.5*a_thick;
-          let b_tx = nx/tlen * 0.5*b_thick / aspect_ratio;
+          let b_tx = nx/tlen * 0.5*b_thick;
           let b_ty = ny/tlen * 0.5*b_thick;
 
           ibuf[ibuf_i++] = 0 + vbuf_i/5;
