@@ -1,0 +1,112 @@
+<!-- vim: sw=2 ts=2 expandtab smartindent ft=javascript
+-->
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Proximity Slider Demo</title>
+    <style>
+document, body { margin: 2rem; }
+
+#sorted_region {
+  display: flex;
+  flex-direction: row;
+  gap: 0.3rem;
+  flex-wrap: wrap;
+  width: 100%;
+}
+.box {
+  width: 5rem;
+  height: 5rem;
+  border-radius: 1.5rem;
+  background-color: navy;
+  aspect-ratio: 1;
+  color: white;
+  font-family: monospace;
+
+  font-size: 1rem;
+
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
+#proximity_slider {
+    width: 50rem;
+    height: 0.2rem;
+    margin: 2rem;
+    background-color: red;
+
+    position: relative;
+
+    #proximity_slider_handle {
+      position: relative;
+      height: 2rem;
+      translate: 0rem -1rem;
+      width: 2rem;
+      background-color: black;
+
+      color: white;
+      font-family: monospace;
+      font-size: 1.8rem;
+      padding: 0.2rem;
+
+      display: flex;
+      justify-content: center;
+      align-items: center;
+
+      &:hover {
+        scale: 1.2;
+        cursor: pointer;
+      }
+    }
+}
+
+</style>
+  </head>
+
+  <body>
+    <div id="proximity_slider">
+      <div id="proximity_slider_handle"> 0 </div>
+    </div>
+
+    <div id="sorted_region"></div>
+    <script>"use strict";
+
+const BOX_COUNT = 50;
+const entries = Array.from({ length: BOX_COUNT }, (_, i) => BOX_COUNT * Math.random());
+
+let mouse_down = false;
+proximity_slider_handle.onmousedown = () => mouse_down = true;
+window.onmouseup   = () => mouse_down = false;
+window.onmousedown = ev => ev.preventDefault();
+window.onmousemove = ev => {
+  ev.preventDefault();
+
+  if (mouse_down) {
+    const bounds = proximity_slider.getBoundingClientRect();
+    const x = Math.max(bounds.left, Math.min(bounds.right, ev.clientX));
+    const t = (x - bounds.x) / bounds.width;
+    const i = Math.round(t * BOX_COUNT);
+    proximity_slider_handle.textContent = i;
+    proximity_slider_handle.style.translate = `calc(${x - bounds.x}px - 50%) -1rem`;
+
+    render_sorted(i);
+  }
+};
+
+render_sorted(0);
+
+function render_sorted(goal) {
+  sorted_region.innerHTML = '';
+  entries.sort((a, b) => Math.abs(a - goal) - Math.abs(b - goal));
+  for (let i = 0; i < BOX_COUNT; i++) {
+    const div = document.createElement('div');
+    div.className = 'box'
+    div.textContent = entries[i].toFixed(1);
+    sorted_region.appendChild(div);
+  }
+}
+    </script>
+  </body>
+</html>
