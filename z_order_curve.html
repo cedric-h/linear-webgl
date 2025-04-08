@@ -234,47 +234,6 @@ requestAnimationFrame(function render(now) {
       let mouse = new DOMPoint(input.mouse_x, input.mouse_y);
       mouse = input.world_transform.transformPoint(mouse);
 
-      ctx.lineWidth = 15;
-      ctx.strokeStyle = 'magenta';
-      ctx.strokeRect(down.x, down.y, mouse.x - down.x, mouse.y - down.y);
-      ctx.fillStyle = 'rgba(255, 0, 255, 0.2)';
-      ctx.fillRect(down.x, down.y, mouse.x - down.x, mouse.y - down.y);
-
-      {
-        ctx.lineWidth = 2;
-        ctx.strokeStyle = 'green';
-        ctx.fillStyle = 'rgba(0, 255, 0, 0.2)';
-        ctx.fillRect(
-          Math.floor(down.x / TILE_SCALE) * TILE_SCALE,
-          Math.floor(down.y / TILE_SCALE) * TILE_SCALE,
-          TILE_SCALE,
-          TILE_SCALE
-        );
-
-        ctx.fillRect(
-          Math.floor(mouse.x / TILE_SCALE) * TILE_SCALE,
-          Math.floor(mouse.y / TILE_SCALE) * TILE_SCALE,
-          TILE_SCALE,
-          TILE_SCALE
-        );
-
-        ctx.lineWidth = 7;
-        ctx.strokeRect(
-          Math.floor(down.x / TILE_SCALE) * TILE_SCALE,
-          Math.floor(down.y / TILE_SCALE) * TILE_SCALE,
-          TILE_SCALE,
-          TILE_SCALE
-        );
-
-        ctx.strokeRect(
-          Math.floor(mouse.x / TILE_SCALE) * TILE_SCALE,
-          Math.floor(mouse.y / TILE_SCALE) * TILE_SCALE,
-          TILE_SCALE,
-          TILE_SCALE
-        );
-
-      }
-
       const min_x = Math.max(0, Math.floor(Math.min(down.x, mouse.x) / TILE_SCALE));
       const min_y = Math.max(0, Math.floor(Math.min(down.y, mouse.y) / TILE_SCALE));
 
@@ -293,8 +252,8 @@ requestAnimationFrame(function render(now) {
                     (((min_x >> 6) & 1) << 12) | 
                     (((min_y >> 6) & 1) << 13);
 
-      const max_x = Math.min(MAXIMUM_X_SUPPORTED, Math.ceil(Math.max(down.x, mouse.x) / TILE_SCALE));
-      const max_y = Math.min(MAXIMUM_Y_SUPPORTED, Math.ceil(Math.max(down.y, mouse.y) / TILE_SCALE));
+      const max_x = Math.min(MAXIMUM_X_SUPPORTED, Math.floor(Math.max(down.x, mouse.x) / TILE_SCALE));
+      const max_y = Math.min(MAXIMUM_Y_SUPPORTED, Math.floor(Math.max(down.y, mouse.y) / TILE_SCALE));
 
       const max_z = (((max_x >> 0) & 1) <<  0) | 
                     (((max_y >> 0) & 1) <<  1) | 
@@ -311,9 +270,38 @@ requestAnimationFrame(function render(now) {
                     (((max_x >> 6) & 1) << 12) | 
                     (((max_y >> 6) & 1) << 13);
 
+      ctx.lineWidth = 15;
+      ctx.strokeStyle = 'magenta';
+      ctx.strokeRect(
+        min_x * TILE_SCALE,
+        min_y * TILE_SCALE,
+        (max_x - min_x + 1) * TILE_SCALE,
+        (max_y - min_y + 1) * TILE_SCALE
+      );
+      ctx.fillStyle = 'rgba(255, 0, 255, 0.2)';
+      ctx.fillRect(
+        min_x * TILE_SCALE,
+        min_y * TILE_SCALE,
+        (max_x - min_x + 1) * TILE_SCALE,
+        (max_y - min_y + 1) * TILE_SCALE
+      );
+
+      {
+        ctx.lineWidth = 2;
+        ctx.strokeStyle = 'green';
+        ctx.fillStyle = 'rgba(0, 255, 0, 0.2)';
+        const s = TILE_SCALE;
+        ctx.fillRect((min_x + 0.1) * s, (min_y + 0.1) * s, s*0.8, s*0.8);
+        ctx.fillRect((max_x + 0.1) * s, (max_y + 0.1) * s, s*0.8, s*0.8);
+
+        ctx.lineWidth = 7;
+        ctx.strokeRect((min_x + 0.1) * s, (min_y + 0.1) * s, s*0.8, s*0.8);
+        ctx.strokeRect((max_x + 0.1) * s, (max_y + 0.1) * s, s*0.8, s*0.8);
+      }
+
 
       ctx.beginPath();
-      for (let i = min_z; i < max_z; i++) {
+      for (let i = min_z; i <= max_z; i++) {
         const tx = ((i & (1 <<  0)) >> 0) |
                    ((i & (1 <<  2)) >> 1) |
                    ((i & (1 <<  4)) >> 2) |
@@ -342,8 +330,8 @@ requestAnimationFrame(function render(now) {
       ctx.stroke();
 
       z_order_stats.style = "display:default;";
-      const tiles_in_z_order = max_z - min_z;
-      const tiles_in_box     = (max_x - min_x) * (max_y - min_y);
+      const tiles_in_z_order = max_z - min_z + 1;
+      const tiles_in_box     = (max_x - min_x + 1) * (max_y - min_y + 1);
       z_order_stats.children.tiles_in_z_order    .textContent = tiles_in_z_order;
       z_order_stats.children.tiles_in_box        .textContent = tiles_in_box    ;
       z_order_stats.children.tiles_accuracy      .textContent = (tiles_in_box / tiles_in_z_order * 100).toFixed(2) + '%';
