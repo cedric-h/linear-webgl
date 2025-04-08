@@ -1,0 +1,361 @@
+<!-- vim: sw=2 ts=2 expandtab smartindent ft=javascript
+-->
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Canvas Demo</title>
+    <style>
+document, body { margin: 0px; padding: 0px; overflow: hidden; }
+#hud {
+  position: absolute;
+  top: 0px;
+  left: 0px;
+  color: white;
+  font-family: monospace;
+  background-color: rgba(0, 0, 0, 0.5);
+  padding: 2rem;
+  width: 20rem;
+}
+    </style>
+  </head>
+
+  <body>
+    <canvas id="glcanvas"></canvas>
+    <div id="hud">
+      <p> right click and drag to see which tiles are in this z-order range!</p>
+      <div class="checkbox">
+          <label for="grid_enabled"> enable grid: </label>
+          <input  id="grid_enabled" type="checkbox"> </input>
+      </div>
+      <div id="z_order_stats" style="display:none;">
+        <hr/>
+        <span style="color:rgb(0, 255, 0);"  > tiles in z-order range:    </span> <span id="tiles_in_z_order">     0 </span> <br/>
+        <span style="color:rgb(255, 0, 255);"> tiles in box:              </span> <span id="tiles_in_box">         0 </span> <br/>
+        <span style="color:white;"           > percent in box:            </span> <span id="tiles_accuracy">       0 </span> <br/>
+        <span style="color:white;"           > percent of total in range: </span> <span id="tiles_total_in_range"> 0 </span> <br/>
+      </div>
+    </div>
+    <script>"use strict";
+
+const canvas = document.getElementById("glcanvas");
+const ctx = canvas.getContext('2d');
+(window.onresize = () => {
+   canvas.width = window.innerWidth*window.devicePixelRatio,
+   canvas.height = window.innerHeight*window.devicePixelRatio
+   canvas.style.width = window.innerWidth + 'px';
+   canvas.style.height = window.innerHeight + 'px';
+ })();
+
+const TILE_SCALE = 100;
+const MAXIMUM_X_SUPPORTED = (1 << 7) - 1;
+const MAXIMUM_Y_SUPPORTED = (1 << 7) - 1;
+const MAXIMUM_Z_SUPPORTED = 1 << 14;
+
+let input = {
+  cam: {
+    zoom: 0.5,
+    x: 0,// -TILE_SCALE*MAXIMUM_X_SUPPORTED*0.5,
+    y: 0,// -TILE_SCALE*MAXIMUM_Y_SUPPORTED*0.5
+  },
+  has_horizontal_scroll: false,
+  world_transform: null,
+
+  mouse_down: false,
+  cam_down_x: 0,
+  cam_down_y: 0,
+  mouse_down_x: 0,
+  mouse_down_y: 0,
+
+  mouse_rmb_down: false,
+  mouse_rmb_down_x: 0,
+  mouse_rmb_down_y: 0,
+
+  mouse_x: 0,
+  mouse_y: 0,
+};
+
+{
+  canvas.oncontextmenu = e => e.preventDefault();
+  canvas.onmousedown = e => {
+    if (e.button == 2) {
+      input.mouse_rmb_down_x = e.offsetX*window.devicePixelRatio;
+      input.mouse_rmb_down_y = e.offsetY*window.devicePixelRatio;
+      input.mouse_rmb_down = true;
+      e.preventDefault();
+      return;
+    }
+    input.mouse_down = true;
+    input.mouse_down_x = e.offsetX*window.devicePixelRatio;
+    input.mouse_down_y = e.offsetY*window.devicePixelRatio;
+    input.cam_down_x = input.cam.x;
+    input.cam_down_y = input.cam.y;
+  }
+  canvas.mouseleave = window.onmouseup = e => {
+    input.mouse_down = false;
+    input.mouse_rmb_down = false;
+  }
+  canvas.onmousemove = e => {
+    input.mouse_x = e.offsetX*window.devicePixelRatio;
+    input.mouse_y = e.offsetY*window.devicePixelRatio;
+    if (input.mouse_down) {
+      input.cam.x = input.cam_down_x + (input.mouse_x - input.mouse_down_x);
+      input.cam.y = input.cam_down_y + (input.mouse_y - input.mouse_down_y);
+    }
+  };
+  let wheelTimeout;
+  canvas.onwheel = e => {
+    e.preventDefault();
+
+    let delta_x = e.deltaX;
+    let delta_y = e.deltaY;
+    if (Math.abs(delta_x) > 0) {
+      input.has_horizontal_scroll = true;
+    }
+
+    clearTimeout(wheelTimeout);
+    wheelTimeout = setTimeout(() => input.has_horizontal_scroll = false, 200);
+
+    /* on trackpads, people expect vertical scrolling to pan instead of zoom.
+     * that's fine, except the only way I know of to tell if they're using a trackpad is ...
+     * did they ever do a horizontal zoom? */
+    if (input.has_horizontal_scroll && !e.ctrlKey && !e.shiftKey) {
+      input.cam.x -= delta_x;
+      input.cam.y -= delta_y;
+      return;
+    }
+    if (e.ctrlKey) {
+      /* also, if you ARE using a trackpad, ctrlKey is set to true for "pinch to zoom events,"
+       * and those are much weaker relative to typical scroll */
+      delta_y *= 10;
+    }
+
+    if (!input.world_transform) return;
+
+    const mouse = input.world_transform.transformPoint(new DOMPoint(input.mouse_x, input.mouse_y));
+
+    let next_zoom = input.cam.zoom * (1 - delta_y * 0.001);
+    next_zoom = Math.max(0.15, next_zoom);
+
+
+    /* offset camera.x such that it stays centered around the mouse,
+     * accounting for the new zoom */
+    {
+        const x_t = mouse.x / canvas.width;
+        const  nowSizeX = canvas.width * input.cam.zoom;
+        const nextSizeX = canvas.width * next_zoom;
+        const deltaX = nextSizeX - nowSizeX;
+        input.cam.x -= deltaX * x_t;
+    }
+
+    /* ditto on the Y axis; keep the mouse as the focal point */
+    {
+        const y_t = mouse.y / canvas.height;
+        const  nowSizeY = canvas.height * input.cam.zoom;
+        const nextSizeY = canvas.height * next_zoom;
+        const deltaY = nextSizeY - nowSizeY;
+        input.cam.y -= deltaY * y_t;
+    }
+
+    input.cam.zoom = next_zoom;
+  }
+}
+
+requestAnimationFrame(function render(now) {
+  requestAnimationFrame(render);
+
+  ctx.fillStyle = "black";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+
+  ctx.save();
+  {
+    ctx.fillStyle = "black";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    ctx.translate(input.cam.x, input.cam.y);
+    ctx.scale(input.cam.zoom, input.cam.zoom);
+    input.world_transform = ctx.getTransform().inverse();
+
+    /* grid */
+    if (grid_enabled.checked) {
+      const min = input.world_transform.transformPoint(new DOMPoint(0, 0));
+      const max = input.world_transform.transformPoint(new DOMPoint(canvas.width, canvas.height));
+      min.x = Math.floor(min.x/TILE_SCALE)*TILE_SCALE, min.y = Math.floor(min.y/TILE_SCALE)*TILE_SCALE;
+      max.x =  Math.ceil(max.x/TILE_SCALE)*TILE_SCALE, max.y =  Math.ceil(max.y/TILE_SCALE)*TILE_SCALE;
+
+      ctx.fillStyle = "red";
+      ctx.lineWidth = 2;
+
+      for (let y = Math.floor(min.y); y < Math.ceil(max.y); y += TILE_SCALE) {
+        ctx.fillRect(min.x, y - 1, max.x - min.x, 2);
+      }
+
+      for (let x = Math.floor(min.x); x < Math.ceil(max.x); x += TILE_SCALE) {
+        ctx.fillRect(x - 1, min.y, 2, max.x - min.x);
+      }
+    }
+
+    {
+      ctx.beginPath();
+      ctx.moveTo(0, 0);
+      for (let i = 0; i < MAXIMUM_Z_SUPPORTED; i++) {
+        const tx = ((i & (1 <<  0)) >> 0) |
+                   ((i & (1 <<  2)) >> 1) |
+                   ((i & (1 <<  4)) >> 2) |
+                   ((i & (1 <<  6)) >> 3) |
+                   ((i & (1 <<  8)) >> 4) |
+                   ((i & (1 << 10)) >> 5) |
+                   ((i & (1 << 12)) >> 6);
+
+        const ty = ((i & (1 <<  1)) >> 1) |
+                   ((i & (1 <<  3)) >> 2) |
+                   ((i & (1 <<  5)) >> 3) |
+                   ((i & (1 <<  7)) >> 4) |
+                   ((i & (1 <<  9)) >> 5) |
+                   ((i & (1 << 11)) >> 6) |
+                   ((i & (1 << 13)) >> 7);
+
+        const x = (tx + 0.5) * TILE_SCALE;
+        const y = (ty + 0.5) * TILE_SCALE;
+        ctx.lineTo(x, y);
+      }
+      ctx.strokeStyle = 'blue';
+      ctx.lineWidth = 5;
+      ctx.stroke();
+    }
+
+    z_order_stats.style = "display:none;";
+
+    if (input.mouse_rmb_down) {
+      let down = new DOMPoint(input.mouse_rmb_down_x, input.mouse_rmb_down_y);
+      down = input.world_transform.transformPoint(down);
+
+      let mouse = new DOMPoint(input.mouse_x, input.mouse_y);
+      mouse = input.world_transform.transformPoint(mouse);
+
+      ctx.lineWidth = 15;
+      ctx.strokeStyle = 'magenta';
+      ctx.strokeRect(down.x, down.y, mouse.x - down.x, mouse.y - down.y);
+      ctx.fillStyle = 'rgba(255, 0, 255, 0.2)';
+      ctx.fillRect(down.x, down.y, mouse.x - down.x, mouse.y - down.y);
+
+      {
+        ctx.lineWidth = 2;
+        ctx.strokeStyle = 'green';
+        ctx.fillStyle = 'rgba(0, 255, 0, 0.2)';
+        ctx.fillRect(
+          Math.floor(down.x / TILE_SCALE) * TILE_SCALE,
+          Math.floor(down.y / TILE_SCALE) * TILE_SCALE,
+          TILE_SCALE,
+          TILE_SCALE
+        );
+
+        ctx.fillRect(
+          Math.floor(mouse.x / TILE_SCALE) * TILE_SCALE,
+          Math.floor(mouse.y / TILE_SCALE) * TILE_SCALE,
+          TILE_SCALE,
+          TILE_SCALE
+        );
+
+        ctx.lineWidth = 7;
+        ctx.strokeRect(
+          Math.floor(down.x / TILE_SCALE) * TILE_SCALE,
+          Math.floor(down.y / TILE_SCALE) * TILE_SCALE,
+          TILE_SCALE,
+          TILE_SCALE
+        );
+
+        ctx.strokeRect(
+          Math.floor(mouse.x / TILE_SCALE) * TILE_SCALE,
+          Math.floor(mouse.y / TILE_SCALE) * TILE_SCALE,
+          TILE_SCALE,
+          TILE_SCALE
+        );
+
+      }
+
+      const min_x = Math.max(0, Math.floor(Math.min(down.x, mouse.x) / TILE_SCALE));
+      const min_y = Math.max(0, Math.floor(Math.min(down.y, mouse.y) / TILE_SCALE));
+
+      const min_z = (((min_x >> 0) & 1) <<  0) | 
+                    (((min_y >> 0) & 1) <<  1) | 
+                    (((min_x >> 1) & 1) <<  2) | 
+                    (((min_y >> 1) & 1) <<  3) | 
+                    (((min_x >> 2) & 1) <<  4) | 
+                    (((min_y >> 2) & 1) <<  5) | 
+                    (((min_x >> 3) & 1) <<  6) | 
+                    (((min_y >> 3) & 1) <<  7) | 
+                    (((min_x >> 4) & 1) <<  8) | 
+                    (((min_y >> 4) & 1) <<  9) | 
+                    (((min_x >> 5) & 1) << 10) | 
+                    (((min_y >> 5) & 1) << 11) | 
+                    (((min_x >> 6) & 1) << 12) | 
+                    (((min_y >> 6) & 1) << 13);
+
+      const max_x = Math.min(MAXIMUM_X_SUPPORTED, Math.ceil(Math.max(down.x, mouse.x) / TILE_SCALE));
+      const max_y = Math.min(MAXIMUM_Y_SUPPORTED, Math.ceil(Math.max(down.y, mouse.y) / TILE_SCALE));
+
+      const max_z = (((max_x >> 0) & 1) <<  0) | 
+                    (((max_y >> 0) & 1) <<  1) | 
+                    (((max_x >> 1) & 1) <<  2) | 
+                    (((max_y >> 1) & 1) <<  3) | 
+                    (((max_x >> 2) & 1) <<  4) | 
+                    (((max_y >> 2) & 1) <<  5) | 
+                    (((max_x >> 3) & 1) <<  6) | 
+                    (((max_y >> 3) & 1) <<  7) | 
+                    (((max_x >> 4) & 1) <<  8) | 
+                    (((max_y >> 4) & 1) <<  9) | 
+                    (((max_x >> 5) & 1) << 10) | 
+                    (((max_y >> 5) & 1) << 11) | 
+                    (((max_x >> 6) & 1) << 12) | 
+                    (((max_y >> 6) & 1) << 13);
+
+
+      ctx.beginPath();
+      for (let i = min_z; i < max_z; i++) {
+        const tx = ((i & (1 <<  0)) >> 0) |
+                   ((i & (1 <<  2)) >> 1) |
+                   ((i & (1 <<  4)) >> 2) |
+                   ((i & (1 <<  6)) >> 3) |
+                   ((i & (1 <<  8)) >> 4) |
+                   ((i & (1 << 10)) >> 5) |
+                   ((i & (1 << 12)) >> 6);
+
+        const ty = ((i & (1 <<  1)) >> 1) |
+                   ((i & (1 <<  3)) >> 2) |
+                   ((i & (1 <<  5)) >> 3) |
+                   ((i & (1 <<  7)) >> 4) |
+                   ((i & (1 <<  9)) >> 5) |
+                   ((i & (1 << 11)) >> 6) |
+                   ((i & (1 << 13)) >> 7);
+
+        const x = (tx + 0.5) * TILE_SCALE;
+        const y = (ty + 0.5) * TILE_SCALE;
+        if (i == min_z)
+          ctx.moveTo(x, y);
+        else
+          ctx.lineTo(x, y);
+      }
+      ctx.strokeStyle = 'green';
+      ctx.lineWidth = 5;
+      ctx.stroke();
+
+      z_order_stats.style = "display:default;";
+      const tiles_in_z_order = max_z - min_z;
+      const tiles_in_box     = (max_x - min_x) * (max_y - min_y);
+      z_order_stats.children.tiles_in_z_order    .textContent = tiles_in_z_order;
+      z_order_stats.children.tiles_in_box        .textContent = tiles_in_box    ;
+      z_order_stats.children.tiles_accuracy      .textContent = (tiles_in_box / tiles_in_z_order * 100).toFixed(2) + '%';
+      z_order_stats.children.tiles_total_in_range.textContent = (tiles_in_z_order / MAXIMUM_Z_SUPPORTED * 100).toFixed(2) + '%';
+    }
+
+  }
+  ctx.restore();
+})
+
+function lerp(v0, v1, t) { return (1 - t) * v0 + t * v1; }
+function inv_lerp(min, max, p) { return (p - min) / (max - min); }
+    </script>
+  </body>
+</html>

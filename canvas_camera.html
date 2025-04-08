@@ -52,6 +52,7 @@ let input = {
       input.cam.y = input.cam_down_y + (input.mouse_y - input.mouse_down_y);
     }
   };
+  let wheelTimeout;
   canvas.onwheel = e => {
     e.preventDefault();
 
@@ -60,6 +61,9 @@ let input = {
     if (Math.abs(delta_x) > 0) {
       input.has_horizontal_scroll = true;
     }
+
+    clearTimeout(wheelTimeout);
+    wheelTimeout = setTimeout(() => input.has_horizontal_scroll = false, 200);
 
     /* on trackpads, people expect vertical scrolling to pan instead of zoom.
      * that's fine, except the only way I know of to tell if they're using a trackpad is ...
@@ -112,16 +116,31 @@ requestAnimationFrame(function render(now) {
   ctx.fillStyle = "black";
   ctx.fillRect(0, 0, canvas.width, canvas.height);
 
+  const TILE_SCALE = 100;
+
   ctx.save();
   {
     ctx.translate(input.cam.x, input.cam.y);
     ctx.scale(input.cam.zoom, input.cam.zoom);
     input.world_transform = ctx.getTransform().inverse();
 
-    ctx.translate(canvas.width/2, canvas.height/2);
+    {
+      const min = input.world_transform.transformPoint(new DOMPoint(0, 0));
+      const max = input.world_transform.transformPoint(new DOMPoint(canvas.width, canvas.height));
+      min.x = Math.floor(min.x/TILE_SCALE)*TILE_SCALE, min.y = Math.floor(min.y/TILE_SCALE)*TILE_SCALE;
+      max.x =  Math.ceil(max.x/TILE_SCALE)*TILE_SCALE, max.y =  Math.ceil(max.y/TILE_SCALE)*TILE_SCALE;
 
-    ctx.fillStyle = "red";
-    ctx.fillRect(-50, -50, 100, 100);
+      ctx.fillStyle = "red";
+
+      for (let y = Math.floor(min.y); y < Math.ceil(max.y); y += TILE_SCALE) {
+        ctx.fillRect(min.x, y - 1, max.x - min.x, 2);
+      }
+
+      for (let x = Math.floor(min.x); x < Math.ceil(max.x); x += TILE_SCALE) {
+        ctx.fillRect(x - 1, min.y, 2, max.x - min.x);
+      }
+    }
+
   }
   ctx.restore();
 })
