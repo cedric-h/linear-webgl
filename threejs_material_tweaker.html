@@ -1,0 +1,676 @@
+<!DOCTYPE html>
+<html lang="en">
+    <head>
+        <meta charset="utf-8">
+        <title>Tweaker v0.1</title>
+        <style>
+            document, body { margin: 0px; padding: 0px; }
+            canvas { display: block; width: 100%; height: 100%; }
+            #hud {
+                padding: 0.5rem;
+                position: absolute;
+                top: 0px;
+                left: 0px;
+                display: flex;
+                flex-direction: column;
+                gap: 0.5rem;
+                select, button {
+                    font-size: 1.4rem;
+                }
+                z-index: 5;
+            }
+            
+            #drop_it {
+                font-size: 5rem;
+                position: absolute;
+                width: 100%;
+                height: 100%;
+                padding: auto;
+            }
+        </style>
+    </head>
+    <body>
+
+        <div style="display:none" id="hud">
+            <button id="material_download"> download json! </button>
+            <button id="material_new"> new material </button>
+            <button id="material_delete"> delete material </button>
+            <select id="material_select">
+            </select>
+            </div>
+        </div>
+
+        <div id="drop_it">
+            Drop your folder of images here!
+        </div>
+
+        </script>
+
+        <script type="importmap">
+            {
+                "imports": {
+                    "three": "https://threejs.org/build/three.module.js",
+                    "three/addons/": "https://threejs.org/examples/jsm/"
+                }
+            }
+        </script>
+
+        <script type="module">
+import * as THREE from 'three';
+import { GUI } from 'three/addons/libs/lil-gui.module.min.js';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+
+const material_loader = new THREE.MaterialLoader();
+
+const images = await new Promise(res => {
+
+    window.ondragover = ev => ev.preventDefault();
+    window.ondrop = async ev => {
+      // Prevent default behavior (Prevent file from being opened)
+      ev.preventDefault();
+
+      let images = {};
+
+      drop_it.textContent = 'loading';
+
+      let image_loads = [];
+      async function search_for_png(fh, path = '') {
+          if (!fh) return;
+          if (fh.kind != "directory") return;
+          path += fh.name + '/';
+          if (fh.name == "Source") {
+              console.warn("ignoring ", path, " as it contains \"Source\"");
+              return;
+          }
+
+          for await (const [name, child_fh] of fh) {
+              if (child_fh.name.endsWith(".png")) image_loads.push(
+                  new Promise(res => {
+                      const reader = new FileReader();
+
+                      reader.addEventListener("load", ev => {
+                          const img = new Image();
+                          img.src = reader.result;
+                          img.onload = async () => {
+                              const name = path + child_fh.name;
+                              const uuid = name;
+
+                              const tex = new THREE.Texture(img);
+                              tex.uuid = uuid;
+                              tex.colorSpace = THREE.SRGBColorSpace;
+                              tex.needsUpdate = true;
+
+                              material_loader.textures[uuid] = tex;
+                              images[name] = tex;
+
+                              res();
+                          };
+                      }, false);
+
+                      child_fh.getFile().then(blob => reader.readAsDataURL(blob));
+                  })
+              );
+
+              await search_for_png(child_fh, path);
+          }
+      }
+
+      const items = [...ev.dataTransfer.items];
+      await Promise.all(items.map(item => item.getAsFileSystemHandle().then(search_for_png)));
+      await Promise.all(image_loads);
+
+      window.ondragover = () => {};
+      window.ondrop = () => {};
+
+      const keys = Object.keys(images).sort();
+      images = { none: null, ...Object.fromEntries(keys.map(k => [k, images[k]])) };
+      res(images);
+    }
+});
+
+window.ondragover = ev => ev.preventDefault();
+window.ondrop = async ev => {
+    ev.preventDefault();
+
+    const file = ev.dataTransfer.files[0];
+    if (!file.name.endsWith('.json')) {
+        console.log(`Ignoring ${file.name}, it's not a .json!`);
+        return;
+    }
+
+    cancelAnimationFrame(animFrame);
+    save = JSON.parse(await file.text());
+    await save_write();
+    location.reload();
+};
+
+const save_db = (() => {
+    let _db;
+
+    /* load the db once, then cache it */
+    const _db_load = new Promise(res => {
+        const req = indexedDB.open("cedcraft_data", 1);
+        req.onupgradeneeded = () => {
+            const db = event.target.result;
+            db.createObjectStore("saves", { keyPath: "save_name" });
+        };
+        req.onsuccess = e => {
+            _db = e.target.result;
+            res(e.target.result);
+        }
+    });
+
+    return async () => (_db ?? await _db_load);
+})();
+
+function save_write() {
+
+    return new Promise(async res => {
+        const db = await save_db();
+
+        db
+            .transaction(["saves"], "readwrite")
+            .objectStore("saves")
+            .put({ ...save, save_name: 'default' })
+            .onsuccess = res;
+    });
+}
+
+function save_read() {
+    return new Promise(async res => {
+        (await save_db())
+            .transaction(["saves"])
+            .objectStore("saves")
+            .get("default")
+            .onsuccess = e => {
+                if (e.target.result == undefined) {
+                    res(save_default());
+                    return;
+                }
+
+                console.log(e.target.result);
+                res(e.target.result);
+            };
+    });
+}
+
+function save_default() {
+    const base = {
+        AluminumAnodized: {
+            map: "EML_Metals/EML_AluminIumAnodized_V1/EML_AlumininumAnodized_V1_BaseColor.png",
+            bumpMap: "EML_Metals/EML_AluminIumAnodized_V1/EML_AlumininumAnodized_V1_Height.png",
+            metalnessMap: "EML_Metals/EML_AluminIumAnodized_V1/EML_AlumininumAnodized_V1_Metallic.png",
+            // normalMap: "EML_Metals/EML_AluminIumAnodized_V1/EML_AlumininumAnodized_V1_Normal.png",
+            roughnessMap: "EML_Metals/EML_AluminIumAnodized_V1/EML_AlumininumAnodized_V1_Roughness.png",
+        },
+
+        Aluminum: {
+            map: "EML_Metals/EML_Aluminium_V1/EML_Aluminium_V1_BaseColor.png",
+            bumpMap: "EML_Metals/EML_Aluminium_V1/EML_Aluminium_V1_Height.png",
+            metalnessMap: "EML_Metals/EML_Aluminium_V1/EML_Aluminium_V1_Metallic.png",
+            // normalMap: "EML_Metals/EML_Aluminium_V1/EML_Aluminium_V1_Normal.png",
+            roughnessMap: "EML_Metals/EML_Aluminium_V1/EML_Aluminium_V1_Roughness.png",
+        },
+
+        Brass: {
+            map: "EML_Metals/EML_Brass_V1/EML_Brass_V1_BaseColor.png",
+            bumpMap: "EML_Metals/EML_Brass_V1/EML_Brass_V1_Height.png",
+            metalnessMap: "EML_Metals/EML_Brass_V1/EML_Brass_V1_Metallic.png",
+            // normalMap: "EML_Metals/EML_Brass_V1/EML_Brass_V1_Normal.png",
+            roughnessMap: "EML_Metals/EML_Brass_V1/EML_Brass_V1_Roughness.png",
+        },
+
+        Copper: {
+            map: "EML_Metals/EML_Copper_V1/EML_Copper_V1_BaseColor.png",
+            bumpMap: "EML_Metals/EML_Copper_V1/EML_Copper_V1_Height.png",
+            metalnessMap: "EML_Metals/EML_Copper_V1/EML_Copper_V1_Metallic.png",
+            // normalMap: "EML_Metals/EML_Copper_V1/EML_Copper_V1_Normal.png",
+            roughnessMap: "EML_Metals/EML_Copper_V1/EML_Copper_V1_Roughness.png",
+        },
+
+        SteelBrushed: {
+            map: "EML_Metals/EML_SteelBrushed_v1/EML_SteelBrushed_V1_BaseColor.png",
+            bumpMap: "EML_Metals/EML_SteelBrushed_v1/EML_SteelBrushed_V1_Height.png",
+            metalnessMap: "EML_Metals/EML_SteelBrushed_v1/EML_SteelBrushed_V1_Metallic.png",
+            // normalMap: "EML_Metals/EML_SteelBrushed_v1/EML_SteelBrushed_V1_Normal.png",
+            roughnessMap: "EML_Metals/EML_SteelBrushed_v1/EML_SteelBrushed_V1_Roughness.png",
+        },
+
+        SteelGalvanized: {
+            map: "EML_Metals/EML_SteelGalvanized_V1/EML_SteelGalvanized_V1_Height.png",
+            bumpMap: "EML_Metals/EML_SteelGalvanized_V1/EML_SteelGalvanized_V1_Metallic.png",
+            metalnessMap: "EML_Metals/EML_SteelGalvanized_V1/EML_SteelGalvanized_V1_Normal.png",
+            // normalMap: "EML_Metals/EML_SteelGalvanized_V1/EML_SteelGalvanized_V1_Roughness.png",
+            roughnessMap: "EML_Metals/EML_SteelGalvanized_V1/SteelGalvanized_V1_BaseColor.png",
+        },
+
+        SteelPainted: {
+            map: "EML_Metals/EML_SteelPainted_V1/EML_SteelPaintedV1_Height.png",
+            bumpMap: "EML_Metals/EML_SteelPainted_V1/EML_SteelPainted_V1_BaseColor.png",
+            metalnessMap: "EML_Metals/EML_SteelPainted_V1/EML_SteelPainted_V1_Metallic.png",
+            // normalMap: "EML_Metals/EML_SteelPainted_V1/EML_SteelPainted_V1_Normal.png",
+            roughnessMap: "EML_Metals/EML_SteelPainted_V1/EML_SteelPainted_V1_Roughness.png",
+        },
+
+        SteelPowderCoated: {
+            map: "EML_Metals/EML_SteelPowderCoated_V1/EML_SteelPowderCoated_V1_BaseColor.png",
+            bumpMap: "EML_Metals/EML_SteelPowderCoated_V1/EML_SteelPowderCoated_V1_Height.png",
+            metalnessMap: "EML_Metals/EML_SteelPowderCoated_V1/EML_SteelPowderCoated_V1_Metallic.png",
+            // normalMap: "EML_Metals/EML_SteelPowderCoated_V1/EML_SteelPowderCoated_V1_Normal.png",
+            roughnessMap: "EML_Metals/EML_SteelPowderCoated_V1/EML_SteelPowderCoated_V1_Roughness.png"
+        }
+    };
+
+    const ret = { materials: {} };
+
+    for (const [name, maps] of Object.entries(base)) {
+        const m = new THREE.MeshPhysicalMaterial();
+        m.roughness = m.metalness = 1;
+
+        m.map          = material_loader.textures[maps.map         ];
+        m.bumpMap      = material_loader.textures[maps.bumpMap     ];
+        m.metalnessMap = material_loader.textures[maps.metalnessMap];
+        // m.normalMap    = material_loader.textures[maps.normalMap   ];
+        m.roughnessMap = material_loader.textures[maps.roughnessMap];
+
+        ret.materials[name] = m.toJSON();
+    }
+
+    return ret;
+}
+
+
+const LOCAL_STORAGE_KEY = "material_tweaker";
+let save = await save_read();
+
+setInterval(() => save_write(), 1000);
+
+{
+    material_download.onclick = () => {
+        const a = document.createElement("a");
+        a.href = URL.createObjectURL(new Blob([JSON.stringify(save)], { type: "application/json" }));
+        a.download = "materials.json";
+        a.click();
+    };
+
+    material_new.onclick = () => {
+        const key = prompt("name material:");
+        save.materials[key] = {};
+        render_material_select();
+        material_select.value = key;
+    };
+
+    material_delete.onclick = () => {
+        if (Object.keys(save.materials[material_select.value]).length == 1) {
+            alert("I'm not going to let you delete your last and only material.");
+            return;
+        }
+
+        delete save.materials[material_select.value];
+        render_material_select();
+        save_write();
+    };
+
+    material_select.oninput = () => {
+        mesh.material.copy(material_loader.parse(save.materials[material_select.value]));
+
+        if (mesh.material.map            ) mesh.material.map            .needsUpdate = true;
+        if (mesh.material.roughnessMap   ) mesh.material.roughnessMap   .needsUpdate = true;
+        if (mesh.material.metalnessMap   ) mesh.material.metalnessMap   .needsUpdate = true;
+        if (mesh.material.normalMap      ) mesh.material.normalMap      .needsUpdate = true;
+        if (mesh.material.bumpMap        ) mesh.material.bumpMap        .needsUpdate = true;
+        if (mesh.material.displacementMap) mesh.material.displacementMap.needsUpdate = true;
+        if (mesh.material.aoMap          ) mesh.material.aoMap          .needsUpdate = true;
+
+        mesh.material.needsUpdate = true;
+
+        window.gui.folders.find(x => x.$title.textContent == "THREE.MeshPhysicalMaterial").destroy();
+        guiMeshPhysicalMaterial(window.gui, mesh, mesh.material, mesh.geometry);
+    };
+
+    function render_material_select() {
+        material_select.innerHTML = '';
+
+        for (const el of Object.keys(save.materials)) {
+            const option = document.createElement("option");
+            option.textContent = el;
+            option.value = el;
+            material_select.append(option);
+        }
+    };
+
+    render_material_select();
+}
+
+hud.style = '';
+drop_it.style = 'display: none;';
+
+const constants = {
+
+  combine: {
+
+    'THREE.MultiplyOperation': THREE.MultiplyOperation,
+    'THREE.MixOperation': THREE.MixOperation,
+    'THREE.AddOperation': THREE.AddOperation
+
+  },
+
+  side: {
+
+    'THREE.FrontSide': THREE.FrontSide,
+    'THREE.BackSide': THREE.BackSide,
+    'THREE.DoubleSide': THREE.DoubleSide
+
+  },
+
+  blendingMode: {
+
+    'THREE.NoBlending': THREE.NoBlending,
+    'THREE.NormalBlending': THREE.NormalBlending,
+    'THREE.AdditiveBlending': THREE.AdditiveBlending,
+    'THREE.SubtractiveBlending': THREE.SubtractiveBlending,
+    'THREE.MultiplyBlending': THREE.MultiplyBlending,
+    'THREE.CustomBlending': THREE.CustomBlending
+
+  },
+
+  equations: {
+
+    'THREE.AddEquation': THREE.AddEquation,
+    'THREE.SubtractEquation': THREE.SubtractEquation,
+    'THREE.ReverseSubtractEquation': THREE.ReverseSubtractEquation
+
+  },
+
+  destinationFactors: {
+
+    'THREE.ZeroFactor': THREE.ZeroFactor,
+    'THREE.OneFactor': THREE.OneFactor,
+    'THREE.SrcColorFactor': THREE.SrcColorFactor,
+    'THREE.OneMinusSrcColorFactor': THREE.OneMinusSrcColorFactor,
+    'THREE.SrcAlphaFactor': THREE.SrcAlphaFactor,
+    'THREE.OneMinusSrcAlphaFactor': THREE.OneMinusSrcAlphaFactor,
+    'THREE.DstAlphaFactor': THREE.DstAlphaFactor,
+    'THREE.OneMinusDstAlphaFactor': THREE.OneMinusDstAlphaFactor
+
+  },
+
+  sourceFactors: {
+
+    'THREE.DstColorFactor': THREE.DstColorFactor,
+    'THREE.OneMinusDstColorFactor': THREE.OneMinusDstColorFactor,
+    'THREE.SrcAlphaSaturateFactor': THREE.SrcAlphaSaturateFactor
+
+  }
+
+};
+
+const textureLoader = new THREE.TextureLoader();
+const cubeTextureLoader = new THREE.CubeTextureLoader();
+
+let envMaps       = { ...images };
+let diffuseMaps   = { ...images };
+let alphaMaps     = { ...images };
+let roughnessMaps = { ...images };
+
+const mapKeys = Object.keys(images);
+
+function handleColorChange( color ) {
+
+  return function ( value ) {
+
+    if ( typeof value === 'string' ) {
+
+      value = value.replace( '#', '0x' );
+
+    }
+
+    color.setHex( value );
+
+  };
+
+}
+
+function needsUpdate( material, geometry ) {
+
+  return function () {
+
+    material.side = parseInt( material.side ); //Ensure number
+    material.needsUpdate = true;
+    geometry.attributes.position.needsUpdate = true;
+    geometry.attributes.normal.needsUpdate = true;
+
+  };
+
+}
+
+function updateCombine( material ) {
+
+  return function ( combine ) {
+
+    material.combine = parseInt( combine );
+    material.needsUpdate = true;
+
+  };
+
+}
+
+function updateTexture( material, materialKey, textures ) {
+
+  return function ( key ) {
+
+    material[ materialKey ] = textures[ key ];
+    material.needsUpdate = true;
+
+  };
+
+}
+
+function guiScene( gui, scene ) {
+
+  const folder = gui.addFolder( 'Scene' );
+
+  const data = {
+    background: '#000000',
+    'ambient light': ambientLight.color.getHex()
+  };
+
+  folder.addColor( data, 'ambient light' ).onChange( handleColorChange( ambientLight.color ) );
+
+  guiSceneFog( folder, scene );
+
+}
+
+function guiSceneFog( folder, scene ) {
+
+  const fogFolder = folder.addFolder( 'scene.fog' );
+
+  const fog = new THREE.Fog( 0x3f7b9d, 0, 60 );
+
+  const data = {
+    fog: {
+      'THREE.Fog()': false,
+      'scene.fog.color': fog.color.getHex()
+    }
+  };
+
+  fogFolder.add( data.fog, 'THREE.Fog()' ).onChange( function ( useFog ) {
+
+    if ( useFog ) {
+
+      scene.fog = fog;
+
+    } else {
+
+      scene.fog = null;
+
+    }
+
+  } );
+
+  fogFolder.addColor( data.fog, 'scene.fog.color' ).onChange( handleColorChange( fog.color ) );
+
+}
+
+function guiMaterial( gui, mesh, material, geometry ) {
+
+  const folder = gui.addFolder( 'THREE.Material' );
+
+  folder.add( material, 'transparent' ).onChange( needsUpdate( material, geometry ) );
+  folder.add( material, 'opacity', 0, 1 ).step( 0.01 );
+  // folder.add( material, 'blending', constants.blendingMode );
+  // folder.add( material, 'blendSrc', constants.destinationFactors );
+  // folder.add( material, 'blendDst', constants.destinationFactors );
+  // folder.add( material, 'blendEquation', constants.equations );
+  folder.add( material, 'depthTest' );
+  folder.add( material, 'depthWrite' );
+  // folder.add( material, 'polygonOffset' );
+  // folder.add( material, 'polygonOffsetFactor' );
+  // folder.add( material, 'polygonOffsetUnits' );
+  folder.add( material, 'alphaTest', 0, 1 ).step( 0.01 ).onChange( needsUpdate( material, geometry ) );
+  folder.add( material, 'alphaHash' ).onChange( needsUpdate( material, geometry ) );
+  folder.add( material, 'visible' );
+  folder.add( material, 'side', constants.side ).onChange( needsUpdate( material, geometry ) );
+
+}
+
+window.guiMeshPhysicalMaterial = function guiMeshPhysicalMaterial( gui, mesh, material, geometry ) {
+
+    const data = {
+       color: material.color.getHex(),
+       emissive: material.emissive.getHex(),
+
+       map:             material.map            ?.uuid ?? 'none',
+       roughnessMap:    material.roughnessMap   ?.uuid ?? 'none',
+       metalnessMap:    material.metalnessMap   ?.uuid ?? 'none',
+       normalMap:       material.normalMap      ?.uuid ?? 'none',
+       bumpMap:         material.bumpMap        ?.uuid ?? 'none',
+       displacementMap: material.displacementMap?.uuid ?? 'none',
+       aoMap:           material.aoMap          ?.uuid ?? 'none',
+
+       sheenColor:     material.sheenColor.getHex(),
+       specularColor:  material.specularColor.getHex(),
+    };
+
+    const folder = gui.addFolder( 'THREE.MeshPhysicalMaterial' );
+
+    folder.addColor( data, 'color' ).onChange( handleColorChange( material.color ) );
+    folder.addColor( data, 'emissive' ).onChange( handleColorChange( material.emissive ) );
+
+    folder.add( material, 'roughness', 0, 1 );
+    folder.add( material, 'metalness', 0, 1 );
+    folder.add( material, 'ior', 1, 2.333 );
+    folder.add( material, 'reflectivity', 0, 1 );
+    folder.add( material, 'iridescence', 0, 1 );
+    folder.add( material, 'iridescenceIOR', 1, 2.333 );
+    folder.add( material, 'sheen', 0, 1 );
+    folder.add( material, 'sheenRoughness', 0, 1 );
+    folder.addColor( data, 'sheenColor' ).onChange( handleColorChange( material.sheenColor ) );
+    folder.add( material, 'clearcoat', 0, 1 ).step( 0.01 );
+    folder.add( material, 'clearcoatRoughness', 0, 1 ).step( 0.01 );
+    folder.add( material, 'specularIntensity', 0, 1);
+    folder.addColor( data, 'specularColor' ).onChange( handleColorChange( material.specularColor ) );
+    folder.add( material, 'flatShading' ).onChange( needsUpdate( material, geometry ) );
+    folder.add( material, 'wireframe' );
+    folder.add( material, 'vertexColors' ).onChange( needsUpdate( material, geometry ) );
+    folder.add( material, 'fog' ).onChange( needsUpdate( material, geometry ) );
+    folder.add( data, 'map',             mapKeys).onChange( updateTexture( material, 'map', envMaps ) );
+    folder.add( data, 'roughnessMap',    mapKeys).onChange( updateTexture( material, 'roughnessMap', envMaps ) );
+    folder.add( data, 'metalnessMap',    mapKeys).onChange( updateTexture( material, 'metalnessMap', envMaps ) );
+    folder.add( data, 'normalMap',       mapKeys).onChange( updateTexture( material, 'normalMap', envMaps ) );
+    folder.add( data, 'bumpMap',         mapKeys).onChange( updateTexture( material, 'bumpMap', envMaps ) );
+    folder.add( data, 'displacementMap', mapKeys).onChange( updateTexture( material, 'displacementMap', envMaps ) );
+    folder.add( data, 'aoMap',           mapKeys).onChange( updateTexture( material, 'aoMap', envMaps ) );
+    folder.add( data, 'envMap',          mapKeys).onChange( updateTexture( material, 'envMap', envMaps ) );
+}
+
+const gui = window.gui = new GUI();
+
+const renderer = new THREE.WebGLRenderer( { antialias: true } );
+renderer.setPixelRatio( window.devicePixelRatio );
+renderer.setSize( window.innerWidth, window.innerHeight );
+document.body.appendChild( renderer.domElement );
+
+const pmremGenerator = new THREE.PMREMGenerator( renderer );
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color( 0x444444 );
+scene.environment = pmremGenerator.fromScene( new RoomEnvironment(), 0.04 ).texture;
+
+const camera = new THREE.PerspectiveCamera( 70, window.innerWidth / window.innerHeight, 10, 100 );
+camera.position.z = 35;
+
+const ambientLight = new THREE.AmbientLight( 0x000000 );
+scene.add( ambientLight );
+
+const light1 = new THREE.DirectionalLight( 0xffffff, 3 );
+light1.position.set( 0, 200, 0 );
+scene.add( light1 );
+
+const light2 = new THREE.DirectionalLight( 0xffffff, 3 );
+light2.position.set( 100, 200, 100 );
+scene.add( light2 );
+
+const light3 = new THREE.DirectionalLight( 0xffffff, 3 );
+light3.position.set( - 100, - 200, - 100 );
+scene.add( light3 );
+
+guiScene( gui, scene );
+
+const geometry = new THREE.TorusKnotGeometry( 10, 3, 200, 32 ).toNonIndexed();
+geometry.setAttribute("uv2", new THREE.BufferAttribute(geometry.attributes.uv.array, 2));
+
+const mesh = new THREE.Mesh( geometry );
+mesh.material = new THREE.MeshPhysicalMaterial( { color: 0xFFFFFF } );
+if (Object.keys(save.materials[material_select.value]).length > 0)
+    mesh.material.copy(material_loader.parse(save.materials[material_select.value]));
+guiMaterial( gui, mesh, mesh.material, geometry );
+guiMeshPhysicalMaterial( gui, mesh, mesh.material, geometry );
+
+// only use scene environment
+
+light1.visible = false;
+light2.visible = false;
+light3.visible = false;
+
+scene.add( mesh );
+
+let prevFog = false;
+
+let animFrame;
+function render() {
+
+    animFrame = requestAnimationFrame( render );
+
+    save.materials[material_select.value] = mesh.material.toJSON();
+    delete save.materials[material_select.value].textures;
+    delete save.materials[material_select.value].images;
+
+    mesh.rotation.x += 0.005;
+    mesh.rotation.y += 0.005;
+
+    if ( prevFog !== scene.fog ) {
+
+        mesh.material.needsUpdate = true;
+        prevFog = scene.fog;
+
+    }
+
+    renderer.render( scene, camera );
+
+}
+
+window.addEventListener( 'resize', function () {
+
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+
+  renderer.setSize( window.innerWidth, window.innerHeight );
+
+}, false );
+
+render();
+
+        </script>
+    </body>
+</html>
