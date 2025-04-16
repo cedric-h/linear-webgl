@@ -45,7 +45,6 @@ requestAnimationFrame(function render(now) {
 
         if (svg.nodeName == 'path') {
             ctx.lineCap = 'round';
-            ctx.fillStyle = svg.getAttribute('fill');
             ctx.beginPath();
 
             let px, py;
@@ -66,12 +65,24 @@ requestAnimationFrame(function render(now) {
                     const start_angle = Math.atan2(start_y - center_y, start_x - center_x);
                     const   end_angle = Math.atan2(  end.y - center_y,   end.x - center_x);
 
-                    ctx.arc(center_x, center_y, values[0], start_angle, end_angle);
+                    // ctx.arc(center_x, center_y, values[0], start_angle, end_angle);
+
+                    let dist = rads_distance(start_angle, end_angle);
+                    if (dist < 0) dist = Math.PI*2 - dist;
+                    const verts_needed = Math.floor(dist / 0.6);
+                    for (let i = 1; i <= verts_needed; i++) {
+                      const t = lerp(start_angle, start_angle + dist, i / verts_needed);
+                      ctx.lineTo(center_x + values[0]*Math.cos(t),
+                                 center_y + values[0]*Math.sin(t));
+                    }
 
                     px = end.x, py = end.y;
                 }
             }
+
+            ctx.fillStyle = svg.getAttribute('fill');
             ctx.fill();
+
         }
 
         for (const child of svg.children) extract_paths(child, m);
@@ -85,6 +96,14 @@ requestAnimationFrame(function render(now) {
 
 function lerp(v0, v1, t) { return (1 - t) * v0 + t * v1; }
 function inv_lerp(min, max, p) { return (p - min) / (max - min); }
+
+function rads_distance(a, b) {
+  const fmodf = (l, r) => l % r;
+  let difference = fmodf(b - a, Math.PI*2.0),
+      distance = fmodf(2.0 * difference, Math.PI*2.0) - difference;
+  return distance;
+}
+
     </script>
   </body>
 </html>
