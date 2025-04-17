@@ -140,9 +140,11 @@ function render() {
           ctx.lineCap = 'round';
           ctx.beginPath();
 
+          const m_inverse = m.inverse();
+
           let px, py; /* last position in SVG */
           let cmd; /* last command */
-          const words = svg.getAttribute('d').split(/ |,/).reverse();
+          const words = svg.getAttribute('d').split(/, | |,/).reverse();
           let path_fill = [...'#f1ac4b'.slice(1).matchAll(/../g)].map(x => parseInt(x[0], 16));
           let path;
 
@@ -153,6 +155,7 @@ function render() {
             if (word[0].toLowerCase() != word[0].toUpperCase()) {
               cmd = word[0];
               if (word.length > 1) words.push(word.slice(1));
+              if (word.length == 1) continue;
             } else {
               words.push(word);
             }
@@ -162,6 +165,7 @@ function render() {
             else if (cmd == 'M') valcount = 2;
             else if (cmd == 'm') valcount = 2;
             else if (cmd == 'A') valcount = 7;
+            else if (cmd == 'a') valcount = 7;
             else if (cmd == 'Z') valcount = 0;
             else throw new Error("unknown SVG command " + cmd);
 
@@ -174,8 +178,10 @@ function render() {
             let p = m.transformPoint(new DOMPoint(values[0], values[1]));
 
             if (cmd == 'M' || cmd == 'm') {
-              if (cmd == 'm')
-                p = m.transformPoint(new DOMPoint(px + values[0], py + values[1]));
+              if (cmd == 'a') {
+                const q = m_inverse.transformPoint(new DOMPoint(px, py));
+                p = m.transformPoint(new DOMPoint(q.x + values[0], q.y + values[1]));
+              }
 
               if (path) paths.push({ path, fill: path_fill });
               path = [];
@@ -189,10 +195,14 @@ function render() {
               px = p.x, py = p.y;
             }
 
-            if (cmd == 'A') {
+            if (cmd == 'A' || cmd == 'a') {
               const start_x = px;
               const start_y = py;
-              const end = m.transformPoint(new DOMPoint(values.at(-2), values.at(-1)));
+              let end = m.transformPoint(new DOMPoint(values.at(-2), values.at(-1)));
+              if (cmd == 'a') {
+                const q = m_inverse.transformPoint(new DOMPoint(px, py));
+                end = m.transformPoint(new DOMPoint(q.x + values.at(-2), q.y + values.at(-1)));
+              }
 
               const center_x = lerp(start_x, end.x, 0.5);
               const center_y = lerp(start_y, end.y, 0.5);
