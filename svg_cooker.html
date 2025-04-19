@@ -156,7 +156,8 @@ function render() {
           let px, py; /* last position in SVG */
           let cmd; /* last command */
           const words = svg.getAttribute('d').split(/, | |,/).reverse();
-          let path_fill = [...'#f1ac4b'.slice(1).matchAll(/../g)].map(x => parseInt(x[0], 16));
+          let path_fill = [...svg.getAttribute('fill').slice(1).matchAll(/../g)]
+            .map(x => parseInt(x[0], 16));
           let path;
 
           while (words.length) {
@@ -416,7 +417,6 @@ function render() {
           ctx.fill();
           ctx.stroke();
         }
-
       }
     }
     ctx.restore();
@@ -451,8 +451,10 @@ function render() {
       for (const v of m.vertices) {
         const x = v.x.toFixed(8).padStart(9);
         const y = v.y.toFixed(8).padStart(9);
-        const rgb = m.fill.map(x => (x + '').padStart(3)).join(', ');
-        out += `  { { ${x}, ${y} }, { ${rgb} } },\n`;
+
+        const srgb2linear = srgb => Math.round(Math.pow(srgb/255, 2.2) * 255);
+        const rgb = m.fill.map(x => (srgb2linear(x) + '').padStart(3)).join(', ');
+        out += `  { { ${x}, ${y} }, { ${rgb}, 255 } },\n`;
       }
     }
     out += `};\n`;
@@ -461,12 +463,12 @@ function render() {
     let offset = 0;
     for (const m of meshes) {
       for (let i = 0; i < m.indices.length; i += 3) {
-        const a = offset + i + 0;
-        const b = offset + i + 1;
-        const c = offset + i + 2;
+        const a = offset + m.indices[i + 0];
+        const b = offset + m.indices[i + 1];
+        const c = offset + m.indices[i + 2];
         out += `  { ${a}, ${b}, ${c} },\n`;
       }
-      offset += m.indices.length;
+      offset += m.vertices.length;
     }
     out += `};\n`;
     code_out.textContent = out;
