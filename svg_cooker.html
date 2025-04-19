@@ -34,6 +34,7 @@ document, body { margin: 0px; padding: 0px; overflow: hidden; }
 
   #drawing_select {
     position: absolute;
+    right: 0px;
     font-size: 1.1rem;
     margin: 0.3rem;
     box-shadow: 1px 1px 2px rgba(125, 125, 125, 0.4);
@@ -79,6 +80,14 @@ document, body { margin: 0px; padding: 0px; overflow: hidden; }
           total size: <span id="stat_total_size"> 0 </span>
           <br/> <span style="font-size:0.5rem;"> (assuming 2 floats + color per vertex and uint16_t indices)</span>
         </p>
+
+        <hr style="width:100%"/>
+
+        <div style="display:flex;align-items:center;justify-content:space-between;">
+          <label for="drawing_name"> export name: </label>
+          <input id="drawing_name" value="svg"> </input>
+        </div>
+
         <button id="copy_file">📋 copy .h</button>
       </div>
     </div>
@@ -97,6 +106,8 @@ document.addEventListener('drop', async (e) => {
 
   document.querySelector("svg").remove();
   drawing_area.querySelector("canvas").remove();
+
+  drawing_name.value = file.name.split(/[^a-zA-Z0-9_]/)[0];
 
   drawing_area.append(div.children[0]);
 
@@ -242,6 +253,7 @@ function render() {
   }
 
   let meshes;
+  let bbox_size_x, bbox_size_y;
   {
     const start = performance.now();
 
@@ -298,29 +310,32 @@ function render() {
 
     /* make bounding box and normalize vertices */
     {
-      let min_x =  Infinity;
-      let min_y =  Infinity;
-      let max_x = -Infinity;
-      let max_y = -Infinity;
+      let og_min_x =  Infinity;
+      let og_min_y =  Infinity;
+      let og_max_x = -Infinity;
+      let og_max_y = -Infinity;
 
       for (const mesh of meshes) {
         for (const v of mesh.vertices) {
-          min_x = Math.min(v.x, min_x);
-          min_y = Math.min(v.y, min_y);
-          max_x = Math.max(v.x, max_x);
-          max_y = Math.max(v.y, max_y);
+          og_min_x = Math.min(v.x, og_min_x);
+          og_min_y = Math.min(v.y, og_min_y);
+          og_max_x = Math.max(v.x, og_max_x);
+          og_max_y = Math.max(v.y, og_max_y);
         }
       }
 
-      let size_x = max_x - min_x; 
-      let size_y = max_y - min_y; 
+      let size_x = og_max_x - og_min_x; 
+      let size_y = og_max_y - og_min_y; 
       const major_axis = Math.max(size_x, size_y);
 
-      max_x = min_x + major_axis + (size_x - major_axis) * 0.5;
-      max_y = min_y + major_axis + (size_y - major_axis) * 0.5;
-      min_x = min_x              + (size_x - major_axis) * 0.5;
-      min_y = min_y              + (size_y - major_axis) * 0.5;
+      let max_x = og_min_x + major_axis + (size_x - major_axis) * 0.5;
+      let max_y = og_min_y + major_axis + (size_y - major_axis) * 0.5;
+      let min_x = og_min_x              + (size_x - major_axis) * 0.5;
+      let min_y = og_min_y              + (size_y - major_axis) * 0.5;
       size_x = size_y = major_axis;
+
+      bbox_size_x = (og_max_x - og_min_x) / major_axis;
+      bbox_size_y = (og_max_y - og_min_y) / major_axis;
 
       for (const mesh of meshes) {
         for (const v of mesh.vertices) {
@@ -350,6 +365,31 @@ function render() {
       const pad = 30;
       ctx.translate(pad, pad);
       ctx.scale(major_axis - pad*2, major_axis - pad*2);
+
+      ctx.strokeStyle = 'black';
+      ctx.lineWidth = 1.0 / major_axis;
+      ctx.strokeRect(
+        (1 - bbox_size_x) * 0.5,
+        (1 - bbox_size_y) * 0.5,
+        bbox_size_x, bbox_size_y
+      );
+
+      {
+        const px = 1 / major_axis;
+        ctx.fillStyle = 'black';
+        ctx.font = (16.0 / major_axis) + 'px monospace';
+        ctx.textBaseline = 'bottom';
+        ctx.fillText('0,0', -ctx.measureText('0,0').width, 0);
+        ctx.fillRect(0 - px, 0 - px, 16*px,  2*px);
+        ctx.fillRect(0 - px, 0 - px,  2*px, 16*px);
+
+        ctx.fillStyle = 'black';
+        ctx.font = (16.0 / major_axis) + 'px monospace';
+        ctx.textBaseline = 'top';
+        ctx.fillText('1,1', 1, 1 + 4 / major_axis);
+        ctx.fillRect(1 + px, 1 - px, -16*px,   2*px);
+        ctx.fillRect(1 - px, 1 + px,   2*px, -16*px);
+      }
 
       const radius    = 1.0 / major_axis;
       const lineWidth = 0.2 / major_axis;
@@ -381,6 +421,7 @@ function render() {
     }
     ctx.restore();
   }
+  drawing_select.value = 'canvas_extracted'
   drawing_area.querySelector("svg").style.display = 'none';
   drawing_area.append(canvas_extracted);
   drawing_select.oninput = ev => {
@@ -399,10 +440,13 @@ function render() {
     if (show_canvas) drawing_area.append(show_canvas);
   };
 
-  {
+  const render_code = () => {
     let out = '';
 
-    out += `gl_geo_Vtx model_vtx_svg[] = {\n`;
+    out += `float model_${drawing_name.value}_size_x = ${bbox_size_x.toFixed(6)}f;\n`;
+    out += `float model_${drawing_name.value}_size_y = ${bbox_size_y.toFixed(6)}f;\n\n`;
+
+    out += `gl_geo_Vtx model_vtx_${drawing_name.value}[] = {\n`;
     for (const m of meshes) {
       for (const v of m.vertices) {
         const x = v.x.toFixed(8).padStart(9);
@@ -413,7 +457,7 @@ function render() {
     }
     out += `};\n`;
 
-    out += `gl_Tri model_tri_svg[] = {\n`;
+    out += `gl_Tri model_tri_${drawing_name.value}[] = {\n`;
     let offset = 0;
     for (const m of meshes) {
       for (let i = 0; i < m.indices.length; i += 3) {
@@ -427,6 +471,10 @@ function render() {
     out += `};\n`;
     code_out.textContent = out;
   }
+
+  render_code();
+
+  drawing_name.oninput = () => render_code();
 
   copy_file.onclick = () => {
       copy_file.textContent = '✅';
