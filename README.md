@@ -45,13 +45,16 @@ Other useful resources in the same vein:
 <img width="400"  alt="Screenshot 2024-05-06 at 12 48 29 PM" src="https://github.com/cedric-h/linear-webgl/assets/25539554/0a29393a-fd07-4b64-bdca-1bc77735678f">
 
 
-## shadows and lighting
+## reprojection (shadows and painting)
 
-| **link**                                                                       | **desc**                                                                                                              |
-|--------------------------------------------------------------------------------|-----------------------------------------------------------------------------------------------------------------------|
-| [shadow       ](https://cedric-h.github.io/linear-webgl/shadow.html)           | super simple shadow with no PCF, etc. just reprojection                                                               |
-| [shadow_bake  ](https://cedric-h.github.io/linear-webgl/shadow_bake.html)      | soft shadows + ambient occlusion + shadows dynamically from progressive lightmap                                      |
-| [paint        ](https://cedric-h.github.io/linear-webgl/shadow.html)           | technically NOT shadows/lighting, but can be helpful to read alongside them. also silly, messy, and fun!              |
+| **link**                                                                          | **desc**                                                                                                              |
+|-----------------------------------------------------------------------------------|-----------------------------------------------------------------------------------------------------------------------|
+| [shadow       ](https://cedric-h.github.io/linear-webgl/shadow.html)              | super simple shadow with no PCF, etc. just reprojection                                                               |
+| [shadow_bake  ](https://cedric-h.github.io/linear-webgl/shadow_bake.html)         | soft shadows + ambient occlusion + shadows dynamically from progressive lightmap                                      |
+| [paint        ](https://cedric-h.github.io/linear-webgl/paint.html)              | helpful to read alongside shadow code. also silly, messy, and fun!              |
+| [scroll_thick](https://cedric-h.github.io/linear-webgl/scroll_thick.html)         | the scroll scrolls, the paint paints. it's cool!             |
+| [zen terrain painter](https://cedric-h.github.io/linear-webgl/paint_terrain.html) | click and hold to make mountains. it's cool!             |
+
 
 <img width="400"  alt="Screenshot 2024-05-06 at 12 45 15 PM" src="https://github.com/cedric-h/linear-webgl/assets/25539554/293a9cff-318e-48b1-8859-baeb620c8317">
 
@@ -61,7 +64,7 @@ https://github.com/cedric-h/linear-webgl/assets/25539554/359ae242-8e6a-483d-a227
 
 ## nodes
 
-interactive data thing with text, drop shadows, zooming, panning, scrollbars, etc.
+interactive data thing with text, drop shadows, zooming, panning, scrollbars, etc. (yes, all from scratch in WebGL)
 
 [nodes](https://cedric-h.github.io/linear-webgl/nodes.html),
 [nodes-rpi](https://cedric-h.github.io/linear-webgl/nodes_rpi)
@@ -72,6 +75,33 @@ also: nodes-rpi, a WebGL 1 version that works (~25 fps) at low resolutions on a 
 
 <img width="400" alt="Screenshot 2024-03-08 at 2 40 15 PM" src="https://github.com/cedric-h/linear-webgl/assets/25539554/223cbe91-9ad0-449d-b0cd-7df599854b87">
 
+## Computational Geometry and Physics
+I'm constantly exploring and improving my understanding of computational geometry.
+
+<img width="300" alt="Screenshot 2025-04-30 at 11 37 54 PM" src="https://github.com/user-attachments/assets/3f2bb143-580a-4d36-8696-49bf25074b3f" />
+
+These use canvas instead of WebGL because the rendering isn't really the point.
+| **link**                                                                    | **desc**                                                                                     |
+|-----------------------------------------------------------------------------|----------------------------------------------------------------------------------------------|
+| [earclip](https://cedric-h.github.io/linear-webgl/earclip.html)             | minimal (~70 lines) earclipping implementation, with interactive visualization               |
+| [z order curve](https://cedric-h.github.io/linear-webgl/z_order_curve.html) | helps you to develop an intuition for why z-order curve hashing is useful for spatial hashes |
+| [web finder](https://cedric-h.github.io/linear-webgl/web_finder.html)       | solves a fun geometry puzzle where a bunch of lines need to turn into a tree                 |
+| [rope](https://cedric-h.github.io/linear-webgl/rope.html)                   | simple 2D verlet integration                                                                 |
+
+
+## Asset cookers
+These turn animations, fonts, and SVGs into simple C headers so you can use them easily in WASM/native projects.
+
+They use canvas instead of WebGL because the rendering isn't really the point.
+
+<img width="300" alt="Screenshot 2025-04-30 at 11 39 16 PM" src="https://github.com/user-attachments/assets/ac1b88bd-47d2-4a78-8103-3c18106a74ff" />
+
+
+| **link**                                                                    | **desc**                                                                                     |
+|-----------------------------------------------------------------------------|----------------------------------------------------------------------------------------------|
+| [guy.html](https://cedric-h.github.io/linear-webgl/guy.html)                | turns mixamo animations into cool stick figures                                              |
+| [svg cooker](https://cedric-h.github.io/linear-webgl/svg_cooker.html)       | turns SVGs into geometry buffers (vertices and indices) - drag and drop the SVG on           |
+| [font cooker](https://cedric-h.github.io/linear-webgl/font_cooker.html)     | turns fonts into SDF textures - why include stb_truetype for one font?                       |
 
 ## text
 
@@ -128,6 +158,7 @@ also: example of how to clip text without scissor rects, useful for doing a lot 
 | [graph          ](https://cedric-h.github.io/linear-webgl/graph.html)           | where I keep the actual good up-to-date graph code.
 
 super performant graph, outperforms chart.js, echarts, amcharts by about x100
+
 <img width="400" alt="Screenshot 2024-06-01 at 9 38 09 PM" src="https://github.com/cedric-h/linear-webgl/assets/25539554/5b609b5f-f56e-4e10-8467-c6ca43dced0c">
 
 # errata
