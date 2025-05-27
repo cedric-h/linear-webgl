@@ -178,6 +178,7 @@ function render() {
             else if (cmd == 'm') valcount = 2;
             else if (cmd == 'A') valcount = 7;
             else if (cmd == 'a') valcount = 7;
+            else if (cmd == 'Q') valcount = 4;
             else if (cmd == 'Z') valcount = 0;
             else throw new Error("unknown SVG command " + cmd);
 
@@ -205,6 +206,24 @@ function render() {
               path.push({ x: p.x, y: p.y });
               ctx.lineTo(p.x, p.y);
               px = p.x, py = p.y;
+            }
+
+            if (cmd == 'Q') {
+              function bezier3_sample(a, control, b, t) {
+                return {
+                  x: lerp(lerp(a.x, control.x, t), lerp(control.x, b.x, t), t),
+                  y: lerp(lerp(a.y, control.y, t), lerp(control.y, b.y, t), t)
+                }
+              }
+
+              let end = m.transformPoint(new DOMPoint(values[1], values[2]));
+
+              for (let i = 0; i < 5; i++) {
+                const t = i / 5;
+                const bz_pt = bezier3_sample({ x: px, y: py }, p, end, t);
+                path.push(bz_pt);
+                ctx.lineTo(bz_pt.x, bz_pt.y);
+              }
             }
 
             if (cmd == 'A' || cmd == 'a') {

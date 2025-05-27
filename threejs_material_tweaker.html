@@ -1,3 +1,5 @@
+<!-- vim: sw=4 ts=4 expandtab smartindent ft=javascript
+-->
 <!DOCTYPE html>
 <html lang="en">
     <head>
@@ -58,7 +60,9 @@
         <script type="module">
 import * as THREE from 'three';
 import { GUI } from 'three/addons/libs/lil-gui.module.min.js';
+import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+
 
 const material_loader = new THREE.MaterialLoader();
 
@@ -66,7 +70,6 @@ const images = await new Promise(res => {
 
     window.ondragover = ev => ev.preventDefault();
     window.ondrop = async ev => {
-      // Prevent default behavior (Prevent file from being opened)
       ev.preventDefault();
 
       let images = {};
@@ -116,10 +119,11 @@ const images = await new Promise(res => {
       }
 
       const items = [...ev.dataTransfer.items];
+
       await Promise.all(items.map(item => item.getAsFileSystemHandle().then(search_for_png)));
       await Promise.all(image_loads);
 
-      window.ondragover = () => {};
+      window.ondragover = ev => {};
       window.ondrop = () => {};
 
       const keys = Object.keys(images).sort();
@@ -133,15 +137,23 @@ window.ondrop = async ev => {
     ev.preventDefault();
 
     const file = ev.dataTransfer.files[0];
-    if (!file.name.endsWith('.json')) {
-        console.log(`Ignoring ${file.name}, it's not a .json!`);
+    if (file.name.endsWith('.obj')) {
+        document.innerHTML = '';
+        document.querySelector(".lil-gui").remove();
+        document.querySelector("canvas").remove();
+        renderMeshGUI(await file.text());
         return;
     }
 
-    cancelAnimationFrame(animFrame);
-    save = JSON.parse(await file.text());
-    await save_write();
-    location.reload();
+    if (file.name.endsWith('.json')) {
+        cancelAnimationFrame(animFrame);
+        save = JSON.parse(await file.text());
+        await save_write();
+        location.reload();
+        return;
+    }
+
+    alert(`Ignoring ${file.name}, it's not a .json or .obj!`);
 };
 
 const save_db = (() => {
@@ -285,391 +297,1707 @@ let save = await save_read();
 
 setInterval(() => save_write(), 1000);
 
-{
-    material_download.onclick = () => {
-        const a = document.createElement("a");
-        a.href = URL.createObjectURL(new Blob([JSON.stringify(save)], { type: "application/json" }));
-        a.download = "materials.json";
-        a.click();
-    };
 
-    material_new.onclick = () => {
-        const key = prompt("name material:");
-        save.materials[key] = {};
+
+const renderMeshGUI = (obj_text) => {
+
+    {
+        material_download.onclick = () => {
+            const a = document.createElement("a");
+            a.href = URL.createObjectURL(new Blob([JSON.stringify(save)], { type: "application/json" }));
+            a.download = "materials.json";
+            a.click();
+        };
+
+        material_new.onclick = () => {
+            const key = prompt("name material:");
+            save.materials[key] = {};
+            render_material_select();
+            material_select.value = key;
+        };
+
+        material_delete.onclick = () => {
+            if (Object.keys(save.materials[material_select.value]).length == 1) {
+                alert("I'm not going to let you delete your last and only material.");
+                return;
+            }
+
+            delete save.materials[material_select.value];
+            render_material_select();
+            save_write();
+        };
+
+        material_select.oninput = () => {
+            mesh.material.copy(material_loader.parse(save.materials[material_select.value]));
+
+            if (mesh.material.map            ) mesh.material.map            .needsUpdate = true;
+            if (mesh.material.roughnessMap   ) mesh.material.roughnessMap   .needsUpdate = true;
+            if (mesh.material.metalnessMap   ) mesh.material.metalnessMap   .needsUpdate = true;
+            if (mesh.material.normalMap      ) mesh.material.normalMap      .needsUpdate = true;
+            if (mesh.material.bumpMap        ) mesh.material.bumpMap        .needsUpdate = true;
+            if (mesh.material.displacementMap) mesh.material.displacementMap.needsUpdate = true;
+            if (mesh.material.aoMap          ) mesh.material.aoMap          .needsUpdate = true;
+
+            mesh.material.needsUpdate = true;
+
+            window.gui.folders.find(x => x.$title.textContent == "THREE.MeshPhysicalMaterial").destroy();
+            guiMeshPhysicalMaterial(window.gui, mesh, mesh.material, mesh.geometry);
+        };
+
+        function render_material_select() {
+            material_select.innerHTML = '';
+
+            for (const el of Object.keys(save.materials)) {
+                const option = document.createElement("option");
+                option.textContent = el;
+                option.value = el;
+                material_select.append(option);
+            }
+        };
+
         render_material_select();
-        material_select.value = key;
+    }
+
+    hud.style = '';
+    drop_it.style = 'display: none;';
+
+    const constants = {
+
+      combine: {
+
+        'THREE.MultiplyOperation': THREE.MultiplyOperation,
+        'THREE.MixOperation': THREE.MixOperation,
+        'THREE.AddOperation': THREE.AddOperation
+
+      },
+
+      side: {
+
+        'THREE.FrontSide': THREE.FrontSide,
+        'THREE.BackSide': THREE.BackSide,
+        'THREE.DoubleSide': THREE.DoubleSide
+
+      },
+
+      blendingMode: {
+
+        'THREE.NoBlending': THREE.NoBlending,
+        'THREE.NormalBlending': THREE.NormalBlending,
+        'THREE.AdditiveBlending': THREE.AdditiveBlending,
+        'THREE.SubtractiveBlending': THREE.SubtractiveBlending,
+        'THREE.MultiplyBlending': THREE.MultiplyBlending,
+        'THREE.CustomBlending': THREE.CustomBlending
+
+      },
+
+      equations: {
+
+        'THREE.AddEquation': THREE.AddEquation,
+        'THREE.SubtractEquation': THREE.SubtractEquation,
+        'THREE.ReverseSubtractEquation': THREE.ReverseSubtractEquation
+
+      },
+
+      destinationFactors: {
+
+        'THREE.ZeroFactor': THREE.ZeroFactor,
+        'THREE.OneFactor': THREE.OneFactor,
+        'THREE.SrcColorFactor': THREE.SrcColorFactor,
+        'THREE.OneMinusSrcColorFactor': THREE.OneMinusSrcColorFactor,
+        'THREE.SrcAlphaFactor': THREE.SrcAlphaFactor,
+        'THREE.OneMinusSrcAlphaFactor': THREE.OneMinusSrcAlphaFactor,
+        'THREE.DstAlphaFactor': THREE.DstAlphaFactor,
+        'THREE.OneMinusDstAlphaFactor': THREE.OneMinusDstAlphaFactor
+
+      },
+
+      sourceFactors: {
+
+        'THREE.DstColorFactor': THREE.DstColorFactor,
+        'THREE.OneMinusDstColorFactor': THREE.OneMinusDstColorFactor,
+        'THREE.SrcAlphaSaturateFactor': THREE.SrcAlphaSaturateFactor
+
+      }
+
     };
 
-    material_delete.onclick = () => {
-        if (Object.keys(save.materials[material_select.value]).length == 1) {
-            alert("I'm not going to let you delete your last and only material.");
-            return;
+    const textureLoader = new THREE.TextureLoader();
+    const cubeTextureLoader = new THREE.CubeTextureLoader();
+
+    let envMaps       = { ...images };
+    let diffuseMaps   = { ...images };
+    let alphaMaps     = { ...images };
+    let roughnessMaps = { ...images };
+
+    const mapKeys = Object.keys(images);
+
+    function handleColorChange( color ) {
+
+      return function ( value ) {
+
+        if ( typeof value === 'string' ) {
+
+          value = value.replace( '#', '0x' );
+
         }
 
-        delete save.materials[material_select.value];
-        render_material_select();
-        save_write();
-    };
+        color.setHex( value );
 
-    material_select.oninput = () => {
+      };
+
+    }
+
+    function needsUpdate( material, geometry ) {
+
+      return function () {
+
+        material.side = parseInt( material.side ); //Ensure number
+        material.needsUpdate = true;
+        geometry.attributes.position.needsUpdate = true;
+        geometry.attributes.normal.needsUpdate = true;
+
+      };
+
+    }
+
+    function updateCombine( material ) {
+
+      return function ( combine ) {
+
+        material.combine = parseInt( combine );
+        material.needsUpdate = true;
+
+      };
+
+    }
+
+    function updateTexture( material, materialKey, textures ) {
+
+      return function ( key ) {
+
+        material[ materialKey ] = textures[ key ];
+        material.needsUpdate = true;
+
+      };
+
+    }
+
+    function guiScene( gui, scene ) {
+
+      const folder = gui.addFolder( 'Scene' );
+
+      const data = {
+        background: '#000000',
+        'ambient light': ambientLight.color.getHex()
+      };
+
+      folder.addColor( data, 'ambient light' ).onChange( handleColorChange( ambientLight.color ) );
+
+      guiSceneFog( folder, scene );
+
+    }
+
+    function guiSceneFog( folder, scene ) {
+
+      const fogFolder = folder.addFolder( 'scene.fog' );
+
+      const fog = new THREE.Fog( 0x3f7b9d, 0, 60 );
+
+      const data = {
+        fog: {
+          'THREE.Fog()': false,
+          'scene.fog.color': fog.color.getHex()
+        }
+      };
+
+      fogFolder.add( data.fog, 'THREE.Fog()' ).onChange( function ( useFog ) {
+
+        if ( useFog ) {
+
+          scene.fog = fog;
+
+        } else {
+
+          scene.fog = null;
+
+        }
+
+      } );
+
+      fogFolder.addColor( data.fog, 'scene.fog.color' ).onChange( handleColorChange( fog.color ) );
+
+    }
+
+    function guiMaterial( gui, mesh, material, geometry ) {
+
+      const folder = gui.addFolder( 'THREE.Material' );
+
+      folder.add( material, 'transparent' ).onChange( needsUpdate( material, geometry ) );
+      folder.add( material, 'opacity', 0, 1 ).step( 0.01 );
+      // folder.add( material, 'blending', constants.blendingMode );
+      // folder.add( material, 'blendSrc', constants.destinationFactors );
+      // folder.add( material, 'blendDst', constants.destinationFactors );
+      // folder.add( material, 'blendEquation', constants.equations );
+      folder.add( material, 'depthTest' );
+      folder.add( material, 'depthWrite' );
+      // folder.add( material, 'polygonOffset' );
+      // folder.add( material, 'polygonOffsetFactor' );
+      // folder.add( material, 'polygonOffsetUnits' );
+      folder.add( material, 'alphaTest', 0, 1 ).step( 0.01 ).onChange( needsUpdate( material, geometry ) );
+      folder.add( material, 'alphaHash' ).onChange( needsUpdate( material, geometry ) );
+      folder.add( material, 'visible' );
+      folder.add( material, 'side', constants.side ).onChange( needsUpdate( material, geometry ) );
+
+    }
+
+    function guiMeshPhysicalMaterial( gui, mesh, material, geometry ) {
+
+        const data = {
+           color: material.color.getHex(),
+           emissive: material.emissive.getHex(),
+
+           map:             material.map            ?.uuid ?? 'none',
+           roughnessMap:    material.roughnessMap   ?.uuid ?? 'none',
+           metalnessMap:    material.metalnessMap   ?.uuid ?? 'none',
+           normalMap:       material.normalMap      ?.uuid ?? 'none',
+           bumpMap:         material.bumpMap        ?.uuid ?? 'none',
+           displacementMap: material.displacementMap?.uuid ?? 'none',
+           aoMap:           material.aoMap          ?.uuid ?? 'none',
+
+           sheenColor:     material.sheenColor.getHex(),
+           specularColor:  material.specularColor.getHex(),
+        };
+
+        const folder = gui.addFolder( 'THREE.MeshPhysicalMaterial' );
+
+        folder.addColor( data, 'color' ).onChange( handleColorChange( material.color ) );
+        folder.addColor( data, 'emissive' ).onChange( handleColorChange( material.emissive ) );
+
+        folder.add( material, 'roughness', 0, 1 );
+        folder.add( material, 'metalness', 0, 1 );
+        folder.add( material, 'ior', 1, 2.333 );
+        folder.add( material, 'reflectivity', 0, 1 );
+        folder.add( material, 'iridescence', 0, 1 );
+        folder.add( material, 'iridescenceIOR', 1, 2.333 );
+        folder.add( material, 'sheen', 0, 1 );
+        folder.add( material, 'sheenRoughness', 0, 1 );
+        folder.addColor( data, 'sheenColor' ).onChange( handleColorChange( material.sheenColor ) );
+        folder.add( material, 'clearcoat', 0, 1 ).step( 0.01 );
+        folder.add( material, 'clearcoatRoughness', 0, 1 ).step( 0.01 );
+        folder.add( material, 'specularIntensity', 0, 1);
+        folder.addColor( data, 'specularColor' ).onChange( handleColorChange( material.specularColor ) );
+        folder.add( material, 'flatShading' ).onChange( needsUpdate( material, geometry ) );
+        folder.add( material, 'wireframe' );
+        folder.add( material, 'vertexColors' ).onChange( needsUpdate( material, geometry ) );
+        folder.add( material, 'fog' ).onChange( needsUpdate( material, geometry ) );
+        folder.add( data, 'map',             mapKeys).onChange( updateTexture( material, 'map', envMaps ) );
+        folder.add( data, 'roughnessMap',    mapKeys).onChange( updateTexture( material, 'roughnessMap', envMaps ) );
+        folder.add( data, 'metalnessMap',    mapKeys).onChange( updateTexture( material, 'metalnessMap', envMaps ) );
+        folder.add( data, 'normalMap',       mapKeys).onChange( updateTexture( material, 'normalMap', envMaps ) );
+        folder.add( data, 'bumpMap',         mapKeys).onChange( updateTexture( material, 'bumpMap', envMaps ) );
+        folder.add( data, 'displacementMap', mapKeys).onChange( updateTexture( material, 'displacementMap', envMaps ) );
+        folder.add( data, 'aoMap',           mapKeys).onChange( updateTexture( material, 'aoMap', envMaps ) );
+        folder.add( data, 'envMap',          mapKeys).onChange( updateTexture( material, 'envMap', envMaps ) );
+    }
+
+    const gui = new GUI();
+
+    const renderer = new THREE.WebGLRenderer( { antialias: true } );
+    renderer.setPixelRatio( window.devicePixelRatio );
+    renderer.setSize( window.innerWidth, window.innerHeight );
+    document.body.appendChild( renderer.domElement );
+
+    const pmremGenerator = new THREE.PMREMGenerator( renderer );
+
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color( 0x444444 );
+    scene.environment = pmremGenerator.fromScene( new RoomEnvironment(), 0.04 ).texture;
+
+    const camera = new THREE.PerspectiveCamera( 70, window.innerWidth / window.innerHeight, 10, 100 );
+    camera.position.z = 35;
+
+    const ambientLight = new THREE.AmbientLight( 0x000000 );
+    scene.add( ambientLight );
+
+    const light1 = new THREE.DirectionalLight( 0xffffff, 3 );
+    light1.position.set( 0, 200, 0 );
+    scene.add( light1 );
+
+    const light2 = new THREE.DirectionalLight( 0xffffff, 3 );
+    light2.position.set( 100, 200, 100 );
+    scene.add( light2 );
+
+    const light3 = new THREE.DirectionalLight( 0xffffff, 3 );
+    light3.position.set( - 100, - 200, - 100 );
+    scene.add( light3 );
+
+    // const geometry = new THREE.TorusKnotGeometry( 10, 3, 200, 32 ).toNonIndexed();
+    // geometry.setAttribute("uv2", new THREE.BufferAttribute(geometry.attributes.uv.array, 2));
+    // new THREE.Mesh( geometry );
+
+    const mesh = new OBJLoader().parse(obj_text).children[0];
+    const geometry = mesh.geometry;
+
+    mesh.material = new THREE.MeshPhysicalMaterial( { color: 0xFFFFFF } );
+    if (Object.keys(save.materials[material_select.value]).length > 0)
         mesh.material.copy(material_loader.parse(save.materials[material_select.value]));
 
-        if (mesh.material.map            ) mesh.material.map            .needsUpdate = true;
-        if (mesh.material.roughnessMap   ) mesh.material.roughnessMap   .needsUpdate = true;
-        if (mesh.material.metalnessMap   ) mesh.material.metalnessMap   .needsUpdate = true;
-        if (mesh.material.normalMap      ) mesh.material.normalMap      .needsUpdate = true;
-        if (mesh.material.bumpMap        ) mesh.material.bumpMap        .needsUpdate = true;
-        if (mesh.material.displacementMap) mesh.material.displacementMap.needsUpdate = true;
-        if (mesh.material.aoMap          ) mesh.material.aoMap          .needsUpdate = true;
+    guiScene( gui, scene );
+    {
+        const folder = gui.addFolder('Mesh');
+        let tmp = { scale: 4 };
+        folder.add(tmp, 'scale', 0.001, 1000).onChange(scale => mesh.scale.set(scale, scale, scale));
+        mesh.scale.set(tmp.scale, tmp.scale, tmp.scale);
+    }
+    guiMaterial( gui, mesh, mesh.material, geometry );
+    guiMeshPhysicalMaterial( gui, mesh, mesh.material, geometry );
 
-        mesh.material.needsUpdate = true;
+    // only use scene environment
 
-        window.gui.folders.find(x => x.$title.textContent == "THREE.MeshPhysicalMaterial").destroy();
-        guiMeshPhysicalMaterial(window.gui, mesh, mesh.material, mesh.geometry);
-    };
+    light1.visible = false;
+    light2.visible = false;
+    light3.visible = false;
 
-    function render_material_select() {
-        material_select.innerHTML = '';
+    scene.add( mesh );
 
-        for (const el of Object.keys(save.materials)) {
-            const option = document.createElement("option");
-            option.textContent = el;
-            option.value = el;
-            material_select.append(option);
+    let prevFog = false;
+
+    let animFrame;
+    function render() {
+
+        animFrame = requestAnimationFrame( render );
+
+        save.materials[material_select.value] = mesh.material.toJSON();
+        delete save.materials[material_select.value].textures;
+        delete save.materials[material_select.value].images;
+
+        mesh.rotation.x += 0.005;
+        mesh.rotation.y += 0.005;
+
+        if ( prevFog !== scene.fog ) {
+
+            mesh.material.needsUpdate = true;
+            prevFog = scene.fog;
+
         }
+
+        renderer.render( scene, camera );
+
+    }
+
+    window.onresize = () => {
+
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+
+      renderer.setSize( window.innerWidth, window.innerHeight );
+
     };
 
-    render_material_select();
-}
-
-hud.style = '';
-drop_it.style = 'display: none;';
-
-const constants = {
-
-  combine: {
-
-    'THREE.MultiplyOperation': THREE.MultiplyOperation,
-    'THREE.MixOperation': THREE.MixOperation,
-    'THREE.AddOperation': THREE.AddOperation
-
-  },
-
-  side: {
-
-    'THREE.FrontSide': THREE.FrontSide,
-    'THREE.BackSide': THREE.BackSide,
-    'THREE.DoubleSide': THREE.DoubleSide
-
-  },
-
-  blendingMode: {
-
-    'THREE.NoBlending': THREE.NoBlending,
-    'THREE.NormalBlending': THREE.NormalBlending,
-    'THREE.AdditiveBlending': THREE.AdditiveBlending,
-    'THREE.SubtractiveBlending': THREE.SubtractiveBlending,
-    'THREE.MultiplyBlending': THREE.MultiplyBlending,
-    'THREE.CustomBlending': THREE.CustomBlending
-
-  },
-
-  equations: {
-
-    'THREE.AddEquation': THREE.AddEquation,
-    'THREE.SubtractEquation': THREE.SubtractEquation,
-    'THREE.ReverseSubtractEquation': THREE.ReverseSubtractEquation
-
-  },
-
-  destinationFactors: {
-
-    'THREE.ZeroFactor': THREE.ZeroFactor,
-    'THREE.OneFactor': THREE.OneFactor,
-    'THREE.SrcColorFactor': THREE.SrcColorFactor,
-    'THREE.OneMinusSrcColorFactor': THREE.OneMinusSrcColorFactor,
-    'THREE.SrcAlphaFactor': THREE.SrcAlphaFactor,
-    'THREE.OneMinusSrcAlphaFactor': THREE.OneMinusSrcAlphaFactor,
-    'THREE.DstAlphaFactor': THREE.DstAlphaFactor,
-    'THREE.OneMinusDstAlphaFactor': THREE.OneMinusDstAlphaFactor
-
-  },
-
-  sourceFactors: {
-
-    'THREE.DstColorFactor': THREE.DstColorFactor,
-    'THREE.OneMinusDstColorFactor': THREE.OneMinusDstColorFactor,
-    'THREE.SrcAlphaSaturateFactor': THREE.SrcAlphaSaturateFactor
-
-  }
-
+    render();
 };
 
-const textureLoader = new THREE.TextureLoader();
-const cubeTextureLoader = new THREE.CubeTextureLoader();
-
-let envMaps       = { ...images };
-let diffuseMaps   = { ...images };
-let alphaMaps     = { ...images };
-let roughnessMaps = { ...images };
-
-const mapKeys = Object.keys(images);
-
-function handleColorChange( color ) {
-
-  return function ( value ) {
-
-    if ( typeof value === 'string' ) {
-
-      value = value.replace( '#', '0x' );
-
-    }
-
-    color.setHex( value );
-
-  };
-
-}
-
-function needsUpdate( material, geometry ) {
-
-  return function () {
-
-    material.side = parseInt( material.side ); //Ensure number
-    material.needsUpdate = true;
-    geometry.attributes.position.needsUpdate = true;
-    geometry.attributes.normal.needsUpdate = true;
-
-  };
-
-}
-
-function updateCombine( material ) {
-
-  return function ( combine ) {
-
-    material.combine = parseInt( combine );
-    material.needsUpdate = true;
-
-  };
-
-}
-
-function updateTexture( material, materialKey, textures ) {
-
-  return function ( key ) {
-
-    material[ materialKey ] = textures[ key ];
-    material.needsUpdate = true;
-
-  };
-
-}
-
-function guiScene( gui, scene ) {
-
-  const folder = gui.addFolder( 'Scene' );
-
-  const data = {
-    background: '#000000',
-    'ambient light': ambientLight.color.getHex()
-  };
-
-  folder.addColor( data, 'ambient light' ).onChange( handleColorChange( ambientLight.color ) );
-
-  guiSceneFog( folder, scene );
-
-}
-
-function guiSceneFog( folder, scene ) {
-
-  const fogFolder = folder.addFolder( 'scene.fog' );
-
-  const fog = new THREE.Fog( 0x3f7b9d, 0, 60 );
-
-  const data = {
-    fog: {
-      'THREE.Fog()': false,
-      'scene.fog.color': fog.color.getHex()
-    }
-  };
-
-  fogFolder.add( data.fog, 'THREE.Fog()' ).onChange( function ( useFog ) {
-
-    if ( useFog ) {
-
-      scene.fog = fog;
-
-    } else {
-
-      scene.fog = null;
-
-    }
-
-  } );
-
-  fogFolder.addColor( data.fog, 'scene.fog.color' ).onChange( handleColorChange( fog.color ) );
-
-}
-
-function guiMaterial( gui, mesh, material, geometry ) {
-
-  const folder = gui.addFolder( 'THREE.Material' );
-
-  folder.add( material, 'transparent' ).onChange( needsUpdate( material, geometry ) );
-  folder.add( material, 'opacity', 0, 1 ).step( 0.01 );
-  // folder.add( material, 'blending', constants.blendingMode );
-  // folder.add( material, 'blendSrc', constants.destinationFactors );
-  // folder.add( material, 'blendDst', constants.destinationFactors );
-  // folder.add( material, 'blendEquation', constants.equations );
-  folder.add( material, 'depthTest' );
-  folder.add( material, 'depthWrite' );
-  // folder.add( material, 'polygonOffset' );
-  // folder.add( material, 'polygonOffsetFactor' );
-  // folder.add( material, 'polygonOffsetUnits' );
-  folder.add( material, 'alphaTest', 0, 1 ).step( 0.01 ).onChange( needsUpdate( material, geometry ) );
-  folder.add( material, 'alphaHash' ).onChange( needsUpdate( material, geometry ) );
-  folder.add( material, 'visible' );
-  folder.add( material, 'side', constants.side ).onChange( needsUpdate( material, geometry ) );
-
-}
-
-window.guiMeshPhysicalMaterial = function guiMeshPhysicalMaterial( gui, mesh, material, geometry ) {
-
-    const data = {
-       color: material.color.getHex(),
-       emissive: material.emissive.getHex(),
-
-       map:             material.map            ?.uuid ?? 'none',
-       roughnessMap:    material.roughnessMap   ?.uuid ?? 'none',
-       metalnessMap:    material.metalnessMap   ?.uuid ?? 'none',
-       normalMap:       material.normalMap      ?.uuid ?? 'none',
-       bumpMap:         material.bumpMap        ?.uuid ?? 'none',
-       displacementMap: material.displacementMap?.uuid ?? 'none',
-       aoMap:           material.aoMap          ?.uuid ?? 'none',
-
-       sheenColor:     material.sheenColor.getHex(),
-       specularColor:  material.specularColor.getHex(),
-    };
-
-    const folder = gui.addFolder( 'THREE.MeshPhysicalMaterial' );
-
-    folder.addColor( data, 'color' ).onChange( handleColorChange( material.color ) );
-    folder.addColor( data, 'emissive' ).onChange( handleColorChange( material.emissive ) );
-
-    folder.add( material, 'roughness', 0, 1 );
-    folder.add( material, 'metalness', 0, 1 );
-    folder.add( material, 'ior', 1, 2.333 );
-    folder.add( material, 'reflectivity', 0, 1 );
-    folder.add( material, 'iridescence', 0, 1 );
-    folder.add( material, 'iridescenceIOR', 1, 2.333 );
-    folder.add( material, 'sheen', 0, 1 );
-    folder.add( material, 'sheenRoughness', 0, 1 );
-    folder.addColor( data, 'sheenColor' ).onChange( handleColorChange( material.sheenColor ) );
-    folder.add( material, 'clearcoat', 0, 1 ).step( 0.01 );
-    folder.add( material, 'clearcoatRoughness', 0, 1 ).step( 0.01 );
-    folder.add( material, 'specularIntensity', 0, 1);
-    folder.addColor( data, 'specularColor' ).onChange( handleColorChange( material.specularColor ) );
-    folder.add( material, 'flatShading' ).onChange( needsUpdate( material, geometry ) );
-    folder.add( material, 'wireframe' );
-    folder.add( material, 'vertexColors' ).onChange( needsUpdate( material, geometry ) );
-    folder.add( material, 'fog' ).onChange( needsUpdate( material, geometry ) );
-    folder.add( data, 'map',             mapKeys).onChange( updateTexture( material, 'map', envMaps ) );
-    folder.add( data, 'roughnessMap',    mapKeys).onChange( updateTexture( material, 'roughnessMap', envMaps ) );
-    folder.add( data, 'metalnessMap',    mapKeys).onChange( updateTexture( material, 'metalnessMap', envMaps ) );
-    folder.add( data, 'normalMap',       mapKeys).onChange( updateTexture( material, 'normalMap', envMaps ) );
-    folder.add( data, 'bumpMap',         mapKeys).onChange( updateTexture( material, 'bumpMap', envMaps ) );
-    folder.add( data, 'displacementMap', mapKeys).onChange( updateTexture( material, 'displacementMap', envMaps ) );
-    folder.add( data, 'aoMap',           mapKeys).onChange( updateTexture( material, 'aoMap', envMaps ) );
-    folder.add( data, 'envMap',          mapKeys).onChange( updateTexture( material, 'envMap', envMaps ) );
-}
-
-const gui = window.gui = new GUI();
-
-const renderer = new THREE.WebGLRenderer( { antialias: true } );
-renderer.setPixelRatio( window.devicePixelRatio );
-renderer.setSize( window.innerWidth, window.innerHeight );
-document.body.appendChild( renderer.domElement );
-
-const pmremGenerator = new THREE.PMREMGenerator( renderer );
-
-const scene = new THREE.Scene();
-scene.background = new THREE.Color( 0x444444 );
-scene.environment = pmremGenerator.fromScene( new RoomEnvironment(), 0.04 ).texture;
-
-const camera = new THREE.PerspectiveCamera( 70, window.innerWidth / window.innerHeight, 10, 100 );
-camera.position.z = 35;
-
-const ambientLight = new THREE.AmbientLight( 0x000000 );
-scene.add( ambientLight );
-
-const light1 = new THREE.DirectionalLight( 0xffffff, 3 );
-light1.position.set( 0, 200, 0 );
-scene.add( light1 );
-
-const light2 = new THREE.DirectionalLight( 0xffffff, 3 );
-light2.position.set( 100, 200, 100 );
-scene.add( light2 );
-
-const light3 = new THREE.DirectionalLight( 0xffffff, 3 );
-light3.position.set( - 100, - 200, - 100 );
-scene.add( light3 );
-
-guiScene( gui, scene );
-
-const geometry = new THREE.TorusKnotGeometry( 10, 3, 200, 32 ).toNonIndexed();
-geometry.setAttribute("uv2", new THREE.BufferAttribute(geometry.attributes.uv.array, 2));
-
-const mesh = new THREE.Mesh( geometry );
-mesh.material = new THREE.MeshPhysicalMaterial( { color: 0xFFFFFF } );
-if (Object.keys(save.materials[material_select.value]).length > 0)
-    mesh.material.copy(material_loader.parse(save.materials[material_select.value]));
-guiMaterial( gui, mesh, mesh.material, geometry );
-guiMeshPhysicalMaterial( gui, mesh, mesh.material, geometry );
-
-// only use scene environment
-
-light1.visible = false;
-light2.visible = false;
-light3.visible = false;
-
-scene.add( mesh );
-
-let prevFog = false;
-
-let animFrame;
-function render() {
-
-    animFrame = requestAnimationFrame( render );
-
-    save.materials[material_select.value] = mesh.material.toJSON();
-    delete save.materials[material_select.value].textures;
-    delete save.materials[material_select.value].images;
-
-    mesh.rotation.x += 0.005;
-    mesh.rotation.y += 0.005;
-
-    if ( prevFog !== scene.fog ) {
-
-        mesh.material.needsUpdate = true;
-        prevFog = scene.fog;
-
-    }
-
-    renderer.render( scene, camera );
-
-}
-
-window.addEventListener( 'resize', function () {
-
-  camera.aspect = window.innerWidth / window.innerHeight;
-  camera.updateProjectionMatrix();
-
-  renderer.setSize( window.innerWidth, window.innerHeight );
-
-}, false );
-
-render();
+renderMeshGUI(`
+o HornedHelmet
+v -0.000000 -0.267293 1.105357 0.8902 0.8666 0.6941
+v -0.123178 -0.285705 1.078319 0.8902 0.8666 0.6941
+v -0.199306 -0.333908 1.007533 0.8902 0.8666 0.6941
+v -0.199306 -0.393491 0.920037 0.8902 0.8666 0.6941
+v -0.123178 -0.441694 0.849251 0.8902 0.8666 0.6941
+v -0.000000 -0.460106 0.822213 0.8902 0.8666 0.6941
+v 0.123178 -0.441694 0.849251 0.8902 0.8666 0.6941
+v 0.199306 -0.393491 0.920037 0.8902 0.8666 0.6941
+v 0.199306 -0.333908 1.007533 0.8902 0.8666 0.6941
+v 0.123178 -0.285705 1.078319 0.8902 0.8666 0.6941
+v -0.000000 -0.628010 1.204320 0.8902 0.8666 0.6941
+v -0.123178 -0.655573 1.183290 0.8902 0.8666 0.6941
+v -0.199306 -0.727733 1.128233 0.8902 0.8666 0.6941
+v -0.199306 -0.816929 1.060180 0.8902 0.8666 0.6941
+v -0.123178 -0.889089 1.005123 0.8902 0.8666 0.6941
+v -0.000000 -0.916652 0.984093 0.8902 0.8666 0.6941
+v 0.123178 -0.889089 1.005123 0.8902 0.8666 0.6941
+v 0.199306 -0.816929 1.060180 0.8902 0.8666 0.6941
+v 0.199306 -0.727733 1.128233 0.8902 0.8666 0.6941
+v 0.123178 -0.655573 1.183290 0.8902 0.8666 0.6941
+v -0.000000 -0.907225 1.399333 0.8902 0.8666 0.6941
+v -0.097626 -0.934963 1.388446 0.8902 0.8666 0.6941
+v -0.157962 -1.007579 1.359941 0.8902 0.8666 0.6941
+v -0.157962 -1.097338 1.324708 0.8902 0.8666 0.6941
+v -0.097626 -1.169955 1.296204 0.8902 0.8666 0.6941
+v -0.000000 -1.197692 1.285316 0.8902 0.8666 0.6941
+v 0.097626 -1.169955 1.296204 0.8902 0.8666 0.6941
+v 0.157962 -1.097338 1.324708 0.8902 0.8666 0.6941
+v 0.157962 -1.007579 1.359941 0.8902 0.8666 0.6941
+v 0.097626 -0.934963 1.388446 0.8902 0.8666 0.6941
+v -0.000000 -1.081819 1.541034 0.8902 0.8666 0.6941
+v -0.075565 -1.104017 1.537473 0.8902 0.8666 0.6941
+v -0.122267 -1.162131 1.528149 0.8902 0.8666 0.6941
+v -0.122267 -1.233965 1.516625 0.8902 0.8666 0.6941
+v -0.075565 -1.292079 1.507302 0.8902 0.8666 0.6941
+v -0.000000 -1.314276 1.503741 0.8902 0.8666 0.6941
+v 0.075565 -1.292079 1.507302 0.8902 0.8666 0.6941
+v 0.122267 -1.233965 1.516625 0.8902 0.8666 0.6941
+v 0.122267 -1.162131 1.528149 0.8902 0.8666 0.6941
+v 0.075565 -1.104017 1.537473 0.8902 0.8666 0.6941
+v -0.000000 -1.355912 1.890543 0.8902 0.8666 0.6941
+v -0.017155 -1.361028 1.890229 0.8902 0.8666 0.6941
+v -0.027757 -1.374419 1.889409 0.8902 0.8666 0.6941
+v -0.027757 -1.390974 1.888396 0.8902 0.8666 0.6941
+v -0.017155 -1.404366 1.887575 0.8902 0.8666 0.6941
+v -0.000000 -1.409482 1.887262 0.8902 0.8666 0.6941
+v 0.017155 -1.404366 1.887575 0.8902 0.8666 0.6941
+v 0.027757 -1.390974 1.888396 0.8902 0.8666 0.6941
+v 0.027757 -1.374419 1.889409 0.8902 0.8666 0.6941
+v 0.017155 -1.361028 1.890229 0.8902 0.8666 0.6941
+v -0.000000 0.267293 1.105357 0.8902 0.8666 0.6941
+v 0.123178 0.285705 1.078319 0.8902 0.8666 0.6941
+v 0.199306 0.333908 1.007533 0.8902 0.8666 0.6941
+v 0.199306 0.393491 0.920037 0.8902 0.8666 0.6941
+v 0.123178 0.441694 0.849251 0.8902 0.8666 0.6941
+v -0.000000 0.460106 0.822213 0.8902 0.8666 0.6941
+v -0.123178 0.441694 0.849251 0.8902 0.8666 0.6941
+v -0.199306 0.393491 0.920037 0.8902 0.8666 0.6941
+v -0.199306 0.333908 1.007533 0.8902 0.8666 0.6941
+v -0.123178 0.285705 1.078319 0.8902 0.8666 0.6941
+v -0.000000 0.628010 1.204320 0.8902 0.8666 0.6941
+v 0.123178 0.655573 1.183290 0.8902 0.8666 0.6941
+v 0.199306 0.727733 1.128233 0.8902 0.8666 0.6941
+v 0.199306 0.816929 1.060180 0.8902 0.8666 0.6941
+v 0.123178 0.889089 1.005123 0.8902 0.8666 0.6941
+v -0.000000 0.916652 0.984093 0.8902 0.8666 0.6941
+v -0.123178 0.889089 1.005123 0.8902 0.8666 0.6941
+v -0.199306 0.816929 1.060180 0.8902 0.8666 0.6941
+v -0.199306 0.727733 1.128233 0.8902 0.8666 0.6941
+v -0.123178 0.655573 1.183290 0.8902 0.8666 0.6941
+v -0.000000 0.907225 1.399333 0.8902 0.8666 0.6941
+v 0.097625 0.934963 1.388445 0.8902 0.8666 0.6941
+v 0.157961 1.007579 1.359941 0.8902 0.8666 0.6941
+v 0.157961 1.097338 1.324708 0.8902 0.8666 0.6941
+v 0.097625 1.169955 1.296203 0.8902 0.8666 0.6941
+v -0.000000 1.197692 1.285316 0.8902 0.8666 0.6941
+v -0.097626 1.169955 1.296203 0.8902 0.8666 0.6941
+v -0.157962 1.097338 1.324708 0.8902 0.8666 0.6941
+v -0.157962 1.007579 1.359941 0.8902 0.8666 0.6941
+v -0.097626 0.934963 1.388445 0.8902 0.8666 0.6941
+v -0.000000 1.081819 1.541034 0.8902 0.8666 0.6941
+v 0.075565 1.104017 1.537472 0.8902 0.8666 0.6941
+v 0.122267 1.162132 1.528150 0.8902 0.8666 0.6941
+v 0.122267 1.233965 1.516625 0.8902 0.8666 0.6941
+v 0.075565 1.292079 1.507301 0.8902 0.8666 0.6941
+v -0.000000 1.314277 1.503740 0.8902 0.8666 0.6941
+v -0.075566 1.292079 1.507301 0.8902 0.8666 0.6941
+v -0.122268 1.233965 1.516625 0.8902 0.8666 0.6941
+v -0.122268 1.162131 1.528149 0.8902 0.8666 0.6941
+v -0.075566 1.104017 1.537472 0.8902 0.8666 0.6941
+v -0.000000 1.355912 1.890543 0.8902 0.8666 0.6941
+v 0.017155 1.361028 1.890229 0.8902 0.8666 0.6941
+v 0.027757 1.374420 1.889409 0.8902 0.8666 0.6941
+v 0.027757 1.390974 1.888395 0.8902 0.8666 0.6941
+v 0.017154 1.404367 1.887575 0.8902 0.8666 0.6941
+v -0.000000 1.409482 1.887261 0.8902 0.8666 0.6941
+v -0.017155 1.404367 1.887575 0.8902 0.8666 0.6941
+v -0.027758 1.390974 1.888395 0.8902 0.8666 0.6941
+v -0.027758 1.374420 1.889409 0.8902 0.8666 0.6941
+v -0.017155 1.361028 1.890229 0.8902 0.8666 0.6941
+v -0.000000 1.012653 0.344470 0.2941 0.2941 0.2941
+v -0.000000 1.012653 0.570328 0.2941 0.2941 0.2941
+v 0.191418 0.993195 0.344470 0.2941 0.2941 0.2941
+v 0.191418 0.993195 0.570328 0.2941 0.2941 0.2941
+v 0.375479 0.935569 0.344471 0.2941 0.2941 0.2941
+v 0.375479 0.935569 0.570328 0.2941 0.2941 0.2941
+v 0.545112 0.841990 0.344470 0.2941 0.2941 0.2941
+v 0.545112 0.841990 0.570328 0.2941 0.2941 0.2941
+v 0.693796 0.716054 0.344470 0.2941 0.2941 0.2941
+v 0.693796 0.716054 0.570328 0.2941 0.2941 0.2941
+v 0.815817 0.562600 0.344470 0.2941 0.2941 0.2941
+v 0.815817 0.562600 0.570328 0.2941 0.2941 0.2941
+v 0.906488 0.387525 0.344471 0.2941 0.2941 0.2941
+v 0.906488 0.387525 0.570328 0.2941 0.2941 0.2941
+v 0.962322 0.197559 0.344471 0.2941 0.2941 0.2941
+v 0.962322 0.197559 0.570328 0.2941 0.2941 0.2941
+v 0.981175 -0.000000 0.344471 0.2941 0.2941 0.2941
+v 0.981175 -0.000000 0.570328 0.2941 0.2941 0.2941
+v 0.962322 -0.197559 0.344471 0.2941 0.2941 0.2941
+v 0.962322 -0.197559 0.570328 0.2941 0.2941 0.2941
+v 0.906488 -0.387526 0.344471 0.2941 0.2941 0.2941
+v 0.906488 -0.387526 0.570328 0.2941 0.2941 0.2941
+v 0.815817 -0.562600 0.344471 0.2941 0.2941 0.2941
+v 0.815817 -0.562600 0.570328 0.2941 0.2941 0.2941
+v 0.693796 -0.716054 0.344471 0.2941 0.2941 0.2941
+v 0.693796 -0.716054 0.570328 0.2941 0.2941 0.2941
+v 0.545112 -0.841990 0.344471 0.2941 0.2941 0.2941
+v 0.545112 -0.841990 0.570328 0.2941 0.2941 0.2941
+v 0.375479 -0.935569 0.344471 0.2941 0.2941 0.2941
+v 0.375479 -0.935569 0.570328 0.2941 0.2941 0.2941
+v 0.191418 -0.993195 0.344471 0.2941 0.2941 0.2941
+v 0.191418 -0.993195 0.570328 0.2941 0.2941 0.2941
+v -0.000000 -1.012653 0.344471 0.2941 0.2941 0.2941
+v -0.000000 -1.012653 0.570328 0.2941 0.2941 0.2941
+v -0.191418 -0.993195 0.344471 0.2941 0.2941 0.2941
+v -0.191418 -0.993195 0.570328 0.2941 0.2941 0.2941
+v -0.375480 -0.935569 0.344471 0.2941 0.2941 0.2941
+v -0.375480 -0.935569 0.570328 0.2941 0.2941 0.2941
+v -0.545112 -0.841990 0.344471 0.2941 0.2941 0.2941
+v -0.545112 -0.841990 0.570328 0.2941 0.2941 0.2941
+v -0.693796 -0.716054 0.344471 0.2941 0.2941 0.2941
+v -0.693796 -0.716054 0.570328 0.2941 0.2941 0.2941
+v -0.815818 -0.562600 0.344471 0.2941 0.2941 0.2941
+v -0.815818 -0.562600 0.570328 0.2941 0.2941 0.2941
+v -0.906488 -0.387526 0.344471 0.2941 0.2941 0.2941
+v -0.906488 -0.387526 0.570328 0.2941 0.2941 0.2941
+v -0.962322 -0.197559 0.344471 0.2941 0.2941 0.2941
+v -0.962322 -0.197559 0.570328 0.2941 0.2941 0.2941
+v -0.981175 -0.000000 0.344471 0.2941 0.2941 0.2941
+v -0.981175 -0.000000 0.570328 0.2941 0.2941 0.2941
+v -0.962322 0.197559 0.344471 0.2941 0.2941 0.2941
+v -0.962322 0.197559 0.570328 0.2941 0.2941 0.2941
+v -0.906488 0.387525 0.344471 0.2941 0.2941 0.2941
+v -0.906488 0.387525 0.570328 0.2941 0.2941 0.2941
+v -0.815818 0.562600 0.344470 0.2941 0.2941 0.2941
+v -0.815818 0.562600 0.570328 0.2941 0.2941 0.2941
+v -0.693796 0.716054 0.344470 0.2941 0.2941 0.2941
+v -0.693796 0.716054 0.570328 0.2941 0.2941 0.2941
+v -0.545112 0.841990 0.344470 0.2941 0.2941 0.2941
+v -0.545112 0.841990 0.570328 0.2941 0.2941 0.2941
+v -0.375480 0.935569 0.344471 0.2941 0.2941 0.2941
+v -0.375480 0.935569 0.570328 0.2941 0.2941 0.2941
+v -0.191418 0.993195 0.344470 0.2941 0.2941 0.2941
+v -0.191418 0.993195 0.570328 0.2941 0.2941 0.2941
+v 0.248586 -0.789628 0.804053 0.2941 0.2941 0.2941
+v -0.650820 -0.488012 0.804053 0.2941 0.2941 0.2941
+v -0.650820 0.488012 0.804053 0.2941 0.2941 0.2941
+v 0.248586 0.789628 0.804053 0.2941 0.2941 0.2941
+v 0.804456 -0.000000 0.804049 0.2941 0.2941 0.2941
+v -0.000000 -0.000000 1.274863 0.2941 0.2941 0.2941
+v 0.860399 -0.137029 0.637057 0.2941 0.2941 0.2941
+v 0.855391 -0.286846 0.423150 0.2941 0.2941 0.2941
+v 0.855391 0.286845 0.423151 0.2941 0.2941 0.2941
+v 0.860399 0.137029 0.637057 0.2941 0.2941 0.2941
+v 0.139602 -0.886885 0.637059 0.2941 0.2941 0.2941
+v -0.000000 -0.928265 0.423151 0.2941 0.2941 0.2941
+v 0.528661 -0.750982 0.423151 0.2941 0.2941 0.2941
+v 0.392149 -0.802196 0.637060 0.2941 0.2941 0.2941
+v -0.774121 -0.411089 0.637059 0.2941 0.2941 0.2941
+v -0.855392 -0.286846 0.423150 0.2941 0.2941 0.2941
+v -0.528661 -0.750982 0.423151 0.2941 0.2941 0.2941
+v -0.618038 -0.632813 0.637060 0.2941 0.2941 0.2941
+v -0.618038 0.632812 0.637060 0.2941 0.2941 0.2941
+v -0.528661 0.750982 0.423150 0.2941 0.2941 0.2941
+v -0.855392 0.286845 0.423151 0.2941 0.2941 0.2941
+v -0.774121 0.411089 0.637058 0.2941 0.2941 0.2941
+v 0.392149 0.802196 0.637059 0.2941 0.2941 0.2941
+v 0.528661 0.750982 0.423150 0.2941 0.2941 0.2941
+v -0.000000 0.928265 0.423150 0.2941 0.2941 0.2941
+v 0.139602 0.886885 0.637059 0.2941 0.2941 0.2941
+v 0.747455 -0.221719 0.850964 0.2941 0.2941 0.2941
+v 0.618965 -0.464130 0.870926 0.2941 0.2941 0.2941
+v 0.435289 -0.665162 0.850967 0.2941 0.2941 0.2941
+v 0.026658 -0.802192 0.850967 0.2941 0.2941 0.2941
+v -0.236427 -0.750977 0.870928 0.2941 0.2941 0.2941
+v -0.478433 -0.632810 0.850967 0.2941 0.2941 0.2941
+v -0.730978 -0.274059 0.850966 0.2941 0.2941 0.2941
+v -0.765082 -0.000000 0.870926 0.2941 0.2941 0.2941
+v -0.730978 0.274059 0.850966 0.2941 0.2941 0.2941
+v -0.478433 0.632810 0.850967 0.2941 0.2941 0.2941
+v -0.236427 0.750977 0.870927 0.2941 0.2941 0.2941
+v 0.026658 0.802192 0.850967 0.2941 0.2941 0.2941
+v 0.435289 0.665162 0.850967 0.2941 0.2941 0.2941
+v 0.618965 0.464129 0.870926 0.2941 0.2941 0.2941
+v 0.747455 0.221719 0.850964 0.2941 0.2941 0.2941
+v 0.069800 -0.221719 1.247565 0.2941 0.2941 0.2941
+v 0.146114 -0.464128 1.147663 0.2941 0.2941 0.2941
+v 0.209402 -0.665161 0.983168 0.2941 0.2941 0.2941
+v 0.677653 -0.000000 0.983164 0.2941 0.2941 0.2941
+v 0.472847 -0.000000 1.147661 0.2941 0.2941 0.2941
+v 0.225884 0.000000 1.247564 0.2941 0.2941 0.2941
+v -0.182743 -0.137029 1.247565 0.2941 0.2941 0.2941
+v -0.382540 -0.286845 1.147663 0.2941 0.2941 0.2941
+v -0.548233 -0.411088 0.983167 0.2941 0.2941 0.2941
+v -0.182743 0.137028 1.247565 0.2941 0.2941 0.2941
+v -0.382540 0.286844 1.147663 0.2941 0.2941 0.2941
+v -0.548233 0.411088 0.983167 0.2941 0.2941 0.2941
+v 0.069800 0.221718 1.247565 0.2941 0.2941 0.2941
+v 0.146114 0.464128 1.147663 0.2941 0.2941 0.2941
+v 0.209402 0.665160 0.983167 0.2941 0.2941 0.2941
+v 0.325407 0.244006 1.184947 0.2941 0.2941 0.2941
+v 0.573998 0.244007 1.039458 0.2941 0.2941 0.2941
+v 0.402225 0.488015 1.039459 0.2941 0.2941 0.2941
+v -0.124296 0.394809 1.184947 0.2941 0.2941 0.2941
+v -0.047480 0.638818 1.039460 0.2941 0.2941 0.2941
+v -0.325410 0.545614 1.039460 0.2941 0.2941 0.2941
+v -0.402226 -0.000000 1.184947 0.2941 0.2941 0.2941
+v -0.603340 0.150803 1.039459 0.2941 0.2941 0.2941
+v -0.603340 -0.150803 1.039459 0.2941 0.2941 0.2941
+v -0.124296 -0.394809 1.184947 0.2941 0.2941 0.2941
+v -0.325410 -0.545614 1.039460 0.2941 0.2941 0.2941
+v -0.047480 -0.638818 1.039460 0.2941 0.2941 0.2941
+v 0.325407 -0.244007 1.184947 0.2941 0.2941 0.2941
+v 0.402225 -0.488015 1.039459 0.2941 0.2941 0.2941
+v 0.573998 -0.244008 1.039458 0.2941 0.2941 0.2941
+v 0.775116 0.394811 0.658560 0.2941 0.2941 0.2941
+v 0.727640 0.545618 0.423150 0.2941 0.2941 0.2941
+v 0.603343 0.638822 0.658561 0.2941 0.2941 0.2941
+v -0.124297 0.882831 0.658561 0.2941 0.2941 0.2941
+v -0.277933 0.882833 0.423150 0.2941 0.2941 0.2941
+v -0.402230 0.789628 0.658561 0.2941 0.2941 0.2941
+v -0.851934 0.150804 0.658560 0.2941 0.2941 0.2941
+v -0.899411 -0.000000 0.423151 0.2941 0.2941 0.2941
+v -0.851934 -0.150804 0.658561 0.2941 0.2941 0.2941
+v -0.402231 -0.789627 0.658561 0.2941 0.2941 0.2941
+v -0.277934 -0.882833 0.423150 0.2941 0.2941 0.2941
+v -0.124298 -0.882832 0.658561 0.2941 0.2941 0.2941
+v 0.603343 -0.638823 0.658560 0.2941 0.2941 0.2941
+v 0.727640 -0.545619 0.423149 0.2941 0.2941 0.2941
+v 0.775116 -0.394813 0.658559 0.2941 0.2941 0.2941
+v 0.277933 0.882832 0.423150 0.2941 0.2941 0.2941
+v -0.727640 0.545619 0.423150 0.2941 0.2941 0.2941
+v -0.727640 -0.545619 0.423151 0.2941 0.2941 0.2941
+v 0.277933 -0.882833 0.423151 0.2941 0.2941 0.2941
+v 0.899410 -0.000000 0.423151 0.2941 0.2941 0.2941
+v -0.000000 0.123078 1.320694 0.2941 0.2941 0.2941
+v -0.000000 -0.123079 1.320694 0.2941 0.2941 0.2941
+v 0.181795 0.123078 1.306069 0.2941 0.2941 0.2941
+v 0.181795 -0.123079 1.306070 0.2941 0.2941 0.2941
+v 0.356604 0.123078 1.262757 0.2941 0.2941 0.2941
+v 0.356604 -0.123079 1.262757 0.2941 0.2941 0.2941
+v 0.517708 0.123078 1.192422 0.2941 0.2941 0.2941
+v 0.517708 -0.123079 1.192422 0.2941 0.2941 0.2941
+v 0.658918 0.123079 1.097767 0.2941 0.2941 0.2941
+v 0.658918 -0.123079 1.097766 0.2941 0.2941 0.2941
+v 0.774805 0.123078 0.982428 0.2941 0.2941 0.2941
+v 0.774805 -0.123079 0.982428 0.2941 0.2941 0.2941
+v 0.860918 0.123078 0.850840 0.2941 0.2941 0.2941
+v 0.860918 -0.123079 0.850840 0.2941 0.2941 0.2941
+v 0.913945 0.123078 0.708059 0.2941 0.2941 0.2941
+v 0.913945 -0.123079 0.708059 0.2941 0.2941 0.2941
+v 0.931850 0.123078 0.559571 0.2941 0.2941 0.2941
+v 0.931850 -0.123079 0.559571 0.2941 0.2941 0.2941
+v -0.931851 0.123078 0.559571 0.2941 0.2941 0.2941
+v -0.931851 -0.123079 0.559571 0.2941 0.2941 0.2941
+v -0.913946 0.123078 0.708059 0.2941 0.2941 0.2941
+v -0.913946 -0.123079 0.708059 0.2941 0.2941 0.2941
+v -0.860918 0.123078 0.850840 0.2941 0.2941 0.2941
+v -0.860918 -0.123079 0.850840 0.2941 0.2941 0.2941
+v -0.774806 0.123078 0.982428 0.2941 0.2941 0.2941
+v -0.774806 -0.123079 0.982428 0.2941 0.2941 0.2941
+v -0.658918 0.123079 1.097767 0.2941 0.2941 0.2941
+v -0.658918 -0.123079 1.097766 0.2941 0.2941 0.2941
+v -0.517709 0.123078 1.192422 0.2941 0.2941 0.2941
+v -0.517709 -0.123079 1.192422 0.2941 0.2941 0.2941
+v -0.356604 0.123078 1.262757 0.2941 0.2941 0.2941
+v -0.356604 -0.123079 1.262757 0.2941 0.2941 0.2941
+v -0.181795 0.123078 1.306069 0.2941 0.2941 0.2941
+v -0.181795 -0.123079 1.306070 0.2941 0.2941 0.2941
+v -0.000000 0.123078 1.202532 0.2941 0.2941 0.2941
+v -0.000000 -0.123079 1.202532 0.2941 0.2941 0.2941
+v 0.111720 0.123078 1.193545 0.2941 0.2941 0.2941
+v 0.111720 -0.123079 1.193545 0.2941 0.2941 0.2941
+v 0.219147 0.123078 1.166928 0.2941 0.2941 0.2941
+v 0.219147 -0.123079 1.166928 0.2941 0.2941 0.2941
+v 0.318152 0.123078 1.123704 0.2941 0.2941 0.2941
+v 0.318152 -0.123079 1.123704 0.2941 0.2941 0.2941
+v 0.404930 0.123078 1.065535 0.2941 0.2941 0.2941
+v 0.404930 -0.123079 1.065535 0.2941 0.2941 0.2941
+v 0.476148 0.123078 0.994655 0.2941 0.2941 0.2941
+v 0.476148 -0.123079 0.994655 0.2941 0.2941 0.2941
+v 0.529067 0.123078 0.913789 0.2941 0.2941 0.2941
+v 0.529067 -0.123079 0.913789 0.2941 0.2941 0.2941
+v 0.561654 0.123078 0.826044 0.2941 0.2941 0.2941
+v 0.561654 -0.123079 0.826044 0.2941 0.2941 0.2941
+v 0.572658 0.123078 0.734793 0.2941 0.2941 0.2941
+v 0.572658 -0.123079 0.734793 0.2941 0.2941 0.2941
+v -0.572658 0.123078 0.734793 0.2941 0.2941 0.2941
+v -0.572658 -0.123079 0.734793 0.2941 0.2941 0.2941
+v -0.561655 0.123078 0.826044 0.2941 0.2941 0.2941
+v -0.561655 -0.123079 0.826044 0.2941 0.2941 0.2941
+v -0.529067 0.123078 0.913789 0.2941 0.2941 0.2941
+v -0.529067 -0.123079 0.913789 0.2941 0.2941 0.2941
+v -0.476148 0.123078 0.994655 0.2941 0.2941 0.2941
+v -0.476148 -0.123079 0.994655 0.2941 0.2941 0.2941
+v -0.404931 0.123078 1.065535 0.2941 0.2941 0.2941
+v -0.404931 -0.123079 1.065535 0.2941 0.2941 0.2941
+v -0.318152 0.123078 1.123704 0.2941 0.2941 0.2941
+v -0.318152 -0.123079 1.123704 0.2941 0.2941 0.2941
+v -0.219147 0.123078 1.166928 0.2941 0.2941 0.2941
+v -0.219147 -0.123079 1.166928 0.2941 0.2941 0.2941
+v -0.111720 0.123078 1.193545 0.2941 0.2941 0.2941
+v -0.111720 -0.123079 1.193545 0.2941 0.2941 0.2941
+v -0.000000 1.012653 0.344470 0.2941 0.2941 0.2941
+v 0.191418 0.993195 0.344470 0.2941 0.2941 0.2941
+v 0.191418 0.993195 0.570328 0.2941 0.2941 0.2941
+v -0.000000 1.012653 0.570328 0.2941 0.2941 0.2941
+v 0.375479 0.935569 0.344471 0.2941 0.2941 0.2941
+v 0.375479 0.935569 0.570328 0.2941 0.2941 0.2941
+v 0.545112 0.841990 0.344470 0.2941 0.2941 0.2941
+v 0.545112 0.841990 0.570328 0.2941 0.2941 0.2941
+v 0.693796 0.716054 0.344470 0.2941 0.2941 0.2941
+v 0.693796 0.716054 0.570328 0.2941 0.2941 0.2941
+v 0.815817 0.562600 0.344470 0.2941 0.2941 0.2941
+v 0.815817 0.562600 0.570328 0.2941 0.2941 0.2941
+v 0.906488 0.387525 0.344471 0.2941 0.2941 0.2941
+v 0.906488 0.387525 0.570328 0.2941 0.2941 0.2941
+v 0.962322 0.197559 0.344471 0.2941 0.2941 0.2941
+v 0.962322 0.197559 0.570328 0.2941 0.2941 0.2941
+v 0.981175 -0.000000 0.344471 0.2941 0.2941 0.2941
+v 0.981175 -0.000000 0.570328 0.2941 0.2941 0.2941
+v 0.962322 -0.197559 0.344471 0.2941 0.2941 0.2941
+v 0.962322 -0.197559 0.570328 0.2941 0.2941 0.2941
+v 0.906488 -0.387526 0.344471 0.2941 0.2941 0.2941
+v 0.906488 -0.387526 0.570328 0.2941 0.2941 0.2941
+v 0.815817 -0.562600 0.344471 0.2941 0.2941 0.2941
+v 0.815817 -0.562600 0.570328 0.2941 0.2941 0.2941
+v 0.693796 -0.716054 0.344471 0.2941 0.2941 0.2941
+v 0.693796 -0.716054 0.570328 0.2941 0.2941 0.2941
+v 0.545112 -0.841990 0.344471 0.2941 0.2941 0.2941
+v 0.545112 -0.841990 0.570328 0.2941 0.2941 0.2941
+v 0.375479 -0.935569 0.344471 0.2941 0.2941 0.2941
+v 0.375479 -0.935569 0.570328 0.2941 0.2941 0.2941
+v 0.191418 -0.993195 0.344471 0.2941 0.2941 0.2941
+v 0.191418 -0.993195 0.570328 0.2941 0.2941 0.2941
+v -0.000000 -1.012653 0.344471 0.2941 0.2941 0.2941
+v -0.000000 -1.012653 0.570328 0.2941 0.2941 0.2941
+v -0.191418 -0.993195 0.344471 0.2941 0.2941 0.2941
+v -0.191418 -0.993195 0.570328 0.2941 0.2941 0.2941
+v -0.375480 -0.935569 0.344471 0.2941 0.2941 0.2941
+v -0.375480 -0.935569 0.570328 0.2941 0.2941 0.2941
+v -0.545112 -0.841990 0.344471 0.2941 0.2941 0.2941
+v -0.545112 -0.841990 0.570328 0.2941 0.2941 0.2941
+v -0.693796 -0.716054 0.344471 0.2941 0.2941 0.2941
+v -0.693796 -0.716054 0.570328 0.2941 0.2941 0.2941
+v -0.815818 -0.562600 0.344471 0.2941 0.2941 0.2941
+v -0.815818 -0.562600 0.570328 0.2941 0.2941 0.2941
+v -0.906488 -0.387526 0.344471 0.2941 0.2941 0.2941
+v -0.906488 -0.387526 0.570328 0.2941 0.2941 0.2941
+v -0.962322 -0.197559 0.344471 0.2941 0.2941 0.2941
+v -0.962322 -0.197559 0.570328 0.2941 0.2941 0.2941
+v -0.981175 -0.000000 0.344471 0.2941 0.2941 0.2941
+v -0.981175 -0.000000 0.570328 0.2941 0.2941 0.2941
+v -0.962322 0.197559 0.344471 0.2941 0.2941 0.2941
+v -0.962322 0.197559 0.570328 0.2941 0.2941 0.2941
+v -0.906488 0.387525 0.344471 0.2941 0.2941 0.2941
+v -0.906488 0.387525 0.570328 0.2941 0.2941 0.2941
+v -0.815818 0.562600 0.344470 0.2941 0.2941 0.2941
+v -0.815818 0.562600 0.570328 0.2941 0.2941 0.2941
+v -0.693796 0.716054 0.344470 0.2941 0.2941 0.2941
+v -0.693796 0.716054 0.570328 0.2941 0.2941 0.2941
+v -0.545112 0.841990 0.344470 0.2941 0.2941 0.2941
+v -0.545112 0.841990 0.570328 0.2941 0.2941 0.2941
+v -0.375480 0.935569 0.344471 0.2941 0.2941 0.2941
+v -0.375480 0.935569 0.570328 0.2941 0.2941 0.2941
+v -0.191418 0.993195 0.344470 0.2941 0.2941 0.2941
+v -0.191418 0.993195 0.570328 0.2941 0.2941 0.2941
+v -0.000000 0.123078 1.320694 0.2941 0.2941 0.2941
+v 0.181795 0.123078 1.306069 0.2941 0.2941 0.2941
+v 0.181795 -0.123079 1.306070 0.2941 0.2941 0.2941
+v -0.000000 -0.123079 1.320694 0.2941 0.2941 0.2941
+v 0.356604 0.123078 1.262757 0.2941 0.2941 0.2941
+v 0.356604 -0.123079 1.262757 0.2941 0.2941 0.2941
+v 0.517708 0.123078 1.192422 0.2941 0.2941 0.2941
+v 0.517708 -0.123079 1.192422 0.2941 0.2941 0.2941
+v 0.658918 0.123079 1.097767 0.2941 0.2941 0.2941
+v 0.658918 -0.123079 1.097766 0.2941 0.2941 0.2941
+v 0.774805 0.123078 0.982428 0.2941 0.2941 0.2941
+v 0.774805 -0.123079 0.982428 0.2941 0.2941 0.2941
+v 0.860918 0.123078 0.850840 0.2941 0.2941 0.2941
+v 0.860918 -0.123079 0.850840 0.2941 0.2941 0.2941
+v 0.913945 0.123078 0.708059 0.2941 0.2941 0.2941
+v 0.913945 -0.123079 0.708059 0.2941 0.2941 0.2941
+v 0.931850 0.123078 0.559571 0.2941 0.2941 0.2941
+v 0.931850 0.123078 0.559571 0.2941 0.2941 0.2941
+v 0.931850 -0.123079 0.559571 0.2941 0.2941 0.2941
+v 0.931850 -0.123079 0.559571 0.2941 0.2941 0.2941
+v -0.931851 -0.123079 0.559571 0.2941 0.2941 0.2941
+v -0.931851 -0.123079 0.559571 0.2941 0.2941 0.2941
+v -0.931851 0.123078 0.559571 0.2941 0.2941 0.2941
+v -0.931851 0.123078 0.559571 0.2941 0.2941 0.2941
+v -0.913946 0.123078 0.708059 0.2941 0.2941 0.2941
+v -0.913946 -0.123079 0.708059 0.2941 0.2941 0.2941
+v -0.860918 0.123078 0.850840 0.2941 0.2941 0.2941
+v -0.860918 -0.123079 0.850840 0.2941 0.2941 0.2941
+v -0.774806 0.123078 0.982428 0.2941 0.2941 0.2941
+v -0.774806 -0.123079 0.982428 0.2941 0.2941 0.2941
+v -0.658918 0.123079 1.097767 0.2941 0.2941 0.2941
+v -0.658918 -0.123079 1.097766 0.2941 0.2941 0.2941
+v -0.517709 0.123078 1.192422 0.2941 0.2941 0.2941
+v -0.517709 -0.123079 1.192422 0.2941 0.2941 0.2941
+v -0.356604 0.123078 1.262757 0.2941 0.2941 0.2941
+v -0.356604 -0.123079 1.262757 0.2941 0.2941 0.2941
+v -0.181795 0.123078 1.306069 0.2941 0.2941 0.2941
+v -0.181795 -0.123079 1.306070 0.2941 0.2941 0.2941
+v -0.000000 0.123078 1.202532 0.2941 0.2941 0.2941
+v 0.111720 0.123078 1.193545 0.2941 0.2941 0.2941
+v 0.111720 -0.123079 1.193545 0.2941 0.2941 0.2941
+v -0.000000 -0.123079 1.202532 0.2941 0.2941 0.2941
+v 0.219147 0.123078 1.166928 0.2941 0.2941 0.2941
+v 0.219147 -0.123079 1.166928 0.2941 0.2941 0.2941
+v 0.318152 0.123078 1.123704 0.2941 0.2941 0.2941
+v 0.318152 -0.123079 1.123704 0.2941 0.2941 0.2941
+v 0.404930 0.123078 1.065535 0.2941 0.2941 0.2941
+v 0.404930 -0.123079 1.065535 0.2941 0.2941 0.2941
+v 0.476148 0.123078 0.994655 0.2941 0.2941 0.2941
+v 0.476148 -0.123079 0.994655 0.2941 0.2941 0.2941
+v 0.529067 0.123078 0.913789 0.2941 0.2941 0.2941
+v 0.529067 -0.123079 0.913789 0.2941 0.2941 0.2941
+v 0.561654 0.123078 0.826044 0.2941 0.2941 0.2941
+v 0.561654 -0.123079 0.826044 0.2941 0.2941 0.2941
+v 0.572658 0.123078 0.734793 0.2941 0.2941 0.2941
+v 0.572658 -0.123079 0.734793 0.2941 0.2941 0.2941
+v -0.572658 0.123078 0.734793 0.2941 0.2941 0.2941
+v -0.561655 0.123078 0.826044 0.2941 0.2941 0.2941
+v -0.561655 -0.123079 0.826044 0.2941 0.2941 0.2941
+v -0.572658 -0.123079 0.734793 0.2941 0.2941 0.2941
+v -0.529067 0.123078 0.913789 0.2941 0.2941 0.2941
+v -0.529067 -0.123079 0.913789 0.2941 0.2941 0.2941
+v -0.476148 0.123078 0.994655 0.2941 0.2941 0.2941
+v -0.476148 -0.123079 0.994655 0.2941 0.2941 0.2941
+v -0.404931 0.123078 1.065535 0.2941 0.2941 0.2941
+v -0.404931 -0.123079 1.065535 0.2941 0.2941 0.2941
+v -0.318152 0.123078 1.123704 0.2941 0.2941 0.2941
+v -0.318152 -0.123079 1.123704 0.2941 0.2941 0.2941
+v -0.219147 0.123078 1.166928 0.2941 0.2941 0.2941
+v -0.219147 -0.123079 1.166928 0.2941 0.2941 0.2941
+v -0.111720 0.123078 1.193545 0.2941 0.2941 0.2941
+v -0.111720 -0.123079 1.193545 0.2941 0.2941 0.2941
+vn -0.0000 0.2646 0.9644
+vn -0.4775 0.2361 0.8463
+vn -0.9011 0.1198 0.4167
+vn -0.9511 -0.0971 -0.2933
+vn -0.5297 -0.2742 -0.8026
+vn -0.0000 -0.3298 -0.9440
+vn 0.5297 -0.2742 -0.8026
+vn 0.9511 -0.0971 -0.2933
+vn 0.9011 0.1198 0.4167
+vn 0.4775 0.2361 0.8463
+vn -0.0000 0.4155 0.9096
+vn -0.5208 0.3529 0.7773
+vn -0.9417 0.1241 0.3128
+vn -0.9234 -0.2257 -0.3106
+vn -0.5153 -0.4805 -0.7097
+vn -0.0000 -0.5594 -0.8289
+vn 0.5153 -0.4805 -0.7097
+vn 0.9234 -0.2257 -0.3106
+vn 0.9417 0.1241 0.3128
+vn 0.5208 0.3529 0.7773
+vn -0.0000 0.6006 0.7995
+vn -0.5148 0.5011 0.6956
+vn -0.9182 0.1709 0.3575
+vn -0.9408 -0.3158 -0.1230
+vn -0.5520 -0.6894 -0.4690
+vn -0.0000 -0.8153 -0.5791
+vn 0.5520 -0.6894 -0.4690
+vn 0.9408 -0.3158 -0.1230
+vn 0.9182 0.1709 0.3575
+vn 0.5148 0.5011 0.6956
+vn -0.0000 0.7100 0.7042
+vn -0.5002 0.6011 0.6233
+vn -0.9050 0.2204 0.3638
+vn -0.9360 -0.3519 0.0021
+vn -0.5523 -0.7901 -0.2658
+vn -0.0000 -0.9351 -0.3545
+vn 0.5523 -0.7901 -0.2658
+vn 0.9360 -0.3519 0.0021
+vn 0.9050 0.2204 0.3638
+vn 0.5002 0.6011 0.6233
+vn -0.0000 0.7882 0.6154
+vn -0.5124 0.6533 0.5574
+vn -0.9092 0.2108 0.3590
+vn -0.9105 -0.4093 0.0583
+vn -0.5194 -0.8380 -0.1674
+vn -0.0000 -0.9705 -0.2409
+vn 0.5194 -0.8380 -0.1674
+vn 0.9105 -0.4093 0.0583
+vn 0.9092 0.2108 0.3590
+vn 0.5124 0.6533 0.5574
+vn -0.0000 -0.2646 0.9644
+vn 0.4775 -0.2361 0.8463
+vn 0.9011 -0.1198 0.4167
+vn 0.9511 0.0971 -0.2933
+vn 0.5297 0.2742 -0.8026
+vn -0.0000 0.3298 -0.9440
+vn -0.5297 0.2742 -0.8026
+vn -0.9511 0.0971 -0.2933
+vn -0.9011 -0.1198 0.4167
+vn -0.4775 -0.2361 0.8463
+vn -0.0000 -0.4155 0.9096
+vn 0.5208 -0.3529 0.7773
+vn 0.9417 -0.1241 0.3128
+vn 0.9234 0.2257 -0.3106
+vn 0.5153 0.4805 -0.7097
+vn -0.0000 0.5594 -0.8289
+vn -0.5153 0.4805 -0.7097
+vn -0.9234 0.2257 -0.3106
+vn -0.9417 -0.1241 0.3128
+vn -0.5208 -0.3529 0.7773
+vn -0.0000 -0.6006 0.7995
+vn 0.5148 -0.5011 0.6956
+vn 0.9182 -0.1709 0.3575
+vn 0.9408 0.3158 -0.1230
+vn 0.5520 0.6894 -0.4690
+vn -0.0000 0.8153 -0.5791
+vn -0.5520 0.6894 -0.4690
+vn -0.9408 0.3158 -0.1230
+vn -0.9182 -0.1709 0.3575
+vn -0.5148 -0.5011 0.6956
+vn -0.0000 -0.7100 0.7042
+vn 0.5002 -0.6011 0.6233
+vn 0.9050 -0.2204 0.3638
+vn 0.9360 0.3519 0.0021
+vn 0.5523 0.7901 -0.2658
+vn -0.0000 0.9351 -0.3545
+vn -0.5523 0.7901 -0.2658
+vn -0.9360 0.3519 0.0021
+vn -0.9050 -0.2204 0.3638
+vn -0.5002 -0.6011 0.6233
+vn -0.0000 -0.7882 0.6154
+vn 0.5124 -0.6533 0.5574
+vn 0.9092 -0.2108 0.3590
+vn 0.9105 0.4093 0.0583
+vn 0.5194 0.8380 -0.1674
+vn -0.0000 0.9705 -0.2409
+vn -0.5194 0.8380 -0.1674
+vn -0.9105 0.4093 0.0583
+vn -0.9092 -0.2108 0.3590
+vn -0.5124 -0.6533 0.5574
+vn -0.0000 -0.0000 -1.0000
+vn -0.0000 -0.0000 1.0000
+vn -0.2010 0.9796 -0.0000
+vn 0.2793 -0.8339 0.4760
+vn -0.7216 -0.5086 0.4697
+vn -0.7216 0.5086 0.4697
+vn 0.2793 0.8339 0.4760
+vn 0.8848 -0.0000 0.4660
+vn 0.9554 -0.1486 0.2553
+vn 0.9448 -0.3025 0.1258
+vn 0.9448 0.3025 0.1258
+vn 0.9554 0.1486 0.2553
+vn 0.1538 -0.9527 0.2622
+vn -0.0045 -0.9917 0.1286
+vn 0.5978 -0.7914 0.1274
+vn 0.4503 -0.8540 0.2608
+vn -0.8672 -0.4269 0.2565
+vn -0.9474 -0.2943 0.1257
+vn -0.5908 -0.7967 0.1275
+vn -0.6920 -0.6739 0.2588
+vn -0.6920 0.6739 0.2588
+vn -0.5908 0.7967 0.1275
+vn -0.9474 0.2943 0.1257
+vn -0.8672 0.4269 0.2565
+vn 0.4503 0.8540 0.2608
+vn 0.5978 0.7914 0.1274
+vn -0.0045 0.9917 0.1286
+vn 0.1538 0.9527 0.2622
+vn 0.8179 -0.2377 0.5240
+vn 0.6831 -0.4816 0.5491
+vn 0.4920 -0.6901 0.5309
+vn 0.0201 -0.8449 0.5346
+vn -0.2640 -0.7885 0.5555
+vn -0.5238 -0.6667 0.5302
+vn -0.8060 -0.2744 0.5244
+vn -0.8383 -0.0000 0.5452
+vn -0.8060 0.2744 0.5244
+vn -0.5238 0.6667 0.5302
+vn -0.2640 0.7885 0.5555
+vn 0.0201 0.8449 0.5346
+vn 0.4920 0.6901 0.5309
+vn 0.6831 0.4816 0.5491
+vn 0.8179 0.2377 0.5240
+vn 0.0768 -0.2295 0.9703
+vn 0.1575 -0.4704 0.8683
+vn 0.2286 -0.6828 0.6939
+vn 0.7293 -0.0000 0.6842
+vn 0.5062 -0.0000 0.8624
+vn 0.2485 -0.0000 0.9686
+vn -0.2010 -0.1418 0.9693
+vn -0.4105 -0.2895 0.8647
+vn -0.5933 -0.4182 0.6878
+vn -0.2010 0.1418 0.9693
+vn -0.4105 0.2895 0.8647
+vn -0.5933 0.4182 0.6878
+vn 0.0768 0.2295 0.9703
+vn 0.1575 0.4704 0.8683
+vn 0.2286 0.6828 0.6939
+vn 0.3540 0.2496 0.9013
+vn 0.6156 0.2530 0.7463
+vn 0.4406 0.4928 0.7504
+vn -0.1357 0.4052 0.9041
+vn -0.0583 0.6537 0.7545
+vn -0.3475 0.5602 0.7520
+vn -0.4368 -0.0000 0.8996
+vn -0.6504 0.1463 0.7453
+vn -0.6504 -0.1463 0.7453
+vn -0.1357 -0.4052 0.9041
+vn -0.3475 -0.5602 0.7520
+vn -0.0583 -0.6537 0.7545
+vn 0.3540 -0.2496 0.9013
+vn 0.4406 -0.4928 0.7504
+vn 0.6156 -0.2530 0.7463
+vn 0.8605 0.4207 0.2871
+vn 0.8093 0.5708 0.1388
+vn 0.6837 0.6699 0.2894
+vn -0.1495 0.9443 0.2932
+vn -0.3142 0.9389 0.1407
+vn -0.4485 0.8448 0.2917
+vn -0.9465 0.1499 0.2858
+vn -0.9905 -0.0000 0.1376
+vn -0.9465 -0.1499 0.2858
+vn -0.4485 -0.8448 0.2917
+vn -0.3142 -0.9389 0.1407
+vn -0.1495 -0.9443 0.2932
+vn 0.6837 -0.6699 0.2894
+vn 0.8093 -0.5708 0.1388
+vn 0.8605 -0.4207 0.2871
+vn 0.3151 0.9413 0.1214
+vn -0.8113 0.5722 0.1198
+vn -0.8113 -0.5722 0.1198
+vn 0.3151 -0.9413 0.1214
+vn 0.9929 -0.0000 0.1188
+vn -0.0000 1.0000 -0.0000
+vn -0.0000 -1.0000 -0.0000
+vn -0.4384 -0.0000 -0.8988
+vn 0.2010 0.9796 -0.0000
+vn 0.3929 0.9196 -0.0000
+vn 0.5675 0.8234 -0.0000
+vn 0.7180 0.6961 -0.0000
+vn 0.8393 0.5437 -0.0000
+vn 0.9280 0.3727 -0.0000
+vn 0.9280 0.3726 -0.0000
+vn 0.9819 0.1894 -0.0000
+vn 1.0000 -0.0000 -0.0000
+vn 0.9819 -0.1894 -0.0000
+vn 0.9280 -0.3727 -0.0000
+vn 0.8393 -0.5437 -0.0000
+vn 0.7180 -0.6961 -0.0000
+vn 0.5675 -0.8234 -0.0000
+vn 0.3929 -0.9196 -0.0000
+vn 0.2010 -0.9796 -0.0000
+vn -0.2010 -0.9796 -0.0000
+vn -0.3929 -0.9196 -0.0000
+vn -0.5675 -0.8234 -0.0000
+vn -0.7180 -0.6961 -0.0000
+vn -0.8393 -0.5437 -0.0000
+vn -0.9280 -0.3727 -0.0000
+vn -0.9819 -0.1894 -0.0000
+vn -1.0000 -0.0000 -0.0000
+vn -0.9819 0.1894 -0.0000
+vn -0.9280 0.3727 -0.0000
+vn -0.9280 0.3726 -0.0000
+vn -0.8393 0.5437 -0.0000
+vn -0.7180 0.6961 -0.0000
+vn -0.5675 0.8234 -0.0000
+vn -0.3929 0.9196 -0.0000
+vn 0.1609 -0.0000 0.9870
+vn 0.3214 -0.0000 0.9469
+vn 0.3215 -0.0000 0.9469
+vn 0.4804 -0.0000 0.8771
+vn 0.6340 -0.0000 0.7733
+vn 0.7753 -0.0000 0.6316
+vn 0.8927 -0.0000 0.4507
+vn 0.9719 -0.0000 0.2356
+vn 0.9928 -0.0000 0.1197
+vn -0.9928 -0.0000 0.1197
+vn 0.4384 -0.0000 -0.8988
+vn -0.9719 -0.0000 0.2356
+vn -0.8927 -0.0000 0.4507
+vn -0.7753 -0.0000 0.6316
+vn -0.6340 -0.0000 0.7733
+vn -0.4804 -0.0000 0.8771
+vn -0.3215 -0.0000 0.9469
+vn -0.3214 -0.0000 0.9469
+vn -0.1609 -0.0000 0.9870
+vn -0.1609 -0.0000 -0.9870
+vn -0.3214 -0.0000 -0.9469
+vn -0.4804 -0.0000 -0.8771
+vn -0.6340 -0.0000 -0.7733
+vn -0.7753 -0.0000 -0.6316
+vn -0.8927 -0.0000 -0.4507
+vn -0.9719 -0.0000 -0.2356
+vn -0.8148 -0.0000 -0.5798
+vn 0.8148 -0.0000 -0.5798
+vn 0.9719 -0.0000 -0.2356
+vn 0.8927 -0.0000 -0.4507
+vn 0.7753 -0.0000 -0.6316
+vn 0.6340 -0.0000 -0.7733
+vn 0.4804 -0.0000 -0.8771
+vn 0.3214 -0.0000 -0.9469
+vn 0.1609 -0.0000 -0.9870
+s 1
+f 19//19 8//8 9//9
+f 6//6 15//15 5//5
+f 3//3 12//12 2//2
+f 20//20 9//9 10//10
+f 17//17 6//6 7//7
+f 4//4 13//13 3//3
+f 11//11 10//10 1//1
+f 18//18 7//7 8//8
+f 5//5 14//14 4//4
+f 2//2 11//11 1//1
+f 16//16 25//25 15//15
+f 13//13 22//22 12//12
+f 30//30 19//19 20//20
+f 27//27 16//16 17//17
+f 14//14 23//23 13//13
+f 21//21 20//20 11//11
+f 28//28 17//17 18//18
+f 15//15 24//24 14//14
+f 12//12 21//21 11//11
+f 29//29 18//18 19//19
+f 31//31 30//30 21//21
+f 38//38 27//27 28//28
+f 25//25 34//34 24//24
+f 22//22 31//31 21//21
+f 39//39 28//28 29//29
+f 26//26 35//35 25//25
+f 23//23 32//32 22//22
+f 40//40 29//29 30//30
+f 37//37 26//26 27//27
+f 24//24 33//33 23//23
+f 48//48 37//37 38//38
+f 35//35 44//44 34//34
+f 32//32 41//41 31//31
+f 49//49 38//38 39//39
+f 36//36 45//45 35//35
+f 33//33 42//42 32//32
+f 50//50 39//39 40//40
+f 47//47 36//36 37//37
+f 34//34 43//43 33//33
+f 41//41 40//40 31//31
+f 69//69 58//58 59//59
+f 56//56 65//65 55//55
+f 53//53 62//62 52//52
+f 70//70 59//59 60//60
+f 67//67 56//56 57//57
+f 54//54 63//63 53//53
+f 61//61 60//60 51//51
+f 68//68 57//57 58//58
+f 55//55 64//64 54//54
+f 52//52 61//61 51//51
+f 66//66 75//75 65//65
+f 63//63 72//72 62//62
+f 80//80 69//69 70//70
+f 77//77 66//66 67//67
+f 64//64 73//73 63//63
+f 71//71 70//70 61//61
+f 78//78 67//67 68//68
+f 65//65 74//74 64//64
+f 62//62 71//71 61//61
+f 79//79 68//68 69//69
+f 81//81 80//80 71//71
+f 88//88 77//77 78//78
+f 75//75 84//84 74//74
+f 72//72 81//81 71//71
+f 89//89 78//78 79//79
+f 76//76 85//85 75//75
+f 73//73 82//82 72//72
+f 90//90 79//79 80//80
+f 87//87 76//76 77//77
+f 74//74 83//83 73//73
+f 98//98 87//87 88//88
+f 85//85 94//94 84//84
+f 82//82 91//91 81//81
+f 99//99 88//88 89//89
+f 86//86 95//95 85//85
+f 83//83 92//92 82//82
+f 100//100 89//89 90//90
+f 97//97 86//86 87//87
+f 84//84 93//93 83//83
+f 91//91 90//90 81//81
+f 327//194 325//197 324//194
+f 325//197 329//198 328//198
+f 328//198 331//199 330//199
+f 331//199 332//200 330//199
+f 333//200 334//201 332//200
+f 335//201 336//202 334//201
+f 337//203 338//204 336//202
+f 338//204 341//205 340//205
+f 340//205 343//206 342//206
+f 342//206 345//207 344//207
+f 345//207 346//208 344//207
+f 346//208 349//209 348//209
+f 348//209 351//210 350//210
+f 350//210 353//211 352//211
+f 352//211 355//212 354//212
+f 354//212 357//195 356//195
+f 357//195 358//213 356//195
+f 359//213 360//214 358//213
+f 361//214 362//215 360//214
+f 363//215 364//216 362//215
+f 365//216 366//217 364//216
+f 366//217 369//218 368//218
+f 369//218 370//219 368//218
+f 371//219 372//220 370//219
+f 373//220 374//221 372//220
+f 374//221 377//223 376//222
+f 376//222 379//224 378//224
+f 378//224 381//225 380//225
+f 380//225 383//226 382//226
+f 383//226 384//227 382//226
+f 138//102 122//102 106//102
+f 385//227 386//103 384//227
+f 386//103 327//194 324//194
+f 131//101 147//101 163//101
+f 165//104 193//131 208//146
+f 166//105 196//134 214//152
+f 167//106 199//137 217//155
+f 168//107 202//140 220//158
+f 169//108 205//143 209//147
+f 211//149 218//156 170//102
+f 210//148 221//159 211//149
+f 209//147 222//160 210//148
+f 211//149 221//159 218//156
+f 221//159 219//157 218//156
+f 210//148 222//160 221//159
+f 222//160 223//161 221//159
+f 221//159 223//161 219//157
+f 223//161 220//158 219//157
+f 209//147 205//143 222//160
+f 205//143 204//142 222//160
+f 222//160 204//142 223//161
+f 204//142 203//141 223//161
+f 223//161 203//141 220//158
+f 203//141 168//107 220//158
+f 218//156 215//153 170//102
+f 219//157 224//162 218//156
+f 220//158 225//163 219//157
+f 218//156 224//162 215//153
+f 224//162 216//154 215//153
+f 219//157 225//163 224//162
+f 225//163 226//164 224//162
+f 224//162 226//164 216//154
+f 226//164 217//155 216//154
+f 220//158 202//140 225//163
+f 202//140 201//139 225//163
+f 225//163 201//139 226//164
+f 201//139 200//138 226//164
+f 226//164 200//138 217//155
+f 200//138 167//106 217//155
+f 215//153 212//150 170//102
+f 216//154 227//165 215//153
+f 217//155 228//166 216//154
+f 215//153 227//165 212//150
+f 227//165 213//151 212//150
+f 216//154 228//166 227//165
+f 228//166 229//167 227//165
+f 227//165 229//167 213//151
+f 229//167 214//152 213//151
+f 217//155 199//137 228//166
+f 199//137 198//136 228//166
+f 228//166 198//136 229//167
+f 198//136 197//135 229//167
+f 229//167 197//135 214//152
+f 197//135 166//105 214//152
+f 212//150 206//144 170//102
+f 213//151 230//168 212//150
+f 214//152 231//169 213//151
+f 212//150 230//168 206//144
+f 230//168 207//145 206//144
+f 213//151 231//169 230//168
+f 231//169 232//170 230//168
+f 230//168 232//170 207//145
+f 232//170 208//146 207//145
+f 214//152 196//134 231//169
+f 196//134 195//133 231//169
+f 231//169 195//133 232//170
+f 195//133 194//132 232//170
+f 232//170 194//132 208//146
+f 194//132 165//104 208//146
+f 206//144 211//149 170//102
+f 207//145 233//171 206//144
+f 208//146 234//172 207//145
+f 206//144 233//171 211//149
+f 233//171 210//148 211//149
+f 207//145 234//172 233//171
+f 234//172 235//173 233//171
+f 233//171 235//173 210//148
+f 235//173 209//147 210//148
+f 208//146 193//131 234//172
+f 193//131 192//130 234//172
+f 234//172 192//130 235//173
+f 192//130 191//129 235//173
+f 235//173 191//129 209//147
+f 191//129 169//108 209//147
+f 174//112 205//143 169//108
+f 173//111 236//174 174//112
+f 174//112 236//174 205//143
+f 236//174 204//142 205//143
+f 173//111 237//175 236//174
+f 237//175 238//176 236//174
+f 236//174 238//176 204//142
+f 238//176 203//141 204//142
+f 237//175 188//126 238//176
+f 188//126 187//125 238//176
+f 238//176 187//125 203//141
+f 187//125 168//107 203//141
+f 190//128 202//140 168//107
+f 189//127 239//177 190//128
+f 190//128 239//177 202//140
+f 239//177 201//139 202//140
+f 189//127 240//178 239//177
+f 240//178 241//179 239//177
+f 239//177 241//179 201//139
+f 241//179 200//138 201//139
+f 240//178 184//122 241//179
+f 184//122 183//121 241//179
+f 241//179 183//121 200//138
+f 183//121 167//106 200//138
+f 186//124 199//137 167//106
+f 185//123 242//180 186//124
+f 186//124 242//180 199//137
+f 242//180 198//136 199//137
+f 185//123 243//181 242//180
+f 243//181 244//182 242//180
+f 242//180 244//182 198//136
+f 244//182 197//135 198//136
+f 243//181 180//118 244//182
+f 180//118 179//117 244//182
+f 244//182 179//117 197//135
+f 179//117 166//105 197//135
+f 182//120 196//134 166//105
+f 181//119 245//183 182//120
+f 182//120 245//183 196//134
+f 245//183 195//133 196//134
+f 181//119 246//184 245//183
+f 246//184 247//185 245//183
+f 245//183 247//185 195//133
+f 247//185 194//132 195//133
+f 246//184 176//114 247//185
+f 176//114 175//113 247//185
+f 247//185 175//113 194//132
+f 175//113 165//104 194//132
+f 178//116 193//131 165//104
+f 177//115 248//186 178//116
+f 178//116 248//186 193//131
+f 248//186 192//130 193//131
+f 177//115 249//187 248//186
+f 249//187 250//188 248//186
+f 248//186 250//188 192//130
+f 250//188 191//129 192//130
+f 249//187 172//110 250//188
+f 172//110 171//109 250//188
+f 250//188 171//109 191//129
+f 171//109 169//108 191//129
+f 187//125 190//128 168//107
+f 188//126 251//189 187//125
+f 187//125 251//189 190//128
+f 251//189 189//127 190//128
+f 183//121 186//124 167//106
+f 184//122 252//190 183//121
+f 183//121 252//190 186//124
+f 252//190 185//123 186//124
+f 179//117 182//120 166//105
+f 180//118 253//191 179//117
+f 179//117 253//191 182//120
+f 253//191 181//119 182//120
+f 175//113 178//116 165//104
+f 176//114 254//192 175//113
+f 175//113 254//192 178//116
+f 254//192 177//115 178//116
+f 171//109 174//112 169//108
+f 172//110 255//193 171//109
+f 171//109 255//193 174//112
+f 255//193 173//111 174//112
+f 388//102 390//228 389//228
+f 390//228 392//229 389//228
+f 393//230 394//231 392//229
+f 394//231 397//232 396//232
+f 397//232 398//233 396//232
+f 399//233 400//234 398//233
+f 401//234 402//235 400//234
+f 402//235 406//236 404//236
+f 408//237 412//239 410//237
+f 412//239 415//240 414//240
+f 415//240 416//241 414//240
+f 416//241 419//242 418//242
+f 419//242 420//243 418//242
+f 421//243 422//244 420//243
+f 423//245 424//246 422//244
+f 425//246 388//102 424//246
+f 427//247 429//101 426//101
+f 430//248 428//247 427//247
+f 430//248 433//249 431//248
+f 434//250 433//249 432//249
+f 434//250 437//251 435//250
+f 438//252 437//251 436//251
+f 438//252 441//253 439//252
+f 442//254 441//253 440//253
+f 444//255 446//256 447//255
+f 448//257 446//256 445//256
+f 448//257 451//258 449//257
+f 452//259 451//258 450//258
+f 454//260 453//259 452//259
+f 456//261 455//260 454//260
+f 456//261 459//262 457//261
+f 426//101 459//262 458//262
+f 319//195 287//195 285//195
+f 278//194 310//194 276//194
+f 302//194 266//194 268//194
+f 311//195 279//195 277//195
+f 267//195 303//195 269//195
+f 288//194 320//194 286//194
+f 294//194 258//194 260//194
+f 321//195 289//195 287//195
+f 259//195 295//195 261//195
+f 280//194 312//194 278//194
+f 304//194 268//194 270//194
+f 313//195 281//195 279//195
+f 269//195 305//195 271//195
+f 256//194 322//194 288//194
+f 296//194 260//194 262//194
+f 323//195 257//195 289//195
+f 261//195 297//195 263//195
+f 282//194 314//194 280//194
+f 306//194 270//194 405//194
+f 315//195 283//195 281//195
+f 271//195 307//195 407//195
+f 298//194 262//194 264//194
+f 273//196 442//254 272//196
+f 263//195 299//195 265//195
+f 284//194 316//194 282//194
+f 444//255 409//238 411//238
+f 317//195 285//195 283//195
+f 276//194 308//194 274//194
+f 300//194 264//194 266//194
+f 292//194 256//194 258//194
+f 309//195 277//195 275//195
+f 265//195 301//195 267//195
+f 286//194 318//194 284//194
+f 257//195 293//195 259//195
+f 19//19 18//18 8//8
+f 6//6 16//16 15//15
+f 3//3 13//13 12//12
+f 20//20 19//19 9//9
+f 17//17 16//16 6//6
+f 4//4 14//14 13//13
+f 11//11 20//20 10//10
+f 18//18 17//17 7//7
+f 5//5 15//15 14//14
+f 2//2 12//12 11//11
+f 16//16 26//26 25//25
+f 13//13 23//23 22//22
+f 30//30 29//29 19//19
+f 27//27 26//26 16//16
+f 14//14 24//24 23//23
+f 21//21 30//30 20//20
+f 28//28 27//27 17//17
+f 15//15 25//25 24//24
+f 12//12 22//22 21//21
+f 29//29 28//28 18//18
+f 31//31 40//40 30//30
+f 38//38 37//37 27//27
+f 25//25 35//35 34//34
+f 22//22 32//32 31//31
+f 39//39 38//38 28//28
+f 26//26 36//36 35//35
+f 23//23 33//33 32//32
+f 40//40 39//39 29//29
+f 37//37 36//36 26//26
+f 24//24 34//34 33//33
+f 48//48 47//47 37//37
+f 35//35 45//45 44//44
+f 32//32 42//42 41//41
+f 49//49 48//48 38//38
+f 36//36 46//46 45//45
+f 33//33 43//43 42//42
+f 50//50 49//49 39//39
+f 47//47 46//46 36//36
+f 34//34 44//44 43//43
+f 41//41 50//50 40//40
+f 69//69 68//68 58//58
+f 56//56 66//66 65//65
+f 53//53 63//63 62//62
+f 70//70 69//69 59//59
+f 67//67 66//66 56//56
+f 54//54 64//64 63//63
+f 61//61 70//70 60//60
+f 68//68 67//67 57//57
+f 55//55 65//65 64//64
+f 52//52 62//62 61//61
+f 66//66 76//76 75//75
+f 63//63 73//73 72//72
+f 80//80 79//79 69//69
+f 77//77 76//76 66//66
+f 64//64 74//74 73//73
+f 71//71 80//80 70//70
+f 78//78 77//77 67//67
+f 65//65 75//75 74//74
+f 62//62 72//72 71//71
+f 79//79 78//78 68//68
+f 81//81 90//90 80//80
+f 88//88 87//87 77//77
+f 75//75 85//85 84//84
+f 72//72 82//82 81//81
+f 89//89 88//88 78//78
+f 76//76 86//86 85//85
+f 73//73 83//83 82//82
+f 90//90 89//89 79//79
+f 87//87 86//86 76//76
+f 74//74 84//84 83//83
+f 98//98 97//97 87//87
+f 85//85 95//95 94//94
+f 82//82 92//92 91//91
+f 99//99 98//98 88//88
+f 86//86 96//96 95//95
+f 83//83 93//93 92//92
+f 100//100 99//99 89//89
+f 97//97 96//96 86//86
+f 84//84 94//94 93//93
+f 91//91 100//100 90//90
+f 327//194 326//197 325//197
+f 325//197 326//197 329//198
+f 328//198 329//198 331//199
+f 331//199 333//200 332//200
+f 333//200 335//201 334//201
+f 335//201 337//203 336//202
+f 337//203 339//204 338//204
+f 338//204 339//204 341//205
+f 340//205 341//205 343//206
+f 342//206 343//206 345//207
+f 345//207 347//208 346//208
+f 346//208 347//208 349//209
+f 348//209 349//209 351//210
+f 350//210 351//210 353//211
+f 352//211 353//211 355//212
+f 354//212 355//212 357//195
+f 357//195 359//213 358//213
+f 359//213 361//214 360//214
+f 361//214 363//215 362//215
+f 363//215 365//216 364//216
+f 365//216 367//217 366//217
+f 366//217 367//217 369//218
+f 369//218 371//219 370//219
+f 371//219 373//220 372//220
+f 373//220 375//221 374//221
+f 374//221 375//221 377//223
+f 376//222 377//223 379//224
+f 378//224 379//224 381//225
+f 380//225 381//225 383//226
+f 383//226 385//227 384//227
+f 106//102 104//102 102//102
+f 102//102 387//102 162//102
+f 162//102 160//102 158//102
+f 158//102 156//102 154//102
+f 154//102 152//102 150//102
+f 150//102 148//102 146//102
+f 146//102 144//102 142//102
+f 142//102 140//102 138//102
+f 138//102 136//102 134//102
+f 134//102 132//102 130//102
+f 130//102 128//102 126//102
+f 126//102 124//102 122//102
+f 122//102 120//102 118//102
+f 118//102 116//102 114//102
+f 114//102 112//102 110//102
+f 110//102 108//102 106//102
+f 106//102 102//102 162//102
+f 162//102 158//102 154//102
+f 154//102 150//102 146//102
+f 146//102 142//102 138//102
+f 138//102 134//102 130//102
+f 130//102 126//102 122//102
+f 122//102 118//102 114//102
+f 114//102 110//102 106//102
+f 106//102 162//102 154//102
+f 154//102 146//102 138//102
+f 138//102 130//102 122//102
+f 122//102 114//102 106//102
+f 106//102 154//102 138//102
+f 385//227 164//103 386//103
+f 386//103 164//103 327//194
+f 163//101 101//101 103//101
+f 103//101 105//101 107//101
+f 107//101 109//101 111//101
+f 111//101 113//101 115//101
+f 115//101 117//101 119//101
+f 119//101 121//101 123//101
+f 123//101 125//101 127//101
+f 127//101 129//101 131//101
+f 131//101 133//101 135//101
+f 135//101 137//101 139//101
+f 139//101 141//101 143//101
+f 143//101 145//101 147//101
+f 147//101 149//101 151//101
+f 151//101 153//101 155//101
+f 155//101 157//101 159//101
+f 159//101 161//101 163//101
+f 163//101 103//101 107//101
+f 107//101 111//101 115//101
+f 115//101 119//101 123//101
+f 123//101 127//101 131//101
+f 131//101 135//101 139//101
+f 139//101 143//101 147//101
+f 147//101 151//101 155//101
+f 155//101 159//101 163//101
+f 163//101 107//101 115//101
+f 115//101 123//101 131//101
+f 131//101 139//101 147//101
+f 147//101 155//101 163//101
+f 163//101 115//101 131//101
+f 388//102 391//102 390//228
+f 390//228 393//230 392//229
+f 393//230 395//231 394//231
+f 394//231 395//231 397//232
+f 397//232 399//233 398//233
+f 399//233 401//234 400//234
+f 401//234 403//235 402//235
+f 402//235 403//235 406//236
+f 408//237 413//239 412//239
+f 412//239 413//239 415//240
+f 415//240 417//241 416//241
+f 416//241 417//241 419//242
+f 419//242 421//243 420//243
+f 421//243 423//245 422//244
+f 423//245 425//246 424//246
+f 425//246 391//102 388//102
+f 427//247 428//247 429//101
+f 430//248 431//248 428//247
+f 430//248 432//249 433//249
+f 434//250 435//250 433//249
+f 434//250 436//251 437//251
+f 438//252 439//252 437//251
+f 438//252 440//253 441//253
+f 442//254 443//254 441//253
+f 444//255 445//256 446//256
+f 448//257 449//257 446//256
+f 448//257 450//258 451//258
+f 452//259 453//259 451//258
+f 454//260 455//260 453//259
+f 456//261 457//261 455//260
+f 456//261 458//262 459//262
+f 426//101 429//101 459//262
+f 319//195 321//195 287//195
+f 278//194 312//194 310//194
+f 302//194 300//194 266//194
+f 311//195 313//195 279//195
+f 267//195 301//195 303//195
+f 288//194 322//194 320//194
+f 294//194 292//194 258//194
+f 321//195 323//195 289//195
+f 259//195 293//195 295//195
+f 280//194 314//194 312//194
+f 304//194 302//194 268//194
+f 313//195 315//195 281//195
+f 269//195 303//195 305//195
+f 256//194 290//194 322//194
+f 296//194 294//194 260//194
+f 323//195 291//195 257//195
+f 261//195 295//195 297//195
+f 282//194 316//194 314//194
+f 306//194 304//194 270//194
+f 315//195 317//195 283//195
+f 271//195 305//195 307//195
+f 298//194 296//194 262//194
+f 273//196 443//254 442//254
+f 263//195 297//195 299//195
+f 284//194 318//194 316//194
+f 444//255 447//255 409//238
+f 317//195 319//195 285//195
+f 276//194 310//194 308//194
+f 300//194 298//194 264//194
+f 292//194 290//194 256//194
+f 309//195 311//195 277//195
+f 265//195 299//195 301//195
+f 286//194 320//194 318//194
+f 257//195 291//195 293//195
+`);
 
         </script>
     </body>
