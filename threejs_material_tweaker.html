@@ -161,7 +161,7 @@ const save_db = (() => {
 
     /* load the db once, then cache it */
     const _db_load = new Promise(res => {
-        const req = indexedDB.open("cedcraft_data", 1);
+        const req = indexedDB.open("tweaker_data", 1);
         req.onupgradeneeded = () => {
             const db = event.target.result;
             db.createObjectStore("saves", { keyPath: "save_name" });
@@ -600,7 +600,7 @@ const renderMeshGUI = (obj_text) => {
         folder.add( data, 'envMap',          mapKeys).onChange( updateTexture( material, 'envMap', envMaps ) );
     }
 
-    const gui = new GUI();
+    const gui = window.gui = new GUI();
 
     const renderer = new THREE.WebGLRenderer( { antialias: true } );
     renderer.setPixelRatio( window.devicePixelRatio );
