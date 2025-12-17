@@ -1,4 +1,4 @@
-clang --target=wasm32 \
+clear && time clang --target=wasm32 \
           -O3 \
           -g \
           -flto \
@@ -9,5 +9,5 @@ clang --target=wasm32 \
           -Wall \
           -mbulk-memory \
           -o hex.wasm \
-          hex.c
+          hex.c && echo 'compiled hex.wasm\n'
 

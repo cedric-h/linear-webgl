@@ -32,6 +32,10 @@ if (!gl) { alert('Failed to initialize WebGL'); }
         fetch("./hex.wasm"),
         {
             env: {
+                putfloat: console.log,
+                pow: Math.pow,
+                round: Math.round,
+
                 sqrtf: Math.sqrt,
                 cosf: Math.cos,
                 sinf: Math.sin,
@@ -92,8 +96,6 @@ if (!gl) { alert('Failed to initialize WebGL'); }
 
     const wasm = wasm_module.instance.exports;
 
-    wasm.init();
-
     (window.onresize = () => {
         canvas.width = window.innerWidth;
         canvas.height = window.innerHeight;
@@ -108,6 +110,8 @@ if (!gl) { alert('Failed to initialize WebGL'); }
 
         wasm.resize(canvas.width, canvas.height);
     })();
+
+    wasm.init(canvas.width, canvas.height);
 
     let dpi = window.devicePixelRatio
     canvas.onmousedown = e => wasm.mousedown(e.offsetX * dpi, e.offsetY * dpi);

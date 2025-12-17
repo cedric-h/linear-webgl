@@ -8,10 +8,27 @@ extern int gl_bufferData(unsigned long, void *, unsigned long, unsigned long);
 extern int gl_vertexAttribPointer(unsigned long, unsigned long, unsigned long, bool, unsigned long, unsigned long);
 extern int gl_drawElements(unsigned long, unsigned long, unsigned long, unsigned long);
 
-extern int putchar(int);
+/**
+ * DEBUGGING
+ **/
+extern void putfloat(float);
+
+/**
+ * MATH
+ **/
 extern float sqrtf(float);
 extern float cosf(float);
 extern float sinf(float);
+extern double round(double);
+extern double pow(double, double);
+
+#define M_PI 3.141592653589793
+static float lerp(float v0, float v1, float t) { return (1.0f - t) * v0 + t * v1; }
+
+
+/**
+ * GL
+ **/
 extern int gl_createBuffer();
 extern int gl_createShader(unsigned long);
 extern int gl_shaderSource(unsigned long, char *);
@@ -59,8 +76,6 @@ extern int gl_viewport(float, float, float, float);
 #define gl_FLOAT                5126
 #define gl_TRIANGLES            4
 
-#define M_PI 3.141592653589793
-
 unsigned long program;
 unsigned long shaders_geo_a_pos;
 unsigned long shaders_geo_a_col;
@@ -71,103 +86,88 @@ unsigned long geo_vbuf_pos;
 unsigned long geo_vbuf_col;
 unsigned long geo_ibuf;
 
+typedef struct { float x, y; } f2;
+
 struct {
-    struct { float x, y; } pos;
+    /**
+     * the position of the center of the camera in screenspace
+     *
+     * every frame cam moves away from pos towards goal_pos
+     **/
+    f2 goal_pos, pos;
     float zoom;
 } camera = {
     .pos = { 0, 0 },
+    .goal_pos = { 0, 0 },
     .zoom = 1
 };
-struct { float size_x, size_y; } canvas = {0};
+struct { f2 size; } canvas = {0};
 struct {
-    bool  mouse_down;
-    float mouse_down_x;
-    float mouse_down_y;
-    float mouse_down_camera_x;
-    float mouse_down_camera_y;
+    /* every frame scroll is diminished and converted to camera zoom */
+    float mouse_scroll;
 
-    float mouse_world_x;
-    float mouse_world_y;
-    float mouse_screen_x;
-    float mouse_screen_y;
+    bool mouse_is_down;
+    
+    f2 mouse_down, /* where in screenspace the mouse was when it went down */
+       mouse_down_camera; /* where the camera was when the mouse went down */
+
+    f2 mouse_world, mouse_screen;
 } input = {0};
 void input_update_mouse_world(void) {
-    input.mouse_world_x = (input.mouse_screen_x - camera.pos.x)/camera.zoom;
-    input.mouse_world_y = (input.mouse_screen_y - camera.pos.y)/camera.zoom;
+    input.mouse_world.x = (input.mouse_screen.x - camera.pos.x)/camera.zoom;
+    input.mouse_world.y = (input.mouse_screen.y - camera.pos.y)/camera.zoom;
 }
 
 WASM_EXPORT("mousedown")
 void mousedown(float offset_x, float offset_y) {
-    input.mouse_world_x = input.mouse_down_x = offset_x;
-    input.mouse_world_y = input.mouse_down_y = offset_y;
+    f2 offset = { offset_x, offset_y };
+    input.mouse_screen = input.mouse_down = offset;
     input_update_mouse_world();
-    input.mouse_down_camera_x = camera.pos.x;
-    input.mouse_down_camera_y = camera.pos.y;
-    input.mouse_down = true;
+    input.mouse_down_camera = camera.pos;
+    input.mouse_is_down = true;
 }
 
 WASM_EXPORT("mouseup")
 void mouseup(void) {
-    input.mouse_down = false;
+    input.mouse_is_down = false;
 }
 
+/**
+ * NOTE: This gets called at startup!
+ **/
 WASM_EXPORT("resize")
 void resize(float size_x, float size_y) {
-    canvas.size_x = size_x;
-    canvas.size_y = size_y;
-    camera.pos.x = size_x * 0.5;
-    camera.pos.y = size_y * 0.5;
+    canvas.size = (f2) { size_x, size_y };
     gl_viewport(0, 0, size_x, size_y);
 }
 
 WASM_EXPORT("mousemove")
 int mousemove(float offset_x, float offset_y) {
-    input.mouse_screen_x = offset_x;
-    input.mouse_screen_y = offset_y;
+    input.mouse_screen.x = offset_x;
+    input.mouse_screen.y = offset_y;
     input_update_mouse_world();
-    if (!input.mouse_down) { return 0; }
+    if (!input.mouse_is_down) { return 0; }
 
-    float delta_x = offset_x - input.mouse_down_x;
-    float delta_y = offset_y - input.mouse_down_y;
-    camera.pos.x = input.mouse_down_camera_x + delta_x;
-    camera.pos.y = input.mouse_down_camera_y + delta_y;
+    float delta_x = offset_x - input.mouse_down.x;
+    float delta_y = offset_y - input.mouse_down.y;
+    camera.goal_pos.x = input.mouse_down_camera.x + delta_x;
+    camera.goal_pos.y = input.mouse_down_camera.y + delta_y;
     input_update_mouse_world();
     return 1;
 }
 
 WASM_EXPORT("mousewheel")
 int mousewheel(float zoom_delta_y) {
-
-    float next_zoom = camera.zoom * (1 - zoom_delta_y * 0.0004);
-    // next_zoom = max(0.15, next_zoom);
-
-    /* offset camera.x such that it stays centered around the mouse,
-     * accounting for the new zoom */
-    {
-        float x_t = input.mouse_world_x / canvas.size_x;
-        float  nowSizeX = canvas.size_x * camera.zoom;
-        float nextSizeX = canvas.size_x * next_zoom;
-        float deltaX = nextSizeX - nowSizeX;
-        camera.pos.x -= deltaX * x_t;
-    }
-
-    /* ditto on the Y axis; keep the mouse as the focal point */
-    {
-        float y_t = input.mouse_world_y / canvas.size_y;
-        float  nowSizeY = canvas.size_y * camera.zoom;
-        float nextSizeY = canvas.size_y * next_zoom;
-        float deltaY = nextSizeY - nowSizeY;
-        camera.pos.y -= deltaY * y_t;
-    }
-
-    camera.zoom = next_zoom;
-    input_update_mouse_world();
-
+    input.mouse_scroll += zoom_delta_y;
     return 1;
 }
 
 WASM_EXPORT("init")
-void init(void) {
+void init(float size_x, float size_y) {
+    /* good default camera position */
+    camera.goal_pos.x = camera.pos.x = size_x * 0.5;
+    camera.goal_pos.y = camera.pos.y = size_y * 0.5;
+
     geo_vbuf_pos = gl_createBuffer();
     geo_vbuf_col = gl_createBuffer();
     geo_ibuf     = gl_createBuffer();
@@ -231,7 +231,7 @@ void draw_hex(float px, float py, float size, float thickness) {
         float x = cosf((float)(i) / 6 * M_PI * 2);
         float y = sinf((float)(i) / 6 * M_PI * 2);
 
-        float ar = canvas.size_x / canvas.size_y;
+        float ar = canvas.size.x / canvas.size.y;
         *geo_pos_wtr++ = px + x * inner_radius, *geo_pos_wtr++ = py + y * inner_radius * ar, *geo_pos_wtr++ = 0.1;
         *geo_pos_wtr++ = px + x * outer_radius, *geo_pos_wtr++ = py + y * outer_radius * ar, *geo_pos_wtr++ = 0.1;
         *geo_col_wtr++ = 255, *geo_col_wtr++ = 165, *geo_col_wtr++ = 50, *geo_col_wtr++ = 255;
@@ -251,7 +251,7 @@ void draw_line(float x0, float y0, float x1, float y1, float thickness) {
     *geo_col_wtr++ = 255, *geo_col_wtr++ = 165, *geo_col_wtr++ = 50, *geo_col_wtr++ = 255;
     *geo_col_wtr++ = 255, *geo_col_wtr++ = 165, *geo_col_wtr++ = 50, *geo_col_wtr++ = 255;
 
-    float ar = canvas.size_x / canvas.size_y;
+    float ar = canvas.size.x / canvas.size.y;
 
     float dx = x0 - x1;
     float dy = y0 - y1;
@@ -269,15 +269,80 @@ void draw_line(float x0, float y0, float x1, float y1, float thickness) {
     *geo_idx_wtr++ = vbuf_i + 2, *geo_idx_wtr++ = vbuf_i + 3, *geo_idx_wtr++ = vbuf_i + 1;
 }
 
+double timestamp_last = 0.0;
+// double target_fps = 60;
 WASM_EXPORT("frame")
 void frame(double timestamp) {
+    if (timestamp_last == 0.0) timestamp_last = timestamp;
+    /* time since last frame in seconds */
+    double delta_time = (timestamp - timestamp_last) / 1000;
+    timestamp_last = timestamp;
+
+    // if (delta_time > 0) target_fps = 0.95*target_fps + 0.05*(1 / delta_time);
+    // putfloat(target_fps);
+
+    {
+        double cam_damp_factor = 0.001;
+        double t = 1.0f - pow(cam_damp_factor, delta_time);
+        camera.pos.x = lerp(camera.pos.x, camera.goal_pos.x, t);
+        camera.pos.y = lerp(camera.pos.y, camera.goal_pos.y, t);
+        input_update_mouse_world();
+    }
+
+    {
+        input.mouse_scroll *= (float)(pow(0.0001, delta_time));
+        // camera.zoom = math.min(200, camera.zoom);
+
+        float next_zoom = camera.zoom * (1 - input.mouse_scroll * 0.0001);
+        // next_zoom = max(0.15, next_zoom);
+
+        /* offset camera.x such that it stays centered around the mouse,
+         * accounting for the new zoom */
+        {
+            float x_t = input.mouse_world.x / canvas.size.x;
+            float  nowSizeX = canvas.size.x * camera.zoom;
+            float nextSizeX = canvas.size.x * next_zoom;
+            float deltaX = nextSizeX - nowSizeX;
+            camera.goal_pos.x -= deltaX * x_t;
+            camera.     pos.x -= deltaX * x_t;
+        }
+
+        /* ditto on the Y axis; keep the mouse as the focal point */
+        {
+            float y_t = input.mouse_world.y / canvas.size.y;
+            float  nowSizeY = canvas.size.y * camera.zoom;
+            float nextSizeY = canvas.size.y * next_zoom;
+            float deltaY = nextSizeY - nowSizeY;
+            camera.goal_pos.y -= deltaY * y_t;
+            camera.     pos.y -= deltaY * y_t;
+        }
+
+        camera.zoom = next_zoom;
+    }
 
     geo_idx_wtr = geo_idx;
     geo_pos_wtr = geo_pos;
     geo_col_wtr = geo_col;
 
     draw_hex(0, 0, 0.15, 0.01);
-    draw_line(0.095, 0.095, 0.6, 0.41, 0.01);
+    for (int cycle = 0; cycle < 2; cycle++) {
+        int count = 40;
+        float last_x, last_y;
+        for (int i = 0; i < (count + 1); i++) {
+            float t = ((float)i) / ((float)(count)) * M_PI * 2.0f;
+            float x = cosf(t)*0.5, y = sinf(t)*0.5;
+
+            float modulate = 0.9 + 0.1 * sinf(
+                (t + M_PI*cycle) * (((float)(count))/8.0f)
+            );
+
+            x *= modulate;
+            y *= modulate;
+
+            if (i) draw_line(last_x, last_y, x, y, 0.01);
+            last_x = x, last_y = y;
+        }
+    }
 
     /* set up premultiplied alpha */
     gl_blendFunc(gl_ONE, gl_ONE_MINUS_SRC_ALPHA);
@@ -300,8 +365,8 @@ void frame(double timestamp) {
         {
             gl_uniform2f(
                 shaders_geo_u_camera_pos,
-                2*(0 + camera.pos.x / canvas.size_x) - 1,
-                2*(1 - camera.pos.y / canvas.size_y) - 1
+                2*(0 + camera.pos.x / canvas.size.x) - 1,
+                2*(1 - camera.pos.y / canvas.size.y) - 1
             );
             gl_uniform1f(shaders_geo_u_camera_zoom, camera.zoom);
         }
