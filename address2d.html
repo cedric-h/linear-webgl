@@ -37,6 +37,7 @@ const GEOM_TYPE_POINT   = 1;
 const GEOM_TYPE_LINE    = 2;
 const GEOM_TYPE_POLYGON = 3;
 
+let x_frac, y_frac;
 async function map_data_at(lat, lon, zoom) {
   /** 
    * Takes a vector tile, parses the geometry out of the binary format and
@@ -139,8 +140,8 @@ async function map_data_at(lat, lon, zoom) {
   const source = new PMTiles.FetchSource("https://data.source.coop/protomaps/openstreetmap/tiles/v3.pmtiles", {"x-custom-header":"value"});
   const x = Math.floor(lon2tile(lon, zoom));
   const y = Math.floor(lat2tile(lat, zoom));
-  const x_frac = lon2tile(lon, zoom) - x;
-  const y_frac = lat2tile(lat, zoom) - y;
+  x_frac = lon2tile(lon, zoom) - x;
+  y_frac = lat2tile(lat, zoom) - y;
   const response = await new PMTiles.PMTiles(source).getZxy(zoom, x, y);
   console.log(x_frac, y_frac);
 
@@ -158,8 +159,10 @@ let cam_y = 0;
 let info = document.createElement("pre");
 {
   let map_data_zoom = 15;
-  let map_data_lat =  40.625967420413474;
-  let map_data_lon = -111.84575167953076;
+  // let map_data_lat =  40.625967420413474;
+  // let map_data_lon = -111.84575167953076;
+  const map_data_lat = 40.759488926995914;
+  const map_data_lon = -111.88670140830416;
   let map_data_address = '';
 
   map_data_at(map_data_lat, map_data_lon, map_data_zoom)
@@ -315,16 +318,15 @@ let info = document.createElement("pre");
       ctx.translate(cam_x, cam_y);
 
       /* outline tile */
+      const TILE_SIZE = 4200;
       if (0) {
         ctx.strokeStyle = "red";
         ctx.lineWidth = 5;
         const TILE_PAD  =   50;
-        const TILE_SIZE = 4200;
         ctx.strokeRect(-TILE_PAD, -TILE_PAD, TILE_SIZE, TILE_SIZE);
       }
 
       if (!map_data) {
-
         ctx.font = "100px sans-serif";
         ctx.fillText("loading ...", canvas.width * 0.5, canvas.height * 0.5);
 
@@ -412,6 +414,14 @@ let info = document.createElement("pre");
             ctx.lineWidth = 20;
             draw_feature(ctx, f);
           }
+        }
+
+        /* show frac */
+        {
+          ctx.fillStyle = "red";
+          const x = TILE_SIZE * x_frac;
+          const y = TILE_SIZE * y_frac;
+          ctx.fillRect(x - 50, y - 50, 100, 100);
         }
 
       }
