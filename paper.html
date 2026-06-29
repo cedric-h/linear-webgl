@@ -1,0 +1,55 @@
+<!-- vim: sw=2 ts=2 expandtab smartindent ft=javascript
+-->
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Canvas Demo</title>
+    <style> document, body { margin: 0px; padding: 0px; overflow: hidden; } </style>
+  </head>
+
+  <body>
+    <canvas id="glcanvas"></canvas>
+    <script>"use strict";
+
+const canvas = document.getElementById("glcanvas");
+const ctx = canvas.getContext('2d');
+(window.onresize = () => {
+   canvas.width = window.innerWidth*window.devicePixelRatio,
+   canvas.height = window.innerHeight*window.devicePixelRatio
+   canvas.style.width = window.innerWidth + 'px';
+   canvas.style.height = window.innerHeight + 'px';
+ })();
+
+requestAnimationFrame(function render(now) {
+  requestAnimationFrame(render);
+
+  ctx.save();
+  ctx.scale(window.devicePixelRatio, window.devicePixelRatio);
+
+  const size_x = canvas.width / window.devicePixelRatio;
+  const size_y = canvas.height / window.devicePixelRatio;
+
+  ctx.fillStyle = "snow";
+  ctx.fillRect(0, 0, size_x, size_y);
+
+
+  {
+    /* vertical blue lines */
+    ctx.fillStyle = "rgba(201, 211, 217, 1.0)";
+    for (let x = 200; x < size_x; x += 150)
+      ctx.fillRect(x, 0, 3, size_y);
+
+    /* horizontal red line */
+    ctx.fillStyle = "rgba(196, 146, 166, 1.0)";
+    ctx.fillRect(0, size_y*(1 - 0.155), size_x, 5);
+
+  }
+  ctx.restore();
+})
+
+function lerp(v0, v1, t) { return (1 - t) * v0 + t * v1; }
+function inv_lerp(min, max, p) { return (p - min) / (max - min); }
+    </script>
+  </body>
+</html>
