@@ -13,6 +13,9 @@
     <script>"use strict";
 
 const TILE_SCALE = 100;
+const MIN_RECT_AREA = 5_000;
+const MIN_CONNECTION_LEN = 100;
+const NODE_DELETION_HOVER_DIST = 14;
 
 const canvas = document.getElementById("glcanvas");
 const ctx = canvas.getContext('2d');
@@ -30,19 +33,252 @@ const EDGE_TOP    = 2;
 const EDGE_RIGHT  = 3;
 const EDGE_BOTTOM = 4;
 
+// const save = {
+//   rect_held_idx: -1,
+//   rect_getting_node_idx: -1,
+//   rects: [
+//     { min_x: -100, min_y: -100, max_x: 100, max_y: 100, nodes: [ 0, 1 ] },
+//   ],
+//   nodes: [
+//     { edge: EDGE_TOP  , f: 35, rect_idx: 0 },
+//     { edge: EDGE_RIGHT, f: 35, rect_idx: 0 }
+//   ],
+//   connections: [
+//     { lhs_idx: 0, rhs_idx: 1 },
+//   ],
+// };
+
 const save = {
-  rect_held_idx: -1,
-  rect_getting_node_idx: -1,
-  rects: [
-    { min_x: -100, min_y: -100, max_x: 100, max_y: 100, nodes: [ 0, 1 ] },
+  "rect_held_idx": -1,
+  "rect_getting_node_idx": -1,
+  "rects": [
+    {
+      "min_x": -100,
+      "min_y": -100,
+      "max_x": 100,
+      "max_y": 100,
+      "nodes": [
+        0,
+        1,
+        3,
+        4,
+        7,
+        12
+      ]
+    },
+    {
+      "min_x": -622,
+      "min_y": -424,
+      "max_x": -210,
+      "max_y": -182,
+      "nodes": [
+        2
+      ]
+    },
+    {
+      "min_x": -956,
+      "min_y": 54,
+      "max_x": -218,
+      "max_y": 402,
+      "nodes": [
+        5,
+        6,
+        8,
+        10
+      ]
+    },
+    {
+      "min_x": 46,
+      "min_y": -374,
+      "max_x": 700,
+      "max_y": -196,
+      "nodes": []
+    },
+    {
+      "min_x": 676,
+      "min_y": -32,
+      "max_x": 1030,
+      "max_y": 192,
+      "nodes": [
+        13,
+        14,
+        16,
+        18
+      ]
+    },
+    {
+      "min_x": 649.6196112476532,
+      "min_y": 296.1041002880652,
+      "max_x": 1058.028014392702,
+      "max_y": 464.2722662889678,
+      "nodes": [
+        11,
+        15,
+        17
+      ]
+    },
+    {
+      "min_x": 846.3867087719505,
+      "min_y": 549.7627849522034,
+      "max_x": 1046.7751272838718,
+      "max_y": 747.6463482327258,
+      "nodes": [
+        9,
+        19
+      ]
+    },
+    {
+      "min_x": 202.638914302403,
+      "min_y": 199.08305255634104,
+      "max_x": 380.4836357317331,
+      "max_y": 649.9569942081641,
+      "nodes": []
+    }
   ],
-  nodes: [
-    { edge: EDGE_TOP  , f: 35, rect_idx: 0 },
-    { edge: EDGE_RIGHT, f: 35, rect_idx: 0 }
+  "nodes": [
+    {
+      "edge": 2,
+      "f": 35,
+      "rect_idx": 0
+    },
+    {
+      "edge": 3,
+      "f": 35,
+      "rect_idx": 0
+    },
+    {
+      "edge": 4,
+      "f": 338,
+      "rect_idx": 1
+    },
+    {
+      "edge": 1,
+      "f": 62,
+      "rect_idx": 0
+    },
+    {
+      "edge": 4,
+      "f": 52,
+      "rect_idx": 0
+    },
+    {
+      "edge": 4,
+      "f": 580,
+      "rect_idx": 2
+    },
+    {
+      "edge": 2,
+      "f": 230,
+      "rect_idx": 2
+    },
+    {
+      "edge": 1,
+      "f": 8,
+      "rect_idx": 0
+    },
+    {
+      "edge": 3,
+      "f": 290.36465597748406,
+      "rect_idx": 2
+    },
+    {
+      "edge": 1,
+      "f": 172.83501096653208,
+      "rect_idx": 6
+    },
+    {
+      "edge": 3,
+      "f": 147.58790778774005,
+      "rect_idx": 2
+    },
+    {
+      "edge": 1,
+      "f": 68.29939754061093,
+      "rect_idx": 5
+    },
+    {
+      "edge": 3,
+      "f": 111.21891020141481,
+      "rect_idx": 0
+    },
+    {
+      "edge": 1,
+      "f": 90.81115959799615,
+      "rect_idx": 4
+    },
+    {
+      "edge": 4,
+      "f": 120.28960414396988,
+      "rect_idx": 4
+    },
+    {
+      "edge": 2,
+      "f": 106.59230919393258,
+      "rect_idx": 5
+    },
+    {
+      "edge": 4,
+      "f": 248.03722094531986,
+      "rect_idx": 4
+    },
+    {
+      "edge": 2,
+      "f": 319.50500386284875,
+      "rect_idx": 5
+    },
+    {
+      "edge": 2,
+      "f": 265.5712075651131,
+      "rect_idx": 4
+    },
+    {
+      "edge": 2,
+      "f": 140.27189295834478,
+      "rect_idx": 6
+    }
   ],
-  connections: [
-    { lhs_idx: 0, rhs_idx: 1 },
-  ],
+  "connections": [
+    {
+      "lhs_idx": 0,
+      "rhs_idx": 1
+    },
+    {
+      "lhs_idx": 2,
+      "rhs_idx": 3
+    },
+    {
+      "lhs_idx": 4,
+      "rhs_idx": 5
+    },
+    {
+      "lhs_idx": 6,
+      "rhs_idx": 7
+    },
+    {
+      "lhs_idx": 8,
+      "rhs_idx": 9
+    },
+    {
+      "lhs_idx": 10,
+      "rhs_idx": 11
+    },
+    {
+      "lhs_idx": 12,
+      "rhs_idx": 13
+    },
+    {
+      "lhs_idx": 14,
+      "rhs_idx": 15
+    },
+    {
+      "lhs_idx": 16,
+      "rhs_idx": 17
+    },
+    {
+      "lhs_idx": 18,
+      "rhs_idx": 19
+    }
+  ]
 };
 
 function rect_contains(rect, p) {
@@ -159,8 +395,18 @@ function rect_input(rect_event, in_mouse_x, in_mouse_y) {
         const p = rect_node_world_pos(rect, n);
         const dist = Math.sqrt((mouse.x - p.x)*(mouse.x - p.x) + 
                                (mouse.y - p.y)*(mouse.y - p.y));
-        if (dist < 9) {
-          rect.nodes.splice(rect.nodes.indexOf(i), 1);
+        if (dist < NODE_DELETION_HOVER_DIST) {
+
+          const ci = save.connections.findIndex(x => x.lhs_idx == i || x.rhs_idx == i);
+          const c = save.connections[ci];
+          const connected_i = c.lhs_idx == i ? c.rhs_idx : c.lhs_idx;
+          const connected_n = save.nodes[connected_i];
+          const connected_rect = save.rects[connected_n.rect_idx];
+
+          connected_rect.nodes.splice(connected_rect.nodes.indexOf(connected_i), 1);
+                    rect.nodes.splice(          rect.nodes.indexOf(          i), 1);
+          save.connections.splice(ci, 1);
+
           return true;
         }
       }
@@ -188,15 +434,21 @@ function rect_input(rect_event, in_mouse_x, in_mouse_y) {
       if (rect_pending_node(rect, down) &&
         rect_pending_node(rect_any_pending_node(mouse), mouse)
       ) {
-        let l, r;
-        rect.nodes.push(l = save.nodes.length);
-        save.nodes.push(rect_pending_node(rect, down));
 
-        const othr = rect_any_pending_node(mouse);
-        othr.nodes.push(r = save.nodes.length);
-        save.nodes.push(rect_pending_node(othr, mouse));
+        const long_enough = Math.sqrt((mouse.x - down.x)*(mouse.x - down.x) +
+                                      (mouse.y - down.y)*(mouse.y - down.y)) > MIN_CONNECTION_LEN;
 
-        save.connections.push({ lhs_idx: l, rhs_idx: r });
+        if (long_enough) {
+          let l, r;
+          rect.nodes.push(l = save.nodes.length);
+          save.nodes.push(rect_pending_node(rect, down));
+
+          const othr = rect_any_pending_node(mouse);
+          othr.nodes.push(r = save.nodes.length);
+          save.nodes.push(rect_pending_node(othr, mouse));
+
+          save.connections.push({ lhs_idx: l, rhs_idx: r });
+        }
       }
 
       save.rect_getting_node_idx = -1;
@@ -278,7 +530,8 @@ let input = {
       const min_x = Math.min(down.x, mouse.x), min_y = Math.min(down.y, mouse.y);
       const max_x = Math.max(down.x, mouse.x), max_y = Math.max(down.y, mouse.y);
 
-      save.rects.push({ min_x, min_y, max_x, max_y, nodes: [] });
+      if ((max_x - min_x)*(max_y - min_y) > MIN_RECT_AREA)
+        save.rects.push({ min_x, min_y, max_x, max_y, nodes: [] });
     }
 
     input.mouse_rmb_down = false;
@@ -394,8 +647,10 @@ requestAnimationFrame(function render(now) {
       const min_x = Math.min(down.x, mouse.x), min_y = Math.min(down.y, mouse.y);
       const max_x = Math.max(down.x, mouse.x), max_y = Math.max(down.y, mouse.y);
 
-      ctx.strokeStyle = 'rgba(0, 255, 0, 0.4)';
-      ctx.fillStyle = 'rgba(0, 255, 0, 0.1)';
+      const big_enough = (max_x - min_x)*(max_y - min_y) > MIN_RECT_AREA;
+
+      ctx.strokeStyle = big_enough ? 'rgba(0, 255, 0, 0.4)' : 'rgba(255, 0, 0, 0.4)';
+      ctx.fillStyle   = big_enough ? 'rgba(0, 255, 0, 0.1)' : 'rgba(255, 0, 0, 0.1)';
       ctx.lineWidth = 10;
       ctx.strokeRect(min_x, min_y, max_x - min_x + 1, max_y - min_y + 1);
       ctx.fillRect(min_x, min_y, max_x - min_x + 1, max_y - min_y + 1);
@@ -449,7 +704,7 @@ requestAnimationFrame(function render(now) {
 
             const dist = Math.sqrt((mouse.x - p.x)*(mouse.x - p.x) + 
                                    (mouse.y - p.y)*(mouse.y - p.y));
-            if (dist < 9) {
+            if (dist < NODE_DELETION_HOVER_DIST) {
               ctx.fillStyle   = "rgb(255, 10, 100, 1.0)";
               ctx.strokeStyle = "rgb(255, 10, 100, 0.8)";
               deleting = true;
@@ -481,8 +736,13 @@ requestAnimationFrame(function render(now) {
       const both_ended = rect_pending_node(rect, down) &&
         rect_pending_node(rect_any_pending_node(mouse), mouse);
 
+      const long_enough = Math.sqrt((mouse.x - down.x)*(mouse.x - down.x) +
+                                    (mouse.y - down.y)*(mouse.y - down.y)) > (MIN_CONNECTION_LEN + 15);
+
       ctx.lineWidth = 3;
-      ctx.strokeStyle = both_ended ? "rgba(100, 255, 80, 0.7)" : "rgba(255, 100, 80, 0.7)";
+      ctx.strokeStyle = "rgba(100, 255, 80, 0.7)";
+      if (!both_ended) ctx.strokeStyle = "rgba(255, 100, 80, 0.7)";
+      if (!long_enough) ctx.strokeStyle = "rgba(255, 50, 80, 0.9)"
       ctx.strokeRect( down.x - 10,  down.y - 10, 20, 20);
       ctx.strokeRect(mouse.x - 10, mouse.y - 10, 20, 20);
 
