@@ -1,0 +1,520 @@
+<!-- vim: sw=2 ts=2 expandtab smartindent ft=javascript
+-->
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Canvas Demo</title>
+    <style> document, body { margin: 0px; padding: 0px; overflow: hidden; } </style>
+  </head>
+
+  <body>
+    <canvas id="glcanvas"></canvas>
+    <script>"use strict";
+
+const TILE_SCALE = 100;
+
+const canvas = document.getElementById("glcanvas");
+const ctx = canvas.getContext('2d');
+(window.onresize = () => {
+   canvas.width = window.innerWidth*window.devicePixelRatio,
+   canvas.height = window.innerHeight*window.devicePixelRatio
+   canvas.style.width = window.innerWidth + 'px';
+   canvas.style.height = window.innerHeight + 'px';
+})();
+
+
+const EDGE_NONE   = 0;
+const EDGE_LEFT   = 1;
+const EDGE_TOP    = 2;
+const EDGE_RIGHT  = 3;
+const EDGE_BOTTOM = 4;
+
+const save = {
+  rect_held_idx: -1,
+  rect_getting_node_idx: -1,
+  rects: [
+    { min_x: -100, min_y: -100, max_x: 100, max_y: 100, nodes: [ 0, 1 ] },
+  ],
+  nodes: [
+    { edge: EDGE_TOP  , f: 35, rect_idx: 0 },
+    { edge: EDGE_RIGHT, f: 35, rect_idx: 0 }
+  ],
+  connections: [
+    { lhs_idx: 0, rhs_idx: 1 },
+  ],
+};
+
+function rect_contains(rect, p) {
+  return true &&
+    (rect.min_x < p.x) && (rect.max_x > p.x) &&
+    (rect.min_y < p.y) && (rect.max_y > p.y) ;
+}
+
+function rect_clamp(rect, p) {
+  return new DOMPoint(
+    Math.max(rect.min_x, Math.min(rect.max_x, p.x)),
+    Math.max(rect.min_y, Math.min(rect.max_y, p.y)),
+  );
+}
+
+function rect_inflate(rect, a) {
+  return {
+    min_x: rect.min_x - a,
+    min_y: rect.min_y - a,
+    max_x: rect.max_x + a,
+    max_y: rect.max_y + a,
+  };
+}
+
+function rect_node_world_pos(rect, node) {
+  let { min_x, min_y, max_x, max_y } = rect_world_pos(rect);
+  const f = node.f;
+  switch (node.edge) {
+    case (EDGE_LEFT  ): return { x:     min_x, y: f + min_y };
+    case (EDGE_RIGHT ): return { x:     max_x, y: f + min_y };
+    case (EDGE_TOP   ): return { x: f + min_x, y:     min_y };
+    case (EDGE_BOTTOM): return { x: f + min_x, y:     max_y };
+  }
+}
+
+function rect_world_pos(rect) {
+  const held = save.rects[save.rect_held_idx] == rect;
+
+  let { min_x, min_y, max_x, max_y } = rect;
+
+  let mouse = new DOMPoint(input.mouse_x, input.mouse_y);
+  mouse = input.world_transform.transformPoint(mouse);
+
+  let down = new DOMPoint(input.mouse_down_x, input.mouse_down_y);
+  down = input.world_transform.transformPoint(down);
+
+  if (held) {
+    min_x += mouse.x - down.x;
+    min_y += mouse.y - down.y;
+    max_x += mouse.x - down.x;
+    max_y += mouse.y - down.y;
+  }
+
+  return { min_x, min_y, max_x, max_y };
+}
+
+function rect_pending_node(rect, mouse) {
+  if (rect == null) return;
+
+  const EDGE_GRABBY_DIST = 25;
+  if (!rect_contains(rect_inflate(rect, EDGE_GRABBY_DIST), mouse))
+    return;
+
+  if (rect_contains(rect, mouse))
+    return;
+
+  const m = rect_clamp(rect, mouse);
+
+  let edge = EDGE_NONE;
+  {
+    let tolerance = EDGE_GRABBY_DIST;
+
+    for (const { f, e } of [
+      { f: Math.abs(m.x - rect.min_x), e: EDGE_LEFT   },
+      { f: Math.abs(m.y - rect.min_y), e: EDGE_TOP    },
+      { f: Math.abs(m.y - rect.max_y), e: EDGE_BOTTOM },
+      { f: Math.abs(m.x - rect.max_x), e: EDGE_RIGHT  }
+    ])
+      if (f < tolerance)
+        tolerance = f, edge = e;
+  }
+
+  if (edge != EDGE_NONE) {
+    let node = { edge, f: 0, rect_idx: save.rects.indexOf(rect) };
+    switch (edge) {
+      case (EDGE_LEFT  ): node.f = m.y - rect.min_y; break;
+      case (EDGE_RIGHT ): node.f = m.y - rect.min_y; break;
+      case (EDGE_TOP   ): node.f = m.x - rect.min_x; break;
+      case (EDGE_BOTTOM): node.f = m.x - rect.min_x; break;
+    }
+    return node;
+  }
+}
+
+function rect_any_pending_node(p) {
+  for (const r of save.rects) {
+    if (rect_pending_node(r, p))
+      return r;
+  }
+}
+
+const RECT_EVENT_MOUSE_DOWN = 1;
+const RECT_EVENT_MOUSE_UP   = 2;
+function rect_input(rect_event, in_mouse_x, in_mouse_y) {
+  let mouse = new DOMPoint(in_mouse_x, in_mouse_y);
+  mouse = input.world_transform.transformPoint(mouse);
+
+  if (rect_event == RECT_EVENT_MOUSE_DOWN) {
+    for (let i = 0; i < save.rects.length; i++) {
+      const rect = save.rects[i];
+
+      for (const i of rect.nodes) {
+        const n = save.nodes[i];
+        const p = rect_node_world_pos(rect, n);
+        const dist = Math.sqrt((mouse.x - p.x)*(mouse.x - p.x) + 
+                               (mouse.y - p.y)*(mouse.y - p.y));
+        if (dist < 9) {
+          rect.nodes.splice(rect.nodes.indexOf(i), 1);
+          return true;
+        }
+      }
+
+      if (rect_pending_node(rect, mouse)) {
+        save.rect_getting_node_idx = i;
+        return true;
+      }
+
+      if (rect_contains(rect, mouse)) {
+        save.rect_held_idx = i;
+        return true;
+      }
+    }
+  }
+
+  if (rect_event == RECT_EVENT_MOUSE_UP) {
+
+    let down = new DOMPoint(input.mouse_down_x, input.mouse_down_y);
+    down = input.world_transform.transformPoint(down);
+
+    if (save.rect_getting_node_idx > -1) {
+      const rect = save.rects[save.rect_getting_node_idx];
+
+      if (rect_pending_node(rect, down) &&
+        rect_pending_node(rect_any_pending_node(mouse), mouse)
+      ) {
+        let l, r;
+        rect.nodes.push(l = save.nodes.length);
+        save.nodes.push(rect_pending_node(rect, down));
+
+        const othr = rect_any_pending_node(mouse);
+        othr.nodes.push(r = save.nodes.length);
+        save.nodes.push(rect_pending_node(othr, mouse));
+
+        save.connections.push({ lhs_idx: l, rhs_idx: r });
+      }
+
+      save.rect_getting_node_idx = -1;
+      return true;
+    }
+
+    if (save.rect_held_idx > -1) {
+
+      save.rects[save.rect_held_idx].min_x += mouse.x - down.x;
+      save.rects[save.rect_held_idx].min_y += mouse.y - down.y;
+      save.rects[save.rect_held_idx].max_x += mouse.x - down.x;
+      save.rects[save.rect_held_idx].max_y += mouse.y - down.y;
+
+      save.rect_held_idx = -1;
+      return true;
+    }
+
+  }
+
+}
+
+let input = {
+  cam: {
+    zoom: 1.0,
+    x: canvas. width*0.5,
+    y: canvas.height*0.5,
+  },
+  has_horizontal_scroll: false,
+  world_transform: null,
+
+  mouse_down: false,
+  cam_down_x: 0,
+  cam_down_y: 0,
+  mouse_down_x: 0,
+  mouse_down_y: 0,
+
+  mouse_rmb_down: false,
+  mouse_rmb_down_x: 0,
+  mouse_rmb_down_y: 0,
+
+  mouse_x: 0,
+  mouse_y: 0,
+};
+
+{
+  canvas.oncontextmenu = e => e.preventDefault();
+  canvas.onmousedown = e => {
+    if (e.button == 2) {
+      input.mouse_rmb_down_x = e.offsetX*window.devicePixelRatio;
+      input.mouse_rmb_down_y = e.offsetY*window.devicePixelRatio;
+      input.mouse_rmb_down = true;
+      e.preventDefault();
+      return;
+    }
+
+    input.mouse_down_x = e.offsetX*window.devicePixelRatio;
+    input.mouse_down_y = e.offsetY*window.devicePixelRatio;
+
+    if (rect_input(RECT_EVENT_MOUSE_DOWN, input.mouse_down_x, input.mouse_down_y)) return;
+    input.mouse_down = true;
+    input.cam_down_x = input.cam.x;
+    input.cam_down_y = input.cam.y;
+  }
+  canvas.mouseleave = window.onmouseup = e => {
+    input.mouse_down = false;
+    input.mouse_x = e.offsetX*window.devicePixelRatio;
+    input.mouse_y = e.offsetY*window.devicePixelRatio;
+
+    if (rect_input(RECT_EVENT_MOUSE_UP, input.mouse_x, input.mouse_y)) return;
+
+    /* create new rect on mouse release */
+    if (input.mouse_rmb_down) {
+      let down = new DOMPoint(input.mouse_rmb_down_x, input.mouse_rmb_down_y);
+      down = input.world_transform.transformPoint(down);
+
+      let mouse = new DOMPoint(input.mouse_x, input.mouse_y);
+      mouse = input.world_transform.transformPoint(mouse);
+
+      const min_x = Math.min(down.x, mouse.x), min_y = Math.min(down.y, mouse.y);
+      const max_x = Math.max(down.x, mouse.x), max_y = Math.max(down.y, mouse.y);
+
+      save.rects.push({ min_x, min_y, max_x, max_y, nodes: [] });
+    }
+
+    input.mouse_rmb_down = false;
+  }
+  canvas.onmousemove = e => {
+    input.mouse_x = e.offsetX*window.devicePixelRatio;
+    input.mouse_y = e.offsetY*window.devicePixelRatio;
+    if (input.mouse_down) {
+      input.cam.x = input.cam_down_x + (input.mouse_x - input.mouse_down_x);
+      input.cam.y = input.cam_down_y + (input.mouse_y - input.mouse_down_y);
+    }
+  };
+  let wheelTimeout;
+  canvas.onwheel = e => {
+    e.preventDefault();
+
+    let delta_x = e.deltaX;
+    let delta_y = e.deltaY;
+    if (Math.abs(delta_x) > 0) {
+      input.has_horizontal_scroll = true;
+    }
+
+    clearTimeout(wheelTimeout);
+    wheelTimeout = setTimeout(() => input.has_horizontal_scroll = false, 200);
+
+    /* on trackpads, people expect vertical scrolling to pan instead of zoom.
+     * that's fine, except the only way I know of to tell if they're using a trackpad is ...
+     * did they ever do a horizontal zoom? */
+    if (input.has_horizontal_scroll && !e.ctrlKey && !e.shiftKey) {
+      input.cam.x -= delta_x;
+      input.cam.y -= delta_y;
+      return;
+    }
+    if (e.ctrlKey) {
+      /* also, if you ARE using a trackpad, ctrlKey is set to true for "pinch to zoom events,"
+       * and those are much weaker relative to typical scroll */
+      delta_y *= 10;
+    }
+
+    if (!input.world_transform) return;
+
+    const mouse = input.world_transform.transformPoint(new DOMPoint(input.mouse_x, input.mouse_y));
+
+    let next_zoom = input.cam.zoom * (1 - delta_y * 0.001);
+    next_zoom = Math.max(0.15, next_zoom);
+
+
+    /* offset camera.x such that it stays centered around the mouse,
+     * accounting for the new zoom */
+    {
+        const x_t = mouse.x / canvas.width;
+        const  nowSizeX = canvas.width * input.cam.zoom;
+        const nextSizeX = canvas.width * next_zoom;
+        const deltaX = nextSizeX - nowSizeX;
+        input.cam.x -= deltaX * x_t;
+    }
+
+    /* ditto on the Y axis; keep the mouse as the focal point */
+    {
+        const y_t = mouse.y / canvas.height;
+        const  nowSizeY = canvas.height * input.cam.zoom;
+        const nextSizeY = canvas.height * next_zoom;
+        const deltaY = nextSizeY - nowSizeY;
+        input.cam.y -= deltaY * y_t;
+    }
+
+    input.cam.zoom = next_zoom;
+  }
+}
+
+requestAnimationFrame(function render(now) {
+  requestAnimationFrame(render);
+
+  ctx.fillStyle = "black";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  ctx.save();
+  {
+    const t = 0.5 + 0.5*Math.sin(now / 150);
+
+    ctx.fillStyle = "black";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    ctx.translate(input.cam.x, input.cam.y);
+    ctx.scale(input.cam.zoom, input.cam.zoom);
+    input.world_transform = ctx.getTransform().inverse();
+
+    /* grid */
+    {
+      const min = input.world_transform.transformPoint(new DOMPoint(0, 0));
+      const max = input.world_transform.transformPoint(new DOMPoint(canvas.width, canvas.height));
+      min.x = Math.floor(min.x/TILE_SCALE)*TILE_SCALE, min.y = Math.floor(min.y/TILE_SCALE)*TILE_SCALE;
+      max.x =  Math.ceil(max.x/TILE_SCALE)*TILE_SCALE, max.y =  Math.ceil(max.y/TILE_SCALE)*TILE_SCALE;
+
+      ctx.fillStyle = "rgb(51, 51, 51)";
+      ctx.lineWidth = 2;
+
+      for (let y = Math.floor(min.y); y < Math.ceil(max.y); y += TILE_SCALE)
+        ctx.fillRect(min.x, y - 1, max.x - min.x, 2);
+
+      for (let x = Math.floor(min.x); x < Math.ceil(max.x); x += TILE_SCALE)
+        ctx.fillRect(x - 1, min.y, 2, max.x - min.x);
+    }
+
+    /* visualize pending rect */
+    if (input.mouse_rmb_down) {
+      let mouse = new DOMPoint(input.mouse_x, input.mouse_y);
+      mouse = input.world_transform.transformPoint(mouse);
+
+      let down = new DOMPoint(input.mouse_rmb_down_x, input.mouse_rmb_down_y);
+      down = input.world_transform.transformPoint(down);
+
+      const min_x = Math.min(down.x, mouse.x), min_y = Math.min(down.y, mouse.y);
+      const max_x = Math.max(down.x, mouse.x), max_y = Math.max(down.y, mouse.y);
+
+      ctx.strokeStyle = 'rgba(0, 255, 0, 0.4)';
+      ctx.fillStyle = 'rgba(0, 255, 0, 0.1)';
+      ctx.lineWidth = 10;
+      ctx.strokeRect(min_x, min_y, max_x - min_x + 1, max_y - min_y + 1);
+      ctx.fillRect(min_x, min_y, max_x - min_x + 1, max_y - min_y + 1);
+    }
+
+    /* draw rects */
+    {
+      let mouse = new DOMPoint(input.mouse_x, input.mouse_y);
+      mouse = input.world_transform.transformPoint(mouse);
+
+      let down = new DOMPoint(input.mouse_down_x, input.mouse_down_y);
+      down = input.world_transform.transformPoint(down);
+
+      const any_held = save.rect_held_idx >= 0;
+
+      for (let i = 0; i < save.rects.length; i++) {
+        const rect = save.rects[i];
+
+        const hover = rect_contains(rect, mouse);
+        const held = save.rect_held_idx == i;
+
+        ctx.lineWidth = 5;
+        ctx.strokeStyle = 'rgba(255, 0, 255, 0.4)';
+        ctx.fillStyle   = 'rgba(255, 0, 255, 0.1)';
+        if (hover) ctx.strokeStyle = 'rgba(255, 0, 255, 0.5)',
+                   ctx.fillStyle   = 'rgba(255, 0, 255, 0.2)';
+        if (held) ctx.strokeStyle = 'rgba(255, 0, 0, 0.5)',
+                  ctx.fillStyle   = 'rgba(255, 0, 0, 0.2)';
+
+        /* rect body */
+        {
+          let { min_x, min_y, max_x, max_y } = rect_world_pos(rect);
+
+          const size_x = max_x - min_x;
+          const size_y = max_y - min_y;
+          ctx.fillRect(min_x, min_y, size_x, size_y);
+          ctx.strokeRect(min_x, min_y, size_x, size_y);
+        }
+
+        /* nodes */
+        {
+          ctx.lineWidth = 3;
+
+          let deleting = false;
+          for (const node_idx of rect.nodes) {
+            const node = save.nodes[node_idx];
+            const p = rect_node_world_pos(rect, node);
+
+            ctx.fillStyle   = `rgb(100, 10, 255, ${lerp(0.8, 1.0, t)})`;
+            ctx.strokeStyle = `rgb(100, 10, 255, ${lerp(0.6, 0.8, t)})`;
+
+            const dist = Math.sqrt((mouse.x - p.x)*(mouse.x - p.x) + 
+                                   (mouse.y - p.y)*(mouse.y - p.y));
+            if (dist < 9) {
+              ctx.fillStyle   = "rgb(255, 10, 100, 1.0)";
+              ctx.strokeStyle = "rgb(255, 10, 100, 0.8)";
+              deleting = true;
+            }
+
+            ctx.fillRect(p.x - 10, p.y - 10, 20, 20);
+          }
+
+          if (!deleting && !any_held && rect_pending_node(rect, mouse)) {
+            const p = rect_node_world_pos(rect, rect_pending_node(rect, mouse));
+            ctx.lineWidth = 5;
+            ctx.strokeRect(p.x - 10, p.y - 10, 20, 20);
+          }
+
+        }
+
+      }
+    }
+
+    if (save.rect_getting_node_idx > -1) {
+      const rect = save.rects[save.rect_getting_node_idx];
+
+      let mouse = new DOMPoint(input.mouse_x, input.mouse_y);
+      mouse = input.world_transform.transformPoint(mouse);
+
+      let down = new DOMPoint(input.mouse_down_x, input.mouse_down_y);
+      down = rect_clamp(rect, input.world_transform.transformPoint(down));
+
+      const both_ended = rect_pending_node(rect, down) &&
+        rect_pending_node(rect_any_pending_node(mouse), mouse);
+
+      ctx.lineWidth = 3;
+      ctx.strokeStyle = both_ended ? "rgba(100, 255, 80, 0.7)" : "rgba(255, 100, 80, 0.7)";
+      ctx.strokeRect( down.x - 10,  down.y - 10, 20, 20);
+      ctx.strokeRect(mouse.x - 10, mouse.y - 10, 20, 20);
+
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.moveTo( down.x,  down.y);
+      ctx.lineTo(mouse.x, mouse.y);
+      ctx.closePath();
+      ctx.stroke();
+    }
+
+    for (const { lhs_idx, rhs_idx } of save.connections) {
+      const ln = save.nodes[lhs_idx];
+      const rn = save.nodes[rhs_idx];
+      const lhs_p = rect_node_world_pos(save.rects[ln.rect_idx], ln);
+      const rhs_p = rect_node_world_pos(save.rects[rn.rect_idx], rn);
+
+      ctx.lineWidth = 10;
+      ctx.strokeStyle = `rgb(100, 10, 255, ${lerp(0.4, 0.6, t)})`;
+      ctx.beginPath();
+      ctx.moveTo(lhs_p.x, lhs_p.y);
+      ctx.lineTo(rhs_p.x, rhs_p.y);
+      ctx.closePath();
+      ctx.stroke();
+    }
+
+  }
+  ctx.restore();
+});
+
+function lerp(v0, v1, t) { return (1 - t) * v0 + t * v1; }
+function inv_lerp(min, max, p) { return (p - min) / (max - min); }
+    </script>
+  </body>
+</html>
