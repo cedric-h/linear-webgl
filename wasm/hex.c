@@ -282,7 +282,7 @@ void frame(double timestamp) {
     // putfloat(target_fps);
 
     {
-        double cam_damp_factor = 0.001;
+        double cam_damp_factor = 0.00001;
         double t = 1.0f - pow(cam_damp_factor, delta_time);
         camera.pos.x = lerp(camera.pos.x, camera.goal_pos.x, t);
         camera.pos.y = lerp(camera.pos.y, camera.goal_pos.y, t);
@@ -290,7 +290,7 @@ void frame(double timestamp) {
     }
 
     {
-        input.mouse_scroll *= (float)(pow(0.0001, delta_time));
+        input.mouse_scroll *= (float)(pow(0.00001, delta_time));
         // camera.zoom = math.min(200, camera.zoom);
 
         float next_zoom = camera.zoom * (1 - input.mouse_scroll * 0.0001);
